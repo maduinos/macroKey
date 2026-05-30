@@ -47,6 +47,7 @@ MIT License. See `LICENSE`.
 ## Project Management
 
 - Changes: `CHANGELOG.md`
+- Release process: `RELEASE.md`
 - Support scope: `SUPPORT.md`
 - Contribution guide: `CONTRIBUTING.md`
 - Security reporting: `SECURITY.md`
