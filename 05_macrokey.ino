@@ -8,6 +8,7 @@ const int MACRO_5_PIN = 7;
 const int MACRO_6_PIN = 8;
 const int MACRO_7_PIN = 9;
 const int MACRO_8_PIN = 10;
+const unsigned long SCAN_INTERVAL_MS = 100;
 
 unsigned long gPreTime = 0;
 unsigned long gCurTime = 0;
@@ -25,7 +26,7 @@ void setup() {
 }
 
 void loop() {
-  DelayMS(RunKey, 100);
+  DelayMS(RunKey, SCAN_INTERVAL_MS);
 }
 
 void DelayMS(int (*fp)(void), int time ) {
