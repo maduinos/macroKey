@@ -19,5 +19,4 @@ Out of scope:
 ## Checklist
 
 - If `arduino-cli` is available, run `arduino-cli compile --fqbn arduino:avr:leonardo .`.
-- Confirm the sketch does not send unintended keyboard shortcuts during testing.
-
+- Confirm the sketch does not send unintended keyboard shortcuts during local verification.
