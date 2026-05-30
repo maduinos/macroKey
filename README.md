@@ -43,3 +43,10 @@ The sketch sends keyboard input to the host computer. Upload and test it in an e
 ## License
 
 MIT License. See `LICENSE`.
+
+## Project Management
+
+- Changes: `CHANGELOG.md`
+- Support scope: `SUPPORT.md`
+- Contribution guide: `CONTRIBUTING.md`
+- Security reporting: `SECURITY.md`
