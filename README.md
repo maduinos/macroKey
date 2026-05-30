@@ -2,13 +2,13 @@
 
 [![Arduino Compile](https://github.com/maduinos/macroKey/actions/workflows/arduino.yml/badge.svg)](https://github.com/maduinos/macroKey/actions/workflows/arduino.yml)
 
-Personal Arduino HID macro keypad sketch by Maduinos.
+Maduinos의 개인 Arduino HID 매크로 키패드 스케치입니다.
 
-This is a hobby/lab project and is not part of the Maduinos FPGA business portfolio.
+이 저장소는 취미/실험 프로젝트이며 Maduinos FPGA 비즈니스 포트폴리오에 포함되지 않습니다.
 
-## What It Does
+## 기능
 
-The sketch reads eight active-low button inputs and sends `Tab + number` keyboard shortcuts through the Arduino `Keyboard` library.
+이 스케치는 active-low 버튼 입력 8개를 읽고 Arduino `Keyboard` library를 통해 `Tab + 숫자` 단축키를 보냅니다.
 
 | Pin | Shortcut |
 | --- | --- |
@@ -21,33 +21,33 @@ The sketch reads eight active-low button inputs and sends `Tab + number` keyboar
 | D9 | `Tab + 7` |
 | D10 | `Tab + 8` |
 
-## Requirements
+## 요구 사항
 
-- Arduino board that supports native USB HID keyboard mode, such as Leonardo, Micro, or Pro Micro
-- Arduino IDE or `arduino-cli`
+- Leonardo, Micro, Pro Micro처럼 native USB HID keyboard mode를 지원하는 Arduino board
+- Arduino IDE 또는 `arduino-cli`
 
-## Build
+## 빌드
 
-Open `05_macrokey.ino` in Arduino IDE and select a USB HID capable board.
+Arduino IDE에서 `05_macrokey.ino`를 열고 USB HID를 지원하는 board를 선택합니다.
 
-If `arduino-cli` is installed:
+`arduino-cli`가 설치되어 있다면:
 
 ```bash
 arduino-cli compile --fqbn arduino:avr:leonardo .
 ```
 
-## Safety
+## 안전 안내
 
-The sketch sends keyboard input to the host computer. Upload and test it in an environment where unexpected keyboard shortcuts are safe.
+이 스케치는 host computer에 keyboard input을 보냅니다. 예상치 못한 단축키 입력이 문제가 되지 않는 환경에서 업로드하고 테스트하세요.
 
-## License
+## 라이선스
 
-MIT License. See `LICENSE`.
+MIT License로 배포합니다. 자세한 내용은 `LICENSE`를 확인하세요.
 
-## Project Management
+## 프로젝트 관리
 
-- Changes: `CHANGELOG.md`
-- Release process: `RELEASE.md`
-- Support scope: `SUPPORT.md`
-- Contribution guide: `CONTRIBUTING.md`
-- Security reporting: `SECURITY.md`
+- 변경 이력: `CHANGELOG.md`
+- 릴리스 절차: `RELEASE.md`
+- 지원 범위: `SUPPORT.md`
+- 기여 가이드: `CONTRIBUTING.md`
+- 보안 신고: `SECURITY.md`
