@@ -1,0 +1,72 @@
+// Turns gestures into actions.
+//
+// The engine owns layer state and the dispatch table; it does not know about
+// pins (ButtonInput) or about the serial link (callbacks below).
+#pragma once
+
+#include <Arduino.h>
+
+#include "ActionTypes.h"
+#include "ButtonInput.h"
+#include "Config.h"
+#include "LedController.h"
+#include "Profile.h"
+
+// Fired for every gesture, purely informational: the HID report has already
+// gone out. The host uses these for logging, app-aware layers and LED reactions.
+typedef void (*MkKeyReportFn)(uint8_t key, uint8_t gesture, uint8_t layer, bool released);
+
+// Fired for ACT_HOST. No HID was sent; the desktop app is expected to act.
+typedef void (*MkHostActionFn)(uint8_t token, uint8_t key, uint8_t layer);
+
+typedef void (*MkChordReportFn)(uint8_t mask, uint8_t layer);
+
+class KeyEngine {
+ public:
+  void begin(Profile *profile, ButtonInput *input, LedController *leds);
+  void update(uint32_t now);
+
+  void setReportCallbacks(MkKeyReportFn key, MkHostActionFn host, MkChordReportFn chord);
+
+  uint8_t activeLayer() const;
+  void setBaseLayer(uint8_t layer);
+
+  // True once the boot grace window has passed and HID output is allowed.
+  bool hidEnabled() const { return hidEnabled_; }
+
+ private:
+  void handleEvent(const KeyEvent &event, uint32_t now);
+  void checkChords(uint32_t now);
+  void serviceRepeat(uint32_t now);
+  void refreshDoubleTapMask();
+
+  // Runs one action. `key` is only used for reporting.
+  void dispatch(const Action &action, uint8_t key, uint32_t now);
+  void dispatchKey(const Action &action);
+  void runMacro(uint8_t slot, uint32_t now);
+
+  Profile *profile_ = NULL;
+  ButtonInput *input_ = NULL;
+  LedController *leds_ = NULL;
+
+  MkKeyReportFn onKey_ = NULL;
+  MkHostActionFn onHost_ = NULL;
+  MkChordReportFn onChord_ = NULL;
+
+  uint8_t baseLayer_ = 0;
+  uint8_t momentaryLayer_ = 0;
+  int8_t momentaryKey_ = -1;
+  uint8_t lastMaskedLayer_ = 0xFF;  // forces a double-tap mask refresh on boot
+
+  // One-shot modifiers armed by a KEYF_STICKY action, consumed by the next key.
+  uint8_t stickyModifiers_ = 0;
+
+  // Auto-repeat for a held ACT_KEY with KEYF_REPEAT. One slot: a keypad this
+  // size never needs two keys repeating at once, and a table would cost SRAM.
+  Action repeatAction_ = {ACT_NONE, 0, 0, 0};
+  int8_t repeatKey_ = -1;
+  uint32_t repeatNextAt_ = 0;
+
+  uint8_t chordFiredMask_ = 0;
+  bool hidEnabled_ = false;
+};
