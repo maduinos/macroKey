@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "macrokey"
+version = "0.3.0"
+description = "Host application for the Maduinos macroKey keypad"
+readme = "../README.md"
+requires-python = ">=3.10"
+license = { file = "../LICENSE" }
+authors = [{ name = "Maduinos" }]
+dependencies = [
+    "pyserial>=3.5",
+]
+
+[project.optional-dependencies]
+# Host-side input synthesis and recording. Without it the device still works;
+# only host actions and the recorder are unavailable.
+input = ["pynput>=1.7"]
+# Image clipboard support on Windows.
+windows = ["Pillow>=9", "pywin32>=305"]
+dev = ["pytest>=7", "ruff>=0.4"]
+
+[project.scripts]
+macrokey = "macrokey.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["macrokey*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "C4"]
+ignore = ["B008"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
