@@ -8,12 +8,12 @@
 
 #define MK_FIRMWARE_VERSION "0.3.0"
 #define MK_PROTOCOL_VERSION 1
-#define MK_BOARD_NAME "leonardo"
+#define MK_BOARD_NAME "promicro"
 
 // ---------------------------------------------------------------- topology --
 
 #define MK_KEY_COUNT 8
-#define MK_LED_COUNT 8
+#define MK_LED_COUNT 1
 #define MK_LAYER_COUNT 4
 #define MK_GESTURE_COUNT 3
 #define MK_CHORD_SLOTS 8
@@ -23,9 +23,12 @@
 // index reported over serial, so reordering this array remaps the keypad.
 static const uint8_t MK_KEY_PINS[MK_KEY_COUNT] = {3, 4, 5, 6, 7, 8, 9, 10};
 
-// WS2812 data pin. D2/D3 are SDA/SCL and D14-D16 are SPI, so D11 keeps the
-// LED strip clear of every peripheral bus.
-#define MK_LED_PIN 11
+// WS2812B data pin. The Pro Micro does not break out D11 at all -- D11/D12/D13
+// exist on the ATmega32u4 but have no pads on this board. Of what is exposed,
+// D2/D3 are SDA/SCL and D14/D15/D16 are SPI, which leaves A0. It sits on the
+// same header as VCC and GND, so the LED module wires to one side of the board.
+// A0 is digital 18 on the 32u4.
+#define MK_LED_PIN 18
 
 // -------------------------------------------------------------- HID backend --
 
@@ -54,7 +57,11 @@ static const uint8_t MK_KEY_PINS[MK_KEY_COUNT] = {3, 4, 5, 6, 7, 8, 9, 10};
 // --------------------------------------------------------------------- LED --
 
 #define MK_LED_FPS 50            // WS2812 bit-banging blocks interrupts; cap it
-#define MK_LED_MAX_MILLIAMPS 400 // USB budget is 500 mA including the MCU
+// A single pixel tops out near 60 mA, so against the 500 mA USB budget the
+// limiter can never actually engage. It stays in the build because it is the
+// thing that keeps MK_LED_COUNT safe to raise: bump the count and this ceiling
+// starts doing real work without any other change.
+#define MK_LED_MAX_MILLIAMPS 100
 #define MK_LED_DEFAULT_BRIGHTNESS 64
 #define MK_LED_PRESS_FLASH_MS 120
 // Host ambient control lapses back to the local scene after this much silence,

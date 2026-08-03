@@ -1,0 +1,1042 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>macroKey 사용 설명서</title>
+<style>
+/* ---------------------------------------------------------------- tokens -- */
+:root {
+  --ground:      #F1F4F0;
+  --surface:     #FFFFFF;
+  --surface-2:   #E9EEE9;
+  --ink:         #14201C;
+  --ink-2:       #55645E;
+  --ink-3:       #7C8A84;
+  --rule:        #D3DBD5;
+  --rule-strong: #B4C0B9;
+  --accent:      #0E8F87;
+  --accent-soft: #E0F0EE;
+  --warn:        #B5651D;
+  --warn-soft:   #FBEEDD;
+  --danger:      #B33A2B;
+  --danger-soft: #FBE7E3;
+  --key-face:    #FBFCFA;
+  --key-edge:    #B4C0B9;
+
+  --f-sans: Ubuntu, "Segoe UI", -apple-system, BlinkMacSystemFont, "Noto Sans KR", "Helvetica Neue", Arial, sans-serif;
+  --f-mono: ui-monospace, "JetBrains Mono", "DejaVu Sans Mono", "SFMono-Regular", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ground:#0E1512; --surface:#16201C; --surface-2:#1D2A25;
+    --ink:#E7EEE9; --ink-2:#9DAEA7; --ink-3:#74857E;
+    --rule:#26332E; --rule-strong:#35463F;
+    --accent:#38C6B5; --accent-soft:#10312D;
+    --warn:#D69A4E; --warn-soft:#2B2114;
+    --danger:#E1705C; --danger-soft:#2E1712;
+    --key-face:#212E28; --key-edge:#3B4C45;
+  }
+}
+:root[data-theme="dark"] {
+  --ground:#0E1512; --surface:#16201C; --surface-2:#1D2A25;
+  --ink:#E7EEE9; --ink-2:#9DAEA7; --ink-3:#74857E;
+  --rule:#26332E; --rule-strong:#35463F;
+  --accent:#38C6B5; --accent-soft:#10312D;
+  --warn:#D69A4E; --warn-soft:#2B2114;
+  --danger:#E1705C; --danger-soft:#2E1712;
+  --key-face:#212E28; --key-edge:#3B4C45;
+}
+:root[data-theme="light"] {
+  --ground:#F1F4F0; --surface:#FFFFFF; --surface-2:#E9EEE9;
+  --ink:#14201C; --ink-2:#55645E; --ink-3:#7C8A84;
+  --rule:#D3DBD5; --rule-strong:#B4C0B9;
+  --accent:#0E8F87; --accent-soft:#E0F0EE;
+  --warn:#B5651D; --warn-soft:#FBEEDD;
+  --danger:#B33A2B; --danger-soft:#FBE7E3;
+  --key-face:#FBFCFA; --key-edge:#B4C0B9;
+}
+
+/* ------------------------------------------------------------------ base -- */
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--ground); color: var(--ink);
+  font-family: var(--f-sans); font-size: 16.5px; line-height: 1.68;
+  -webkit-font-smoothing: antialiased;
+}
+.wrap { max-width: 1060px; margin: 0 auto; padding: 0 28px 96px; }
+.col  { max-width: 72ch; }
+
+h1, h2, h3 { text-wrap: balance; margin: 0; font-weight: 650; letter-spacing: -0.01em; }
+h1 { font-size: 2.35rem; line-height: 1.18; }
+h2 { font-size: 1.5rem; line-height: 1.3; }
+h3 { font-size: 1.08rem; line-height: 1.4; }
+p  { margin: 0; }
+
+code, .mono { font-family: var(--f-mono); font-size: 0.88em; }
+code { background: var(--surface-2); padding: 0.1em 0.38em; border-radius: 3px; color: var(--ink); }
+pre {
+  margin: 0; background: var(--surface-2); border: 1px solid var(--rule);
+  border-radius: 4px; padding: 14px 16px; overflow-x: auto;
+  font-family: var(--f-mono); font-size: 0.82rem; line-height: 1.6;
+}
+pre code { background: none; padding: 0; font-size: 1em; }
+
+.eyebrow {
+  font-family: var(--f-mono); font-size: 0.7rem; text-transform: uppercase;
+  letter-spacing: 0.16em; color: var(--accent); font-weight: 600;
+}
+.muted { color: var(--ink-2); }
+.small { font-size: 0.9rem; }
+
+/* keycap */
+.kbd {
+  font-family: var(--f-mono); font-size: 0.78em; font-weight: 600;
+  background: var(--key-face); border: 1px solid var(--key-edge);
+  border-bottom-width: 2px; border-radius: 4px; padding: 1px 6px 2px;
+  white-space: nowrap; color: var(--ink);
+}
+
+/* --------------------------------------------------------------- masthead -- */
+.masthead {
+  border-bottom: 2px solid var(--ink); padding: 56px 0 24px;
+  display: flex; flex-direction: column; gap: 16px;
+}
+.masthead .lede { font-size: 1.08rem; color: var(--ink-2); max-width: 62ch; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip {
+  font-family: var(--f-mono); font-size: 0.72rem; letter-spacing: 0.04em;
+  border: 1px solid var(--rule-strong); border-radius: 2px; padding: 3px 9px; color: var(--ink-2);
+}
+
+/* --------------------------------------------------------------- sections -- */
+section { padding-top: 60px; display: flex; flex-direction: column; gap: 20px; }
+.sec-head { display: flex; flex-direction: column; gap: 6px; border-top: 1px solid var(--rule); padding-top: 18px; }
+
+/* -------------------------------------------------------------------- toc -- */
+.toc { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 2px 24px; }
+.toc a {
+  display: flex; gap: 12px; padding: 5px 0; text-decoration: none;
+  border-bottom: 1px solid var(--rule); color: var(--ink); font-size: 0.94rem;
+}
+.toc a:hover { color: var(--accent); }
+.toc .n { font-family: var(--f-mono); font-size: 0.78rem; color: var(--accent); padding-top: 2px; }
+
+/* ---------------------------------------------------------------- panels -- */
+.panel {
+  background: var(--surface); border: 1px solid var(--rule); border-radius: 4px;
+  padding: 18px 20px; display: flex; flex-direction: column; gap: 12px; break-inside: avoid;
+}
+.panel-scroll { overflow-x: auto; }
+.panel svg { display: block; width: 100%; height: auto; min-width: 560px; }
+.caption {
+  font-family: var(--f-mono); font-size: 0.74rem; letter-spacing: 0.03em;
+  color: var(--ink-3); text-transform: uppercase;
+}
+
+/* ---------------------------------------------------------------- tables -- */
+.table-scroll { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: 0.94rem; }
+th, td { text-align: left; padding: 9px 14px 9px 0; border-bottom: 1px solid var(--rule); vertical-align: top; }
+th {
+  font-family: var(--f-mono); font-size: 0.7rem; text-transform: uppercase;
+  letter-spacing: 0.11em; color: var(--ink-3); font-weight: 600;
+  border-bottom-color: var(--rule-strong); white-space: nowrap;
+}
+td.pin { font-family: var(--f-mono); white-space: nowrap; font-weight: 600; }
+td.mono2 { font-family: var(--f-mono); font-size: 0.86rem; }
+
+/* --------------------------------------------------------------- callouts -- */
+.callout {
+  border-left: 3px solid var(--warn); background: var(--warn-soft);
+  padding: 13px 16px; border-radius: 0 3px 3px 0; font-size: 0.95rem;
+  display: flex; flex-direction: column; gap: 6px; break-inside: avoid;
+}
+.callout.stop { border-left-color: var(--danger); background: var(--danger-soft); }
+.callout.tip  { border-left-color: var(--accent); background: var(--accent-soft); }
+.callout b { font-weight: 650; }
+
+/* ------------------------------------------------------------------ steps -- */
+.steps { display: flex; flex-direction: column; gap: 24px; counter-reset: step; list-style: none; padding: 0; margin: 0; }
+.steps > li { display: grid; grid-template-columns: 44px 1fr; gap: 4px 18px; break-inside: avoid; }
+.steps > li::before {
+  counter-increment: step; content: counter(step, decimal-leading-zero);
+  font-family: var(--f-mono); font-size: 0.86rem; font-weight: 600; color: var(--accent);
+  padding-top: 3px; border-top: 2px solid var(--accent); grid-row: 1 / span 2;
+}
+.steps h3 { align-self: start; padding-top: 1px; }
+.steps .body { display: flex; flex-direction: column; gap: 12px; }
+.steps ul, .steps ol { margin: 0; padding-left: 1.15em; display: flex; flex-direction: column; gap: 5px; }
+
+/* --------------------------------------------------------------- recipes -- */
+.recipes { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 14px; }
+.recipe {
+  background: var(--surface); border: 1px solid var(--rule); border-radius: 4px;
+  padding: 14px 16px; display: flex; flex-direction: column; gap: 8px; break-inside: avoid;
+}
+.recipe h3 { font-size: 0.98rem; }
+.recipe p { font-size: 0.9rem; color: var(--ink-2); }
+.recipe pre { font-size: 0.76rem; padding: 10px 12px; }
+
+/* ------------------------------------------------------------------- misc -- */
+footer { margin-top: 72px; border-top: 1px solid var(--rule); padding-top: 18px; font-size: 0.86rem; color: var(--ink-3); }
+a { color: var(--accent); text-underline-offset: 3px; }
+a:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+svg text { font-family: var(--f-mono); }
+.svg-label { fill: var(--ink); }
+.svg-label-2 { fill: var(--ink-2); }
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation-duration: 0.001ms !important; transition-duration: 0.001ms !important; }
+}
+
+/* ------------------------------------------------------------------ print -- */
+@page { size: A4 portrait; margin: 14mm 20mm 14mm 13mm; }
+@media print {
+  :root {
+    --ground:#FFF; --surface:#FFF; --surface-2:#F0F2EF;
+    --ink:#000; --ink-2:#333; --ink-3:#555;
+    --rule:#BBB; --rule-strong:#888;
+    --accent:#0A6B65; --accent-soft:#EEF5F4;
+    --warn:#7A4A12; --warn-soft:#F6F1E8;
+    --danger:#8A2B1E; --danger-soft:#F7EBE8;
+    --key-face:#FFF; --key-edge:#888;
+  }
+  body { font-size: 10.5pt; line-height: 1.5; background: #fff; }
+  .wrap { max-width: none; padding: 0 4mm 0 0; }
+  section { padding-top: 22px; }
+  .masthead { padding-top: 0; }
+  .panel, .callout, .steps > li, .recipe, table tr { break-inside: avoid; }
+  .panel svg { min-width: 0; }
+  .panel-scroll, .table-scroll { overflow: visible; }
+  h2 { break-after: avoid; }
+  footer { break-before: avoid; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="masthead">
+  <p class="eyebrow">macroKey · 소프트웨어</p>
+  <h1>사용 설명서</h1>
+  <p class="lede">
+    조립이 끝난 키패드를 실제로 쓰는 방법입니다. 키에 무엇을 넣을 수 있는지, 어떻게 넣는지,
+    그리고 앱을 안 켜도 되는 것과 켜야 되는 것의 경계를 설명합니다.
+    배선은 <a href="wiring.html">배선 가이드</a>를 보세요.
+  </p>
+  <div class="chips">
+    <span class="chip">버튼 8 × 제스처 3 × 레이어 4 = 96 슬롯</span>
+    <span class="chip">호스트 앱 0.3.0</span>
+    <span class="chip">GUI · CLI · 헤드리스</span>
+  </div>
+</header>
+
+<!-- ================================================================= 목차 == -->
+<section id="toc" style="padding-top:36px">
+  <nav class="toc">
+    <a href="#start"><span class="n">01</span><span>처음 연결하기</span></a>
+    <a href="#model"><span class="n">02</span><span>누르는 방식 — 제스처와 레이어</span></a>
+    <a href="#default"><span class="n">03</span><span>기본으로 들어 있는 것</span></a>
+    <a href="#edit"><span class="n">04</span><span>키 설정하기 (GUI)</span></a>
+    <a href="#actions"><span class="n">05</span><span>키에 넣을 수 있는 것</span></a>
+    <a href="#record"><span class="n">06</span><span>매크로 녹화</span></a>
+    <a href="#host"><span class="n">07</span><span>호스트 액션 — 긴 것, 똑똑한 것</span></a>
+    <a href="#cli"><span class="n">08</span><span>CLI로 하기</span></a>
+    <a href="#led"><span class="n">09</span><span>LED로 상태 보기</span></a>
+    <a href="#files"><span class="n">10</span><span>파일 위치와 백업</span></a>
+    <a href="#recipes"><span class="n">11</span><span>레시피</span></a>
+    <a href="#limits"><span class="n">12</span><span>지금은 안 되는 것</span></a>
+  </nav>
+</section>
+
+<!-- ============================================================== 시작하기 == -->
+<section id="start">
+  <div class="sec-head">
+    <p class="eyebrow">01</p>
+    <h2>처음 연결하기</h2>
+  </div>
+  <p class="col">
+    핵심은 <b>앱이 없어도 키패드가 동작한다</b>는 것입니다. 펌웨어만 올리면 평범한 USB HID
+    키보드입니다. 앱은 긴 텍스트·이미지·셸 명령·LED 상태 표시를 얹는 증폭기이지 필수 런타임이
+    아닙니다. 그래서 1단계만 해도 쓸 수 있습니다.
+  </p>
+
+  <ol class="steps">
+    <li>
+      <h3>펌웨어를 올린다</h3>
+      <div class="body">
+        <p>Pro Micro는 리셋 버튼이 없으니 <span class="mono">RST</span>–<span class="mono">GND</span>를
+        빠르게 두 번 단락시켜 부트로더(8초)를 띄운 <b>직후에</b> upload를 실행합니다.</p>
+<pre><code>arduino-cli compile --fqbn SparkFun:avr:promicro:cpu=16MHzatmega32U4 arduino/macrokey
+arduino-cli upload  --fqbn SparkFun:avr:promicro:cpu=16MHzatmega32U4 -p /dev/ttyACM0 arduino/macrokey</code></pre>
+        <p>여기까지만 해도 키 8개가 <span class="kbd">Ctrl</span>+<span class="kbd">Alt</span>+<span class="kbd">Shift</span>+<span class="kbd">1</span>~<span class="kbd">8</span>을
+        보냅니다. 이 조합을 선점하는 프로그램이 거의 없어서 기존 단축키를 뺏지 않습니다.</p>
+      </div>
+    </li>
+
+    <li>
+      <h3>호스트 앱을 설치한다</h3>
+      <div class="body">
+<pre><code>python -m pip install -e "host[input]"          # Linux / macOS
+python -m pip install -e "host[input,windows]"  # Windows (이미지 클립보드 포함)</code></pre>
+        <p><code>pyserial</code>만 필수입니다. <code>pynput</code>이 없으면 매크로 녹화와 호스트
+        액션이 비활성화되고, 나머지는 그대로 동작합니다.</p>
+      </div>
+    </li>
+
+    <li>
+      <h3>연결을 확인한다</h3>
+      <div class="body">
+<pre><code>macrokey ports    # 포트 목록. * 표시가 유력 후보
+macrokey info     # 장치 정보와 프로필 동기화 여부</code></pre>
+        <p><code>info</code>는 펌웨어 버전, 프로토콜 버전, 키/LED/레이어 개수, 그리고
+        <b>장치와 PC의 프로필이 같은지</b>를 알려줍니다. <span class="mono">in sync: no</span>가
+        나오면 <code>macrokey push</code>로 맞추면 됩니다.</p>
+        <p class="small muted">포트가 안 보이면 사용자가 <span class="mono">dialout</span>
+        그룹에 없을 수 있습니다: <code>sudo usermod -aG dialout $USER</code> 후 재로그인.</p>
+      </div>
+    </li>
+  </ol>
+</section>
+
+<!-- ================================================================ 조작모델 == -->
+<section id="model">
+  <div class="sec-head">
+    <p class="eyebrow">02</p>
+    <h2>누르는 방식 — 제스처와 레이어</h2>
+  </div>
+  <p class="col">
+    물리 키는 8개뿐이지만 <b>어떻게 누르느냐</b>와 <b>지금 어느 레이어냐</b>로 96가지를 구분합니다.
+    이게 이 키패드의 전부라고 해도 됩니다.
+  </p>
+
+  <div class="table-scroll">
+    <table>
+      <thead>
+        <tr><th>제스처</th><th>동작</th><th>발화 시점</th><th>주로 넣는 것</th></tr>
+      </thead>
+      <tbody>
+        <tr><td class="pin">TAP</td><td>짧게 눌렀다 뗌</td><td>뗄 때 즉시</td><td>기본 단축키</td></tr>
+        <tr><td class="pin">DOUBLE</td><td>250 ms 안에 두 번</td><td>두 번째 탭</td><td>드물거나 되돌리기 어려운 동작</td></tr>
+        <tr><td class="pin">HOLD</td><td>400 ms 넘게 유지</td><td>임계 시간에 도달할 때</td><td>레이어 전환, 반복</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="callout tip">
+    <p><b>DOUBLE을 안 쓰는 키는 느려지지 않습니다.</b> 해당 키의 DOUBLE 슬롯이 비어 있으면 TAP을
+    떼는 즉시 내보내고, 채워져 있을 때만 250 ms를 기다립니다. 지연 비용은 그 기능을 실제로 쓰는
+    키만 냅니다. <b>자주 쓰는 키에는 DOUBLE을 비워 두세요.</b></p>
+  </div>
+
+  <p class="col">
+    HOLD 슬롯에 레이어 계열 액션이 들어 있으면 <b>누르고 있는 동안만</b> 유효한 momentary
+    레이어가 됩니다. 그 외 액션이면 400 ms에 한 번 발화합니다. 기본값은 8번 키를 홀드하는 동안
+    레이어 1(미디어)입니다.
+  </p>
+
+  <figure class="panel panel-scroll" style="margin:0">
+    <svg viewBox="0 0 780 250" role="img" aria-label="레이어 전환 방식 세 가지: 키를 누르고 있는 동안만 바뀌는 momentary, 탭으로 고정되는 toggle, 호스트 앱이 내려보내는 host-driven.">
+      <g font-size="12">
+        <!-- momentary -->
+        <text x="20" y="34" font-weight="700" class="svg-label">momentary</text>
+        <text x="20" y="52" font-size="10.5" class="svg-label-2">키를 누르고 있는 동안만</text>
+        <rect x="200" y="24" width="120" height="26" rx="3" fill="var(--surface-2)" stroke="var(--rule-strong)"/>
+        <text x="260" y="42" text-anchor="middle" font-size="11" class="svg-label">레이어 0</text>
+        <rect x="320" y="24" width="180" height="26" rx="3" fill="var(--accent)"/>
+        <text x="410" y="42" text-anchor="middle" font-size="11" font-weight="700" fill="#FFF">레이어 1</text>
+        <rect x="500" y="24" width="120" height="26" rx="3" fill="var(--surface-2)" stroke="var(--rule-strong)"/>
+        <text x="560" y="42" text-anchor="middle" font-size="11" class="svg-label">레이어 0</text>
+        <path d="M320 62 L320 72 L500 72 L500 62" fill="none" stroke="var(--ink-2)" stroke-width="1.2"/>
+        <text x="410" y="88" text-anchor="middle" font-size="10.5" class="svg-label-2">8번 키를 누르고 있는 구간</text>
+
+        <!-- toggle -->
+        <text x="20" y="132" font-weight="700" class="svg-label">toggle</text>
+        <text x="20" y="150" font-size="10.5" class="svg-label-2">탭 한 번으로 고정</text>
+        <rect x="200" y="122" width="120" height="26" rx="3" fill="var(--surface-2)" stroke="var(--rule-strong)"/>
+        <text x="260" y="140" text-anchor="middle" font-size="11" class="svg-label">레이어 0</text>
+        <rect x="320" y="122" width="300" height="26" rx="3" fill="var(--accent)"/>
+        <text x="470" y="140" text-anchor="middle" font-size="11" font-weight="700" fill="#FFF">레이어 2 (다시 탭할 때까지)</text>
+        <path d="M320 116 L320 106" fill="none" stroke="var(--ink-2)" stroke-width="1.2"/>
+        <circle cx="320" cy="102" r="4" fill="var(--ink-2)"/>
+        <text x="320" y="94" text-anchor="middle" font-size="10.5" class="svg-label-2">탭</text>
+
+        <!-- host-driven -->
+        <text x="20" y="212" font-weight="700" class="svg-label">host-driven</text>
+        <text x="20" y="230" font-size="10.5" class="svg-label-2">앱이 내려보냄</text>
+        <rect x="200" y="202" width="420" height="26" rx="3" fill="var(--surface-2)" stroke="var(--rule-strong)" stroke-dasharray="4 3"/>
+        <text x="410" y="220" text-anchor="middle" font-size="11" class="svg-label-2">호스트 앱이 LAYER 명령을 보낼 때 (12장 참고)</text>
+      </g>
+    </svg>
+    <figcaption class="caption" style="margin-top:8px">레이어가 바뀌는 세 가지 방식</figcaption>
+  </figure>
+
+  <p class="col">
+    레이어가 0이 아니면 <b>LED가 그 레이어 색으로 물듭니다.</b> 픽셀이 하나뿐인 이 키패드에서
+    LED의 가장 중요한 역할이 이것입니다. 지금 어느 레이어인지 눈으로 확인하지 못하면 레이어는
+    실전에서 못 씁니다.
+  </p>
+
+  <p class="col">
+    <b>코드(chord)</b>는 두 키를 동시에 누르는 조합입니다. 40 ms 안에 함께 눌리면 코드로 보고,
+    개별 키의 TAP은 취소됩니다. 기본값으로 <b>1번+2번 = 실행 중인 호스트 액션 중지</b>가
+    들어 있습니다. 긴 매크로가 폭주할 때의 비상 정지입니다.
+  </p>
+</section>
+
+<!-- ============================================================== 기본프로필 == -->
+<section id="default">
+  <div class="sec-head">
+    <p class="eyebrow">03</p>
+    <h2>기본으로 들어 있는 것</h2>
+  </div>
+  <p class="col">
+    펌웨어를 처음 올렸을 때와 앱을 처음 설치했을 때 양쪽이 똑같이 갖는 값입니다. 그래서 첫
+    연결에서 "동기화 안 됨"이 뜨지 않습니다.
+  </p>
+
+  <div class="table-scroll">
+    <table>
+      <thead>
+        <tr><th>레이어</th><th>키 · 제스처</th><th>동작</th></tr>
+      </thead>
+      <tbody>
+        <tr><td class="pin">0 Base</td><td>1–8 TAP</td><td><span class="kbd">Ctrl</span>+<span class="kbd">Alt</span>+<span class="kbd">Shift</span>+<span class="kbd">1</span> … <span class="kbd">8</span></td></tr>
+        <tr><td class="pin">0 Base</td><td>8 HOLD</td><td>누르고 있는 동안 레이어 1</td></tr>
+        <tr><td class="pin">1 Media</td><td>1–4 TAP</td><td>볼륨 −, 볼륨 +, 음소거, 재생/일시정지</td></tr>
+        <tr><td class="pin">1 Media</td><td>5–7 TAP</td><td>호스트 액션 토큰 0 · 1 · 2 <span class="muted">(비어 있음 — 직접 채우는 자리)</span></td></tr>
+        <tr><td class="pin">—</td><td>1+2 동시</td><td>실행 중인 호스트 액션 중지</td></tr>
+        <tr><td class="pin">2, 3</td><td>전부</td><td>비어 있음</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="callout stop">
+    <p><b>미디어 키(레이어 1의 1–4번)는 기본 빌드에서 동작하지 않습니다.</b> Arduino AVR 코어의
+    <code>Keyboard</code> 라이브러리에는 consumer page(볼륨·재생)가 없습니다. 펌웨어는 이 액션을
+    무시하고 시리얼로 보고만 합니다. 쓰려면 HID-Project를 설치하고
+    <code>Config.h</code>의 <code>MK_USE_HID_PROJECT</code>를 <b>1</b>로 바꿔 다시 올리세요.</p>
+<pre><code>arduino-cli lib install "HID-Project"</code></pre>
+  </div>
+</section>
+
+<!-- ================================================================ 키설정 == -->
+<section id="edit">
+  <div class="sec-head">
+    <p class="eyebrow">04</p>
+    <h2>키 설정하기 (GUI)</h2>
+  </div>
+  <p class="col">
+    <code>macrokey</code>를 인자 없이 실행하면 편집기가 열립니다. 화면은 <b>레이어 탭 4개</b>이고,
+    각 탭은 <b>키 8행 × 제스처 3열</b>의 격자입니다. 96개 슬롯이 그대로 화면에 있습니다.
+  </p>
+
+  <figure class="panel panel-scroll" style="margin:0">
+    <svg viewBox="0 0 780 300" role="img" aria-label="편집기 화면 구조. 위쪽 툴바에 포트와 쓰기 버튼, 아래에 레이어 탭과 키 8행 제스처 3열 격자가 있습니다.">
+      <!-- 창 -->
+      <rect x="20" y="20" width="740" height="260" rx="5" fill="var(--surface)" stroke="var(--rule-strong)" stroke-width="1.4"/>
+      <!-- 툴바 -->
+      <rect x="20" y="20" width="740" height="40" rx="5" fill="var(--surface-2)"/>
+      <text x="36" y="45" font-size="10.5" class="svg-label-2">Port</text>
+      <rect x="70" y="30" width="96" height="20" rx="3" fill="var(--surface)" stroke="var(--rule-strong)"/>
+      <text x="118" y="44" text-anchor="middle" font-size="9.5" class="svg-label-2">/dev/ttyACM0</text>
+      <rect x="176" y="30" width="60" height="20" rx="3" fill="var(--surface)" stroke="var(--rule-strong)"/>
+      <text x="206" y="44" text-anchor="middle" font-size="9.5" class="svg-label-2">Connect</text>
+      <rect x="300" y="30" width="46" height="20" rx="3" fill="var(--surface)" stroke="var(--rule-strong)"/>
+      <text x="323" y="44" text-anchor="middle" font-size="9.5" class="svg-label-2">Save</text>
+      <rect x="352" y="30" width="96" height="20" rx="3" fill="var(--accent)"/>
+      <text x="400" y="44" text-anchor="middle" font-size="9.5" font-weight="700" fill="#FFF">Write to device</text>
+      <rect x="454" y="30" width="104" height="20" rx="3" fill="var(--surface)" stroke="var(--rule-strong)"/>
+      <text x="506" y="44" text-anchor="middle" font-size="9.5" class="svg-label-2">Read from device</text>
+      <text x="592" y="45" font-size="10" class="svg-label-2">Brightness</text>
+      <line x1="660" y1="40" x2="740" y2="40" stroke="var(--rule-strong)" stroke-width="2"/>
+      <circle cx="680" cy="40" r="5" fill="var(--accent)"/>
+
+      <!-- 레이어 탭 -->
+      <rect x="34" y="70" width="64" height="22" rx="3" fill="var(--accent)"/>
+      <text x="66" y="85" text-anchor="middle" font-size="10" font-weight="700" fill="#FFF">Base</text>
+      <rect x="100" y="70" width="64" height="22" rx="3" fill="var(--surface-2)" stroke="var(--rule)"/>
+      <text x="132" y="85" text-anchor="middle" font-size="10" class="svg-label-2">Media</text>
+      <rect x="166" y="70" width="64" height="22" rx="3" fill="var(--surface-2)" stroke="var(--rule)"/>
+      <text x="198" y="85" text-anchor="middle" font-size="10" class="svg-label-2">Layer 2</text>
+      <rect x="232" y="70" width="64" height="22" rx="3" fill="var(--surface-2)" stroke="var(--rule)"/>
+      <text x="264" y="85" text-anchor="middle" font-size="10" class="svg-label-2">Layer 3</text>
+
+      <!-- 격자 헤더 -->
+      <text x="46" y="112" font-size="10" font-weight="700" class="svg-label">Key</text>
+      <text x="150" y="112" font-size="10" font-weight="700" class="svg-label">Tap</text>
+      <text x="330" y="112" font-size="10" font-weight="700" class="svg-label">Double</text>
+      <text x="510" y="112" font-size="10" font-weight="700" class="svg-label">Hold</text>
+
+      <!-- 행 -->
+      <g font-size="9.5">
+        <text x="48" y="134" class="svg-label-2">1</text>
+        <rect x="80" y="122" width="230" height="18" rx="2" fill="var(--surface-2)" stroke="var(--rule)"/>
+        <text x="90" y="135" class="svg-label">ctrl+alt+shift+1</text>
+        <rect x="320" y="122" width="160" height="18" rx="2" fill="var(--surface-2)" stroke="var(--rule)"/>
+        <text x="330" y="135" class="svg-label-2">-</text>
+        <rect x="490" y="122" width="160" height="18" rx="2" fill="var(--surface-2)" stroke="var(--rule)"/>
+        <text x="500" y="135" class="svg-label-2">-</text>
+
+        <text x="48" y="158" class="svg-label-2">2</text>
+        <rect x="80" y="146" width="230" height="18" rx="2" fill="var(--surface-2)" stroke="var(--rule)"/>
+        <text x="90" y="159" class="svg-label">ctrl+alt+shift+2</text>
+        <rect x="320" y="146" width="160" height="18" rx="2" fill="var(--surface-2)" stroke="var(--rule)"/>
+        <text x="330" y="159" class="svg-label-2">-</text>
+        <rect x="490" y="146" width="160" height="18" rx="2" fill="var(--surface-2)" stroke="var(--rule)"/>
+        <text x="500" y="159" class="svg-label-2">-</text>
+
+        <text x="48" y="196" class="svg-label-2">⋮</text>
+        <text x="180" y="196" class="svg-label-2">⋮</text>
+
+        <text x="48" y="228" class="svg-label-2">8</text>
+        <rect x="80" y="216" width="230" height="18" rx="2" fill="var(--surface-2)" stroke="var(--rule)"/>
+        <text x="90" y="229" class="svg-label">ctrl+alt+shift+8</text>
+        <rect x="320" y="216" width="160" height="18" rx="2" fill="var(--surface-2)" stroke="var(--rule)"/>
+        <text x="330" y="229" class="svg-label-2">-</text>
+        <rect x="490" y="216" width="160" height="18" rx="2" fill="var(--accent-soft)" stroke="var(--accent)"/>
+        <text x="500" y="229" fill="var(--accent)" font-weight="700">layer 1 while held</text>
+      </g>
+
+      <!-- 상태바 -->
+      <rect x="20" y="252" width="740" height="28" rx="5" fill="var(--surface-2)"/>
+      <text x="36" y="270" font-size="10" class="svg-label-2">Connected · promicro · 8 keys, 1 led, 4 layers</text>
+
+      <!-- 주석 -->
+      <path d="M400 56 L400 66" fill="none" stroke="var(--accent)" stroke-width="1.4"/>
+      <text x="672" y="112" text-anchor="end" font-size="10" fill="var(--accent)">칸을 클릭하면 편집 창</text>
+    </svg>
+    <figcaption class="caption" style="margin-top:8px">편집기 화면 구조</figcaption>
+  </figure>
+
+  <ol class="steps">
+    <li>
+      <h3>슬롯을 고른다</h3>
+      <div class="body">
+        <p>레이어 탭을 고르고, 원하는 <b>키 행</b>과 <b>제스처 열</b>이 만나는 칸을 클릭합니다.
+        칸에는 현재 들어 있는 동작이 표시돼 있습니다 (<span class="mono">-</span>는 비어 있음).</p>
+      </div>
+    </li>
+    <li>
+      <h3>동작을 고르고 값을 넣는다</h3>
+      <div class="body">
+        <p>편집 창에서 <b>Action</b>을 고르면 <b>Value</b>에 무엇을 넣어야 하는지 아래 힌트로
+        나옵니다. 액션 종류별로 필요한 값은 <a href="#actions">5장</a>에 정리했습니다.</p>
+        <p class="small muted">OK를 누르는 순간 값이 검증됩니다. 잘못된 단축키 이름은 장치에
+        쓸 때가 아니라 여기서 바로 걸립니다.</p>
+      </div>
+    </li>
+    <li>
+      <h3>저장하고 장치에 쓴다</h3>
+      <div class="body">
+        <p><b>Save</b>는 PC의 <code>profile.json</code>에만 저장합니다. 키패드에 실제로 반영되려면
+        <b>Write to device</b>를 눌러야 합니다. 이 둘은 다릅니다.</p>
+        <div class="callout">
+          <p><b>Write to device를 누르기 전까지 키패드는 바뀌지 않습니다.</b> 편집기에서 아무리
+          바꿔도 EEPROM에 쓰기 전에는 예전 설정으로 동작합니다. 뭔가 바꿨는데 반영이 안 된다면
+          십중팔구 이겁니다.</p>
+        </div>
+      </div>
+    </li>
+  </ol>
+
+  <p class="col">
+    <b>Read from device</b>는 반대 방향입니다. 장치에 있는 프로필을 읽어 편집기로 가져옵니다.
+    다른 PC에서 설정한 키패드를 이어받을 때 씁니다. 이때 <b>호스트 액션은 덮어쓰지 않습니다</b> —
+    장치는 토큰 번호만 갖고 있고 그 뒤의 실제 동작은 PC에만 있기 때문입니다.
+  </p>
+</section>
+
+<!-- ================================================================ 액션 == -->
+<section id="actions">
+  <div class="sec-head">
+    <p class="eyebrow">05</p>
+    <h2>키에 넣을 수 있는 것</h2>
+  </div>
+  <p class="col">
+    액션은 <b>장치에서 끝나는 것</b>과 <b>PC가 받아서 처리하는 것</b>으로 나뉩니다. 이 구분이
+    실사용에서 중요합니다. 장치 액션은 앱이 꺼져 있어도 동작하고 지연이 1 ms 미만입니다.
+  </p>
+
+  <div class="table-scroll">
+    <table>
+      <thead>
+        <tr><th>Action</th><th>Value에 넣는 것</th><th>실행</th><th>예</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="pin">key</td><td>단축키 문자열</td><td>장치</td>
+          <td class="mono2">ctrl+shift+p</td>
+        </tr>
+        <tr>
+          <td class="pin">consumer</td><td>미디어 키 이름</td><td>장치</td>
+          <td class="mono2">volume_up</td>
+        </tr>
+        <tr>
+          <td class="pin">mouse_button</td><td><span class="mono">left</span> · <span class="mono">right</span> · <span class="mono">middle</span></td><td>장치</td>
+          <td class="mono2">middle</td>
+        </tr>
+        <tr>
+          <td class="pin">layer_momentary</td><td>레이어 번호 0–3</td><td>장치</td>
+          <td class="mono2">1</td>
+        </tr>
+        <tr>
+          <td class="pin">layer_toggle</td><td>레이어 번호 0–3</td><td>장치</td>
+          <td class="mono2">2</td>
+        </tr>
+        <tr>
+          <td class="pin">host</td><td>토큰 번호 0–255</td><td><b>PC</b></td>
+          <td class="mono2">7</td>
+        </tr>
+        <tr>
+          <td class="pin">none</td><td>—</td><td>—</td>
+          <td class="muted">비우기</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3 style="margin-top:10px">단축키 문자열 문법</h3>
+  <p class="col">
+    수식키를 <code>+</code>로 잇고 마지막에 일반 키 하나를 씁니다. 순서는 상관없습니다.
+  </p>
+  <div class="table-scroll">
+    <table>
+      <thead><tr><th>쓰는 법</th><th>별칭</th></tr></thead>
+      <tbody>
+        <tr><td class="mono2">ctrl</td><td class="mono2">control</td></tr>
+        <tr><td class="mono2">alt</td><td class="mono2">option</td></tr>
+        <tr><td class="mono2">shift</td><td>—</td></tr>
+        <tr><td class="mono2">gui</td><td class="mono2">win · windows · cmd · super</td></tr>
+        <tr><td class="mono2">rctrl · ralt · rshift · rgui</td><td>오른쪽 수식키</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="col small muted">
+    수식키만 넣는 것도 됩니다 (일반 키 없이 <code>ctrl+shift</code>). 일반 키를 두 개 이상 넣으면
+    거부됩니다.
+  </p>
+
+  <h3 style="margin-top:10px">미디어 키 이름</h3>
+  <p class="col mono2" style="line-height:2">
+    volume_up · volume_down · mute · play_pause · stop · next_track · prev_track ·
+    brightness_up · brightness_down
+  </p>
+  <div class="callout">
+    <p>앞에서 말한 대로 <b><code>MK_USE_HID_PROJECT</code>를 1로 빌드해야 실제로 나갑니다.</b>
+    0인 기본 빌드에서는 조용히 무시됩니다.</p>
+  </div>
+</section>
+
+<!-- ================================================================ 녹화 == -->
+<section id="record">
+  <div class="sec-head">
+    <p class="eyebrow">06</p>
+    <h2>매크로 녹화</h2>
+  </div>
+  <p class="col">
+    직접 한 동작을 그대로 키에 굽는 방법입니다. 편집 창의 <b>Record…</b> 버튼 또는
+    <code>macrokey record</code>로 시작합니다.
+  </p>
+
+  <ol class="steps">
+    <li>
+      <h3>Start를 누르고 실제로 해 본다</h3>
+      <div class="body">
+        <p>녹화 중에는 <b>LED가 빨강으로 맥동</b>합니다. 조용히 키 입력을 기록하지 않습니다.
+        <span class="kbd">Esc</span>를 누르면 멈춥니다.</p>
+      </div>
+    </li>
+    <li>
+      <h3>앱이 정리한 결과를 확인한다</h3>
+      <div class="body">
+        <p>사람이 친 그대로 저장하면 재생도 사람 속도로 느리게 나옵니다. 그래서 앱이 다음을
+        자동으로 합니다.</p>
+        <ul>
+          <li><b>수식키 접기</b> — <span class="mono">ctrl↓ c↓ c↑ ctrl↑</span>를 <span class="mono">hotkey ctrl+c</span> 하나로</li>
+          <li><b>지연 양자화</b> — 10 ms 단위로 반올림하고 40 ms 미만 간격은 버림</li>
+          <li><b>연속 문자 병합</b> — 낱개 타자를 <span class="mono">text</span> 액션 하나로</li>
+          <li><b>자기 입력 제외</b> — 녹화 중 키패드 자신이 보낸 입력은 무시</li>
+        </ul>
+        <p>정리된 결과가 사람이 읽을 수 있는 목록으로 나옵니다. 확인하고 <b>Bind</b>를 누르면
+        해당 슬롯에 들어갑니다.</p>
+      </div>
+    </li>
+    <li>
+      <h3>장치에 쓴다</h3>
+      <div class="body">
+        <p>녹화 결과가 장치 액션 하나로 표현되면(단일 단축키 등) EEPROM에 굽고, 아니면 호스트
+        액션으로 저장한 뒤 슬롯에는 토큰만 넣습니다. <b>이 배치는 앱이 알아서 하므로 신경 쓸
+        필요가 없습니다.</b> 마지막에 <code>macrokey push</code> 또는 <b>Write to device</b>.</p>
+      </div>
+    </li>
+  </ol>
+</section>
+
+<!-- ============================================================== 호스트액션 == -->
+<section id="host">
+  <div class="sec-head">
+    <p class="eyebrow">07</p>
+    <h2>호스트 액션 — 긴 것, 똑똑한 것</h2>
+  </div>
+  <p class="col">
+    EEPROM 1 KB에 넣을 수 없는 것들이 여기 들어갑니다. 긴 텍스트, 이미지 클립보드 붙여넣기,
+    셸 명령. 장치는 <span class="mono">EV t=host tok=N</span> 한 줄만 흘려보내고 실제 일은 PC가
+    합니다. <b>앱이 꺼져 있으면 아무 일도 일어나지 않습니다.</b>
+  </p>
+
+  <div class="callout">
+    <p><b>호스트 액션을 만드는 GUI는 아직 없습니다.</b> 편집기에서는 "몇 번 토큰을 쓸지"만 고를 수
+    있고, 그 토큰이 실제로 무엇을 하는지는 <code>profile.json</code>의
+    <code>host_actions</code>를 직접 편집해서 정합니다. 녹화 기능은 예외로, 필요할 때 토큰을
+    자동으로 만들어 줍니다.</p>
+  </div>
+
+  <div class="table-scroll">
+    <table>
+      <thead>
+        <tr><th>type</th><th>하는 일</th><th>params</th></tr>
+      </thead>
+      <tbody>
+        <tr><td class="pin">hotkey</td><td>단축키 전송</td><td class="mono2">hotkey, hold_ms</td></tr>
+        <tr><td class="pin">text</td><td>텍스트 타이핑</td><td class="mono2">text</td></tr>
+        <tr><td class="pin">clipboard_image</td><td>이미지를 클립보드에 넣고 붙여넣기</td><td class="mono2">path, paste, press_enter</td></tr>
+        <tr><td class="pin">shell</td><td>명령 실행 (기다리지 않음)</td><td class="mono2">command, cwd</td></tr>
+        <tr><td class="pin">delay</td><td>대기</td><td class="mono2">ms</td></tr>
+        <tr><td class="pin">layer</td><td>장치 레이어 전환</td><td class="mono2">layer</td></tr>
+        <tr><td class="pin">sequence</td><td>여러 액션을 순서대로</td><td class="mono2">steps</td></tr>
+        <tr><td class="pin">stop</td><td>실행 중인 호스트 액션 중지</td><td>—</td></tr>
+        <tr><td class="pin">noop</td><td>아무것도 안 함</td><td>—</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3 style="margin-top:10px">예: 토큰 0에 이미지 붙여넣기 넣기</h3>
+  <p class="col">
+    <code>profile.json</code>을 열고 <code>host_actions</code>에 항목을 추가합니다.
+    기본 프로필에서 레이어 1의 5번 키가 이미 토큰 0을 가리키고 있으므로, 이것만 채우면
+    바로 동작합니다.
+  </p>
+<pre><code>"host_actions": {
+  "0": {
+    "type": "clipboard_image",
+    "name": "도장 이미지",
+    "params": {
+      "path": "macros/macro_1.png",
+      "paste": true,
+      "press_enter": false
+    }
+  },
+  "1": {
+    "type": "text",
+    "name": "서명",
+    "params": { "text": "정우현 / Maduinos\n" }
+  },
+  "2": {
+    "type": "shell",
+    "name": "터미널 열기",
+    "params": { "command": "gnome-terminal" }
+  }
+}</code></pre>
+
+  <p class="col small muted">
+    <code>path</code>가 상대 경로면 <code>host/</code> 기준입니다 —
+    <code>macros/macro_1.png</code>는 <code>host/macros/macro_1.png</code>를 가리킵니다.
+    <code>command</code>는 문자열로 쓰면 셸 문법으로 쪼개지고, 배열로 쓰면 그대로 전달됩니다.
+  </p>
+
+  <h3 style="margin-top:10px">예: 여러 동작을 순서대로</h3>
+<pre><code>"7": {
+  "type": "sequence",
+  "name": "회의록 템플릿",
+  "params": {
+    "steps": [
+      { "type": "hotkey", "params": { "hotkey": "ctrl+n" } },
+      { "type": "delay",  "params": { "ms": 300 } },
+      { "type": "text",   "params": { "text": "## 회의록\n일시: " } }
+    ]
+  }
+}</code></pre>
+
+  <div class="callout">
+    <p><b>폭주 방지가 걸려 있습니다.</b> 시퀀스에는 최대 스텝 수와 총 실행 시간 상한이 있고,
+    <b>1번+2번 키를 동시에 누르면</b> 실행 중인 호스트 액션이 즉시 중지됩니다. 긴 시퀀스를
+    만들 때 이 조합을 기억해 두세요.</p>
+  </div>
+
+  <p class="col">
+    파일을 고친 뒤에는 앱을 다시 시작하거나, GUI에서 <b>Read from device</b> 없이 그냥 껐다
+    켜면 반영됩니다. 호스트 액션은 장치에 쓰지 않으므로 <code>push</code>는 필요 없습니다.
+  </p>
+</section>
+
+<!-- ================================================================ CLI == -->
+<section id="cli">
+  <div class="sec-head">
+    <p class="eyebrow">08</p>
+    <h2>CLI로 하기</h2>
+  </div>
+  <p class="col">
+    모든 명령이 GUI 없이 동작합니다. 데스크톱 세션이 없는 장비에서 쓰거나 스크립트로 묶을 때
+    이쪽이 편합니다.
+  </p>
+
+  <div class="table-scroll">
+    <table>
+      <thead><tr><th>명령</th><th>하는 일</th></tr></thead>
+      <tbody>
+        <tr><td class="mono2">macrokey</td><td>편집기 창 (기본값)</td></tr>
+        <tr><td class="mono2">macrokey ports</td><td>시리얼 포트 목록. <span class="mono">*</span>가 유력 후보</td></tr>
+        <tr><td class="mono2">macrokey info</td><td>장치 정보 + 프로필 동기화 여부</td></tr>
+        <tr><td class="mono2">macrokey push</td><td>PC 프로필을 장치에 기록</td></tr>
+        <tr><td class="mono2">macrokey pull</td><td>장치 프로필을 JSON으로 출력</td></tr>
+        <tr><td class="mono2">macrokey pull --save</td><td>읽은 것을 PC 프로필로 채택</td></tr>
+        <tr><td class="mono2">macrokey monitor</td><td>키를 누를 때마다 이벤트 출력. <b>배선 확인에 최적</b></td></tr>
+        <tr><td class="mono2">macrokey daemon</td><td>창 없이 호스트 액션 + LED만 실행</td></tr>
+        <tr><td class="mono2">macrokey record --key N</td><td>녹화해서 슬롯에 바인딩</td></tr>
+        <tr><td class="mono2">macrokey state &lt;상태&gt;</td><td>실행 중인 앱에 상태 이벤트 전송</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p class="col">
+    전역 옵션: <code>--port &lt;포트&gt;</code>(생략하면 자동 탐색), <code>--verbose</code>,
+    <code>--version</code>.
+  </p>
+
+<pre><code># 3번 키의 hold 슬롯에 녹화해서 넣기
+macrokey record --key 3 --gesture hold --layer 0 --name "빌드 실행"
+
+# 배선이 맞는지 확인 — 키를 누르면 어느 키인지 찍힘
+macrokey monitor</code></pre>
+
+  <div class="callout tip">
+    <p><b>조립 직후에는 <code>macrokey monitor</code>부터 돌리세요.</b> 키를 하나씩 누르면
+    <span class="mono">EV t=key k=0 g=tap</span> 같은 줄이 찍힙니다. 번호가 어긋나거나 아무것도
+    안 나오면 그 키의 배선 문제입니다. 프로필을 건드리기 전에 하드웨어부터 확인하는 게
+    빠릅니다.</p>
+  </div>
+</section>
+
+<!-- ================================================================= LED == -->
+<section id="led">
+  <div class="sec-head">
+    <p class="eyebrow">09</p>
+    <h2>LED로 상태 보기</h2>
+  </div>
+  <p class="col">
+    픽셀 하나가 네 가지 소스를 우선순위로 합성해 보여줍니다. 위에 있는 것이 이깁니다.
+  </p>
+
+  <div class="table-scroll">
+    <table>
+      <thead><tr><th>우선순위</th><th>소스</th><th>어떻게 보이는가</th></tr>
+      </thead>
+      <tbody>
+        <tr><td class="pin">1</td><td>키 누름</td><td>흰색으로 120 ms 반짝 — 어느 키든 동일</td></tr>
+        <tr><td class="pin">2</td><td>레이어</td><td>레이어 색. <b>실질적으로 가장 유용한 용도</b></td></tr>
+        <tr><td class="pin">3</td><td>호스트 앰비언트</td><td>상태 색 + 효과 (breathe · blink · pulse)</td></tr>
+        <tr><td class="pin">4</td><td>기본 씬</td><td>프로필에 저장된 바탕색</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p class="col">
+    앰비언트를 쓰려면 앱이 떠 있어야 합니다. <code>macrokey daemon</code>을 띄우면 유닉스 소켓이
+    열리고, 아무 스크립트나 거기에 JSON 한 줄을 쓰면 LED가 반응합니다.
+  </p>
+
+<pre><code>macrokey daemon &amp;
+macrokey state running --progress 0.5
+macrokey state error --severity critical
+macrokey state idle</code></pre>
+
+  <div class="table-scroll">
+    <table>
+      <thead><tr><th>상태</th><th>색</th><th>효과</th></tr></thead>
+      <tbody>
+        <tr><td class="mono2">idle</td><td>어두운 청록</td><td>solid</td></tr>
+        <tr><td class="mono2">thinking · planning</td><td>보라</td><td>breathe</td></tr>
+        <tr><td class="mono2">reading</td><td>파랑</td><td>solid</td></tr>
+        <tr><td class="mono2">editing</td><td>초록</td><td>solid</td></tr>
+        <tr><td class="mono2">running</td><td>청록</td><td>pulse</td></tr>
+        <tr><td class="mono2">waiting</td><td>노랑</td><td>blink (느림)</td></tr>
+        <tr><td class="mono2">approval</td><td>주황</td><td>blink (빠름)</td></tr>
+        <tr><td class="mono2">success</td><td>초록</td><td>flash 후 감쇠</td></tr>
+        <tr><td class="mono2">error</td><td>빨강</td><td>blink</td></tr>
+        <tr><td class="mono2">offline</td><td>소등</td><td>—</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p class="col small muted">
+    <code>--progress</code>는 8픽셀 스트립이면 진행률 바가 되지만, 픽셀 1개인 지금은
+    <b>밝기</b>로 나타납니다 — 0.3이면 상태 색의 30% 밝기. 거칠지만 작업이 돌아가고 있다는 것은
+    읽힙니다. 앱을 끄면 3초 뒤 장치가 자동으로 기본 씬으로 돌아가므로 마지막 색으로
+    얼어붙지 않습니다.
+  </p>
+
+  <p class="col">
+    밝기는 편집기 툴바의 <b>Brightness</b> 슬라이더로 즉시 바뀝니다(0–255). 픽셀이 하나라
+    전력 여유가 넉넉하니 255까지 올려도 안전합니다.
+  </p>
+</section>
+
+<!-- ================================================================ 파일 == -->
+<section id="files">
+  <div class="sec-head">
+    <p class="eyebrow">10</p>
+    <h2>파일 위치와 백업</h2>
+  </div>
+  <div class="table-scroll">
+    <table>
+      <thead><tr><th>플랫폼</th><th>경로</th></tr></thead>
+      <tbody>
+        <tr><td>Linux</td><td class="mono2">~/.config/macrokey/</td></tr>
+        <tr><td>macOS</td><td class="mono2">~/Library/Application Support/MaduinosMacroKey/</td></tr>
+        <tr><td>Windows</td><td class="mono2">%APPDATA%\MaduinosMacroKey\</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="table-scroll">
+    <table>
+      <thead><tr><th>파일</th><th>내용</th></tr></thead>
+      <tbody>
+        <tr><td class="mono2">profile.json</td><td>키맵 · 액션 · 호스트 액션 · LED 색</td></tr>
+        <tr><td class="mono2">settings.json</td><td>포트 · 자동 연결 · LED/AgentPet 사용 여부 · 녹화 최소 간격</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="col">
+    백업은 <code>profile.json</code> 하나만 복사하면 됩니다. <code>MACROKEY_CONFIG_DIR</code>
+    환경 변수로 위치를 바꿀 수 있어서, 설정을 저장소에 두고 심볼릭 링크로 관리해도 됩니다.
+  </p>
+  <div class="callout tip">
+    <p><b>키패드 자체가 백업입니다.</b> 프로필은 장치 EEPROM에도 들어 있으므로 PC를 바꿔도
+    <code>macrokey pull --save</code> 한 번이면 키맵을 되찾습니다. 다만 <b>호스트 액션은 PC에만
+    있습니다</b> — 장치는 토큰 번호만 기억합니다. 이미지 붙여넣기나 셸 명령을 쓰고 있다면
+    <code>profile.json</code>을 따로 챙기세요.</p>
+  </div>
+</section>
+
+<!-- ================================================================ 레시피 == -->
+<section id="recipes">
+  <div class="sec-head">
+    <p class="eyebrow">11</p>
+    <h2>레시피</h2>
+  </div>
+  <div class="recipes">
+    <div class="recipe">
+      <h3>자주 쓰는 단축키 8개를 바로 얹기</h3>
+      <p>가장 흔한 사용법. 레이어 0의 TAP 8칸을 원하는 단축키로 바꾸고 장치에 씁니다.
+      여기까지는 앱을 꺼도 동작합니다.</p>
+      <pre><code>Base 탭 → 각 행의 Tap 칸 클릭
+Action: key
+Value: ctrl+shift+p
+→ Write to device</code></pre>
+    </div>
+
+    <div class="recipe">
+      <h3>실수하면 곤란한 동작을 DOUBLE에</h3>
+      <p>"전체 빌드 삭제"처럼 되돌리기 어려운 것은 TAP이 아니라 DOUBLE에 넣습니다.
+      그 키의 TAP은 250 ms 늦어지니, 자주 쓰는 키는 피하세요.</p>
+      <pre><code>Double 칸 → Action: host
+Value: 9   (profile.json에 9번 정의)</code></pre>
+    </div>
+
+    <div class="recipe">
+      <h3>레이어를 하나 더 열기</h3>
+      <p>기본은 8번 HOLD로 레이어 1만 씁니다. 7번 HOLD에 레이어 2를 걸면 슬롯이 8개 더
+      생깁니다.</p>
+      <pre><code>Base 탭 → 7행 Hold 칸
+Action: layer_momentary
+Value: 2</code></pre>
+    </div>
+
+    <div class="recipe">
+      <h3>자주 쓰는 문구 붙여넣기</h3>
+      <p>이메일 서명이나 주소처럼 긴 텍스트는 장치에 안 들어갑니다. 호스트 액션
+      <span class="mono">text</span>로 만들고 키를 토큰에 연결합니다.</p>
+      <pre><code>profile.json:
+"3": { "type": "text",
+       "params": { "text": "..." } }
+
+편집기: Action: host / Value: 3</code></pre>
+    </div>
+
+    <div class="recipe">
+      <h3>프로그램 실행 버튼 만들기</h3>
+      <p><span class="mono">shell</span>은 실행하고 기다리지 않습니다. 프로그램이 끝날 때까지
+      막히지 않도록 일부러 그렇게 돼 있습니다.</p>
+      <pre><code>"4": { "type": "shell",
+       "params": { "command": "code ~/work" } }</code></pre>
+    </div>
+
+    <div class="recipe">
+      <h3>빌드 상태를 LED로 보기</h3>
+      <p>CI 스크립트나 빌드 훅에서 상태를 흘려보내면 픽셀이 반응합니다.</p>
+      <pre><code>macrokey daemon &amp;
+make && macrokey state success \
+     || macrokey state error</code></pre>
+    </div>
+  </div>
+</section>
+
+<!-- ================================================================ 한계 == -->
+<section id="limits">
+  <div class="sec-head">
+    <p class="eyebrow">12</p>
+    <h2>지금은 안 되는 것</h2>
+  </div>
+  <p class="col">
+    설계 문서에 있지만 아직 손이 닿지 않은 부분입니다. 문서를 믿고 찾다가 헤매지 않도록
+    적어 둡니다.
+  </p>
+  <div class="table-scroll">
+    <table>
+      <thead><tr><th>기능</th><th>현재 상태</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>앱별 자동 레이어 전환</td>
+          <td>활성 창을 읽는 백엔드와 <code>set_app_layer_rules()</code> API는 있지만
+              <b>아무 데서도 호출하지 않습니다.</b> 설정 파일에 규칙을 적는 자리도 아직 없습니다.</td>
+        </tr>
+        <tr>
+          <td>호스트 액션 편집 GUI</td>
+          <td>토큰 지정만 가능. 실제 내용은 <code>profile.json</code> 직접 편집
+              (녹화로 만드는 경우는 예외)</td>
+        </tr>
+        <tr>
+          <td>미디어 키 (consumer)</td>
+          <td><code>MK_USE_HID_PROJECT=1</code>로 다시 빌드해야 동작</td>
+        </tr>
+        <tr>
+          <td>마우스 이동 · 휠</td>
+          <td>펌웨어와 프로토콜에는 있지만 편집기에서 고를 수 없음.
+              <code>profile.json</code>을 직접 고치면 사용 가능</td>
+        </tr>
+        <tr>
+          <td>장치 매크로 (<span class="mono">sequence</span>)</td>
+          <td>EEPROM에 480 B가 배정돼 있지만 편집기에 만드는 화면이 없음</td>
+        </tr>
+        <tr>
+          <td>진행률 바</td>
+          <td>픽셀이 1개라 밝기 변조로 대체 (스트립으로 늘리면 코드 변경 없이 바가 됨)</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<footer>
+  <p>
+    macroKey · 사용 설명서 · 호스트 앱 0.3.0 —
+    배선은 <a href="wiring.html">wiring.html</a>, 설계 배경은 <code>docs/ARCHITECTURE.md</code>,
+    프로토콜 규격은 <code>docs/PROTOCOL.md</code>를 보세요.
+  </p>
+</footer>
+
+</div>
+</body>
+</html>

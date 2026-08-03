@@ -10,6 +10,7 @@ from .model import (
     CHORD_SLOTS,
     GESTURES,
     KEY_COUNT,
+    LAYER_COLORS,
     LAYER_COUNT,
     LED_COUNT,
     MACRO_SLOTS,
@@ -85,9 +86,13 @@ def encode_profile(profile: Profile) -> bytes:
                 address = _keymap_address(layer_index, key_index, gesture_index)
                 blob[address : address + 4] = bytes(slot.gesture(gesture).encode())
 
-            red, green, blue = _parse_color(slot.color)
-            palette = PALETTE_OFFSET + (layer_index * LED_COUNT + key_index) * 3
-            blob[palette : palette + 3] = bytes((red, green, blue))
+            # The palette has one entry per pixel, not per key. With fewer
+            # pixels than keys only the leading slots have somewhere to go;
+            # writing the rest would run over the following layer.
+            if key_index < LED_COUNT:
+                red, green, blue = _parse_color(slot.color)
+                palette = PALETTE_OFFSET + (layer_index * LED_COUNT + key_index) * 3
+                blob[palette : palette + 3] = bytes((red, green, blue))
 
     for chord_index, chord in enumerate(profile.chords[:CHORD_SLOTS]):
         address = CHORD_OFFSET + chord_index * CHORD_ENTRY_SIZE
@@ -139,8 +144,11 @@ def decode_profile(blob: bytes, *, name: str = "device") -> Profile:
             for gesture_index, gesture in enumerate(GESTURES):
                 address = _keymap_address(layer_index, key_index, gesture_index)
                 actions[gesture] = Action.decode(*blob[address : address + 4])
-            palette = PALETTE_OFFSET + (layer_index * LED_COUNT + key_index) * 3
-            color = bytes(blob[palette : palette + 3]).hex()
+            if key_index < LED_COUNT:
+                palette = PALETTE_OFFSET + (layer_index * LED_COUNT + key_index) * 3
+                color = bytes(blob[palette : palette + 3]).hex()
+            else:
+                color = LAYER_COLORS[layer_index % len(LAYER_COLORS)]
             slots.append(KeySlot(color=color, **actions))
         layers.append(Layer(name=f"Layer {layer_index}", keys=slots))
 

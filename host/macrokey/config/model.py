@@ -13,7 +13,9 @@ from typing import Any
 from . import keycodes
 
 KEY_COUNT = 8
-LED_COUNT = 8
+# One WS2812B on the pad. Kept separate from KEY_COUNT because the two are
+# genuinely independent: the palette is per pixel, the keymap is per key.
+LED_COUNT = 1
 LAYER_COUNT = 4
 CHORD_SLOTS = 8
 MACRO_SLOTS = 16
@@ -378,6 +380,8 @@ def default_profile() -> Profile:
     the first connection reports a spurious mismatch.
     """
     profile = Profile(name="default", brightness=64, base_layer=0)
+    # Every key in a layer carries the same colour: with one pixel the LED shows
+    # which layer is active, not which key was hit.
     profile.layers = [
         Layer(name=name, keys=[KeySlot(color=LAYER_COLORS[index]) for _ in range(KEY_COUNT)])
         for index, name in enumerate(("Base", "Media", "Layer 2", "Layer 3"))
