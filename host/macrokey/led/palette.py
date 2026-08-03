@@ -67,7 +67,9 @@ def scene_for(
     if scene is None:
         scene = STATE_SCENES.get(state or "", DEFAULT_SCENE)
     if progress is not None:
-        # Eight pixels make a genuinely readable progress bar, which is the best
-        # use of a linear strip when a task reports how far along it is.
+        # The device fills pixels in order and dims the leading one by the
+        # remainder. On the one-pixel pad that degenerates to brightness: 30%
+        # done is the state colour at 30% -- coarse, but it does read as motion
+        # once a task is actually running. A strip would show a real bar.
         scene = scene.with_bar(int(round(max(0.0, min(1.0, progress)) * 100)))
     return scene

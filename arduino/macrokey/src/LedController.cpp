@@ -32,7 +32,11 @@ void LedController::begin(Profile *profile) {
 }
 
 void LedController::notePress(uint8_t key, uint32_t now) {
-  if (key < MK_LED_COUNT) pressedAt_[key] = now;
+  // With one pixel per key each press lights its own. With fewer pixels than
+  // keys the surplus keys fold onto the last one, so every key still gives
+  // feedback -- dropping the press outright would leave most of the pad dark.
+  uint8_t index = key < MK_LED_COUNT ? key : MK_LED_COUNT - 1;
+  pressedAt_[index] = now;
 }
 
 void LedController::setHostMode(bool enabled, uint32_t now) {

@@ -20,6 +20,7 @@ Out of scope:
 
 ## Checklist
 
-- If `arduino-cli` is available, run `arduino-cli compile --fqbn arduino:avr:leonardo arduino/05_macrokey`.
-- Run `python3 -m py_compile python_app/macro_key_app.py`.
+- If `arduino-cli` is available, run
+  `arduino-cli compile --fqbn SparkFun:avr:promicro:cpu=16MHzatmega32U4 arduino/macrokey`.
+- Run `python3 -m compileall -q host/macrokey`.
 - Confirm the sketch does not send unintended keyboard shortcuts during local verification.
