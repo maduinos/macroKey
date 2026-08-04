@@ -3,12 +3,12 @@
 Pro Micro(ATmega32u4, **5 V / 16 MHz 버전**) 기준입니다. 전원은 PC USB 하나뿐입니다.
 
 > 그림으로 된 배선 다이어그램(핀 맵, 버튼 1개 상세, WS2812B 결선, 전체 결선도, 전력 예산)은
-> [`wiring.html`](wiring.html)에 있습니다. 브라우저로 열거나 그대로 인쇄해서 작업대에 두고 쓰세요.
+> [`../wiring.html`](../wiring.html)에 있습니다. 브라우저로 열거나 그대로 인쇄해서 작업대에 두고 쓰세요.
 > 이 문서는 같은 내용의 텍스트 요약입니다.
 
 ## 핀 맵
 
-`arduino/macrokey/src/Config.h`의 `MK_KEY_PINS`와 `MK_LED_PIN`이 유일한 진실 공급원입니다.
+`firmware/src/Config.h`의 `MK_KEY_PINS`와 `MK_LED_PIN`이 유일한 진실 공급원입니다.
 아래 표는 기본값입니다.
 
 | 기능 | 핀 | 위치 | 비고 |
@@ -106,8 +106,8 @@ arduino-cli core update-index
 arduino-cli core install SparkFun:avr
 arduino-cli lib install "Adafruit NeoPixel"
 
-arduino-cli compile --fqbn SparkFun:avr:promicro:cpu=16MHzatmega32U4 arduino/macrokey
-arduino-cli upload  --fqbn SparkFun:avr:promicro:cpu=16MHzatmega32U4 -p /dev/ttyACM0 arduino/macrokey
+arduino-cli compile --fqbn SparkFun:avr:promicro:cpu=16MHzatmega32U4 firmware
+arduino-cli upload  --fqbn SparkFun:avr:promicro:cpu=16MHzatmega32U4 -p /dev/ttyACM0 firmware
 ```
 
 `Keyboard`와 `Mouse`는 AVR 코어에 포함돼 있어 따로 설치하지 않습니다.

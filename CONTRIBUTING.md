@@ -21,6 +21,6 @@ Out of scope:
 ## Checklist
 
 - If `arduino-cli` is available, run
-  `arduino-cli compile --fqbn SparkFun:avr:promicro:cpu=16MHzatmega32U4 arduino/macrokey`.
-- Run `python3 -m compileall -q host/macrokey`.
+  `arduino-cli compile --fqbn SparkFun:avr:promicro:cpu=16MHzatmega32U4 firmware`.
+- Run `python3 -m compileall -q macrokey`.
 - Confirm the sketch does not send unintended keyboard shortcuts during local verification.

@@ -1,0 +1,504 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>macroKey 배선 가이드</title>
+<style>
+:root {
+  --ground:#F1F4F0; --surface:#FFFFFF; --surface-2:#E9EEE9;
+  --ink:#14201C; --ink-2:#55645E; --ink-3:#7C8A84;
+  --rule:#D3DBD5; --rule-strong:#B4C0B9;
+  --accent:#0E8F87; --accent-soft:#E0F0EE;
+  --warn:#B5651D; --warn-soft:#FBEEDD;
+  --danger:#B33A2B; --danger-soft:#FBE7E3;
+
+  /* 실물 색은 테마와 무관하게 유지합니다. 빨간 전선은 어두운 작업대에서도 빨갛습니다. */
+  --pcb:#1B3A5C; --pcb-dark:#0F2540; --pad:#C9A227;
+  --w-5v:#C6412F; --w-gnd:#2A2F31; --w-data:#D89020; --w-sig:#0E8F87;
+  --mod-pcb:#ECEFE9; --metal:#C3C9CC;
+
+  --f-sans: Ubuntu, "Segoe UI", -apple-system, BlinkMacSystemFont, "Noto Sans KR", Arial, sans-serif;
+  --f-mono: ui-monospace, "JetBrains Mono", "DejaVu Sans Mono", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ground:#0E1512; --surface:#16201C; --surface-2:#1D2A25;
+    --ink:#E7EEE9; --ink-2:#9DAEA7; --ink-3:#74857E;
+    --rule:#26332E; --rule-strong:#35463F;
+    --accent:#38C6B5; --accent-soft:#10312D;
+    --warn:#D69A4E; --warn-soft:#2B2114;
+    --danger:#E1705C; --danger-soft:#2E1712;
+    --w-gnd:#8A9599; --w-sig:#38C6B5; --mod-pcb:#D8DCD6;
+  }
+}
+* { box-sizing: border-box; }
+body {
+  margin:0; background:var(--ground); color:var(--ink);
+  font-family:var(--f-sans); font-size:15px; line-height:1.62;
+  -webkit-font-smoothing:antialiased;
+}
+.wrap { max-width:900px; margin:0 auto; padding:40px 22px 64px; }
+header { border-bottom:2px solid var(--ink); padding-bottom:16px; margin-bottom:8px; }
+h1 { font-size:30px; letter-spacing:-.02em; margin:0 0 6px; }
+.lede { color:var(--ink-2); margin:0; }
+h2 { font-size:19px; margin:34px 0 10px; padding-top:14px; border-top:1px solid var(--rule); }
+h2 .n { color:var(--accent); font-variant-numeric:tabular-nums; margin-right:8px; }
+p { margin:0 0 10px; }
+ol { margin:0 0 12px; padding-left:20px; }
+li { margin:5px 0; }
+code, .mono { font-family:var(--f-mono); font-size:.88em; }
+code { background:var(--surface-2); padding:1px 5px; border-radius:3px; }
+pre {
+  background:var(--surface); border:1px solid var(--rule); border-left:3px solid var(--accent);
+  border-radius:4px; padding:11px 13px; overflow-x:auto; margin:0 0 12px;
+}
+pre code { background:none; padding:0; font-size:12.5px; line-height:1.6; }
+.scroll { overflow-x:auto; margin:0 0 12px; }
+table { border-collapse:collapse; width:100%; font-size:13.5px; }
+th, td { text-align:left; padding:6px 10px; border-bottom:1px solid var(--rule); vertical-align:top; }
+th { background:var(--surface-2); font-size:12px; letter-spacing:.03em; text-transform:uppercase; color:var(--ink-2); }
+td.pin { font-family:var(--f-mono); font-size:12.5px; white-space:nowrap; }
+.dot { display:inline-block; width:9px; height:9px; border-radius:50%; margin-right:7px; border:1px solid rgba(0,0,0,.25); }
+.panel {
+  background:var(--surface); border:1px solid var(--rule); border-radius:5px;
+  padding:16px 14px 10px; margin:0 0 12px;
+}
+.panel-scroll { overflow-x:auto; }
+.panel svg { display:block; width:100%; height:auto; min-width:620px; }
+.caption { font-size:12.5px; color:var(--ink-3); text-align:center; margin:0; }
+.svg-label { fill: var(--ink); }
+.svg-label-2 { fill: var(--ink-2); }
+.note {
+  border-left:3px solid var(--accent); background:var(--accent-soft);
+  padding:9px 13px; border-radius:0 4px 4px 0; margin:0 0 12px; font-size:14px;
+}
+.note.warn { border-color:var(--warn); background:var(--warn-soft); }
+.note.stop { border-color:var(--danger); background:var(--danger-soft); }
+.muted { color:var(--ink-2); }
+.small { font-size:13px; }
+footer { margin-top:36px; padding-top:14px; border-top:1px solid var(--rule); color:var(--ink-3); font-size:12.5px; }
+a { color:var(--accent); }
+@media print {
+  :root { --ground:#fff; --surface:#fff; --surface-2:#f2f2f2; --ink:#000; --ink-2:#444; }
+  .wrap { max-width:none; padding:0; }
+  h2 { break-after:avoid; }
+  .panel, table, .note, pre { break-inside:avoid; }
+  .panel svg { min-width:0; }
+  .panel-scroll, .scroll { overflow:visible; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>macroKey 배선 가이드</h1>
+  <p class="lede">
+    <b>Pro Micro(ATmega32u4, 5 V / 16 MHz)</b> + 택트 스위치 8개 + <b>WS2812B 1개</b>.
+    전원은 <b>PC USB 하나뿐</b>입니다. 핀 번호의 유일한 진실 공급원은
+    <code>firmware/src/Config.h</code>이고, 핀을 바꾸려면 이 문서가 아니라 그 파일을 고칩니다.
+    사용법은 <a href="manual.html">manual.html</a>을 보세요.
+  </p>
+</header>
+
+<h2><span class="n">01</span>연결 요약</h2>
+
+<div class="scroll">
+<table>
+  <thead><tr><th>Pro Micro</th><th>연결 대상</th><th>중간에 들어가는 것</th><th>비고</th></tr></thead>
+  <tbody>
+    <tr>
+      <td class="pin"><span class="dot" style="background:var(--w-sig)"></span>D3 – D10</td>
+      <td>택트 스위치 8개의 한쪽 다리</td><td>없음</td>
+      <td>내부 풀업 사용, 외부 저항 불필요</td>
+    </tr>
+    <tr>
+      <td class="pin"><span class="dot" style="background:var(--w-data)"></span>A0</td>
+      <td>WS2812B <code>DIN</code></td><td>330 Ω 직렬 저항</td>
+      <td>Pro Micro에는 D11이 없어 A0를 씁니다</td>
+    </tr>
+    <tr>
+      <td class="pin"><span class="dot" style="background:var(--w-5v)"></span>VCC</td>
+      <td>WS2812B <code>5V</code></td><td>100 µF 커패시터(VCC–GND)</td>
+      <td>5 V 버전 보드여야 함. <code>RAW</code> 아님</td>
+    </tr>
+    <tr>
+      <td class="pin"><span class="dot" style="background:var(--w-gnd)"></span>GND</td>
+      <td>스위치 8개 + WS2812B <code>GND</code></td><td>없음</td>
+      <td>모든 GND는 반드시 한 점으로</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<div class="note stop">
+  <p><b>Pro Micro에는 D11이 없습니다.</b> 칩에는 있지만 보드가 밖으로 빼지 않았습니다. Leonardo용
+  자료를 따라 하면 존재하지 않는 핀에 배선하게 됩니다. 노출된 핀 중 D2·D3은 SDA/SCL,
+  D14·D15·D16은 SPI라 어느 버스와도 겹치지 않는 <b>A0</b>를 LED 데이터 핀으로 잡았습니다.</p>
+</div>
+
+<div class="note">
+  <p><b>버튼만 먼저 만들어도 됩니다.</b> LED가 없어도 펌웨어는 그대로 동작합니다. D3–D10만 배선해
+  업로드하면 키패드는 바로 쓸 수 있고, WS2812B는 나중에 A0에 붙이면 됩니다.</p>
+</div>
+
+<h2><span class="n">02</span>핀 맵</h2>
+
+<p class="small muted">USB 커넥터가 왼쪽으로 오게 놓고 부품면을 위에서 본 그림. 버튼용 D3–D9는
+아래쪽 줄에 연속으로 있고, <b>여덟 번째 버튼 D10만 위쪽 줄 맨 끝</b>입니다. LED에 쓸 A0·VCC·GND는
+전부 위쪽 줄에 모여 있습니다.</p>
+
+  <figure class="panel panel-scroll" style="margin:0">
+    <svg viewBox="0 0 900 372" role="img" aria-label="Pro Micro 상면도. 아래쪽 줄의 D3에서 D9과 위쪽 줄의 D10이 버튼, 위쪽 줄의 A0가 WS2812B 데이터, VCC와 GND가 LED 전원입니다.">
+      <!-- 상단 콜아웃 -->
+      <path d="M303 118 L303 62 L252 62" fill="none" stroke="var(--w-5v)" stroke-width="1.6"/>
+      <text x="244" y="66" text-anchor="end" font-size="12" font-weight="600" fill="var(--w-5v)">WS2812B 5V ← VCC</text>
+      <path d="M209 118 L209 40 L252 40" fill="none" stroke="var(--w-gnd)" stroke-width="1.6"/>
+      <text x="260" y="44" font-size="12" font-weight="600" fill="var(--w-gnd)">공통 GND</text>
+      <path d="M491 118 L491 90 L440 90" fill="none" stroke="var(--w-data)" stroke-width="1.6"/>
+      <text x="432" y="94" text-anchor="end" font-size="12" font-weight="600" fill="var(--w-data)">WS2812B DIN ← A0</text>
+      <path d="M679 118 L679 62 L742 62" fill="none" stroke="var(--w-sig)" stroke-width="1.6"/>
+      <text x="750" y="66" font-size="12" font-weight="600" fill="var(--w-sig)">버튼 8 ← D10</text>
+
+      <!-- 보드 -->
+      <rect x="120" y="120" width="620" height="150" rx="7" fill="var(--pcb)"/>
+      <rect x="120" y="120" width="620" height="150" rx="7" fill="none" stroke="var(--pcb-dark)" stroke-width="2"/>
+      <!-- USB micro-B -->
+      <rect x="86" y="170" width="38" height="50" rx="3" fill="var(--metal)" stroke="#8A9196"/>
+      <text x="105" y="162" text-anchor="middle" font-size="10" fill="var(--ink-2)">USB</text>
+      <!-- MCU -->
+      <rect x="378" y="176" width="104" height="40" rx="3" fill="#0A1626"/>
+      <text x="430" y="201" text-anchor="middle" font-size="10" fill="#7E8C99">ATmega32u4</text>
+      <text x="200" y="201" text-anchor="middle" font-size="11" fill="#8FA6BC">Pro Micro</text>
+      <text x="620" y="201" text-anchor="middle" font-size="9.5" fill="#6E8399">5V / 16MHz</text>
+
+      <!-- ── 위쪽 줄: RAW GND RESET VCC A3 A2 A1 A0 15 14 16 10 ── -->
+      <g>
+        <rect x="152" y="122" width="20" height="20" rx="2" fill="var(--pad)"/>
+        <text x="162" y="160" text-anchor="middle" font-size="10.5" fill="#CFDCE8">RAW</text>
+        <rect x="199" y="122" width="20" height="20" rx="2" fill="#0B0D0E" stroke="#000" stroke-width="1.4"/>
+        <text x="209" y="160" text-anchor="middle" font-size="10.5" font-weight="700" fill="#FFF">GND</text>
+        <rect x="246" y="122" width="20" height="20" rx="2" fill="var(--pad)"/>
+        <text x="256" y="160" text-anchor="middle" font-size="10.5" fill="#CFDCE8">RST</text>
+        <rect x="293" y="122" width="20" height="20" rx="2" fill="var(--w-5v)" stroke="#5E1B12" stroke-width="1.4"/>
+        <text x="303" y="160" text-anchor="middle" font-size="10.5" font-weight="700" fill="#FFF">VCC</text>
+        <rect x="340" y="122" width="20" height="20" rx="2" fill="var(--pad)"/>
+        <text x="350" y="160" text-anchor="middle" font-size="10.5" fill="#CFDCE8">A3</text>
+        <rect x="387" y="122" width="20" height="20" rx="2" fill="var(--pad)"/>
+        <text x="397" y="160" text-anchor="middle" font-size="10.5" fill="#CFDCE8">A2</text>
+        <rect x="434" y="122" width="20" height="20" rx="2" fill="var(--pad)"/>
+        <text x="444" y="160" text-anchor="middle" font-size="10.5" fill="#CFDCE8">A1</text>
+        <rect x="481" y="122" width="20" height="20" rx="2" fill="var(--w-data)" stroke="#5C3A05" stroke-width="1.4"/>
+        <text x="491" y="160" text-anchor="middle" font-size="10.5" font-weight="700" fill="#FFF">A0</text>
+        <rect x="528" y="122" width="20" height="20" rx="2" fill="var(--pad)"/>
+        <text x="538" y="160" text-anchor="middle" font-size="10.5" fill="#CFDCE8">15</text>
+        <rect x="575" y="122" width="20" height="20" rx="2" fill="var(--pad)"/>
+        <text x="585" y="160" text-anchor="middle" font-size="10.5" fill="#CFDCE8">14</text>
+        <rect x="622" y="122" width="20" height="20" rx="2" fill="var(--pad)"/>
+        <text x="632" y="160" text-anchor="middle" font-size="10.5" fill="#CFDCE8">16</text>
+        <rect x="669" y="122" width="20" height="20" rx="2" fill="var(--w-sig)" stroke="#04302D" stroke-width="1.4"/>
+        <text x="679" y="160" text-anchor="middle" font-size="10.5" font-weight="700" fill="#FFF">10</text>
+      </g>
+
+      <!-- ── 아래쪽 줄: TX0 RX1 GND GND 2 3 4 5 6 7 8 9 ── -->
+      <g>
+        <rect x="152" y="248" width="20" height="20" rx="2" fill="var(--pad)"/>
+        <text x="162" y="240" text-anchor="middle" font-size="10.5" fill="#CFDCE8">TX0</text>
+        <rect x="199" y="248" width="20" height="20" rx="2" fill="var(--pad)"/>
+        <text x="209" y="240" text-anchor="middle" font-size="10.5" fill="#CFDCE8">RX1</text>
+        <rect x="246" y="248" width="20" height="20" rx="2" fill="#0B0D0E" stroke="#000" stroke-width="1.4"/>
+        <text x="256" y="240" text-anchor="middle" font-size="10.5" font-weight="700" fill="#FFF">GND</text>
+        <rect x="293" y="248" width="20" height="20" rx="2" fill="#0B0D0E" stroke="#000" stroke-width="1.4"/>
+        <text x="303" y="240" text-anchor="middle" font-size="10.5" font-weight="700" fill="#FFF">GND</text>
+        <rect x="340" y="248" width="20" height="20" rx="2" fill="var(--pad)"/>
+        <text x="350" y="240" text-anchor="middle" font-size="10.5" fill="#CFDCE8">2</text>
+        <rect x="387" y="248" width="20" height="20" rx="2" fill="var(--w-sig)" stroke="#04302D" stroke-width="1.4"/>
+        <text x="397" y="240" text-anchor="middle" font-size="10.5" font-weight="700" fill="#FFF">3</text>
+        <rect x="434" y="248" width="20" height="20" rx="2" fill="var(--w-sig)" stroke="#04302D" stroke-width="1.4"/>
+        <text x="444" y="240" text-anchor="middle" font-size="10.5" font-weight="700" fill="#FFF">4</text>
+        <rect x="481" y="248" width="20" height="20" rx="2" fill="var(--w-sig)" stroke="#04302D" stroke-width="1.4"/>
+        <text x="491" y="240" text-anchor="middle" font-size="10.5" font-weight="700" fill="#FFF">5</text>
+        <rect x="528" y="248" width="20" height="20" rx="2" fill="var(--w-sig)" stroke="#04302D" stroke-width="1.4"/>
+        <text x="538" y="240" text-anchor="middle" font-size="10.5" font-weight="700" fill="#FFF">6</text>
+        <rect x="575" y="248" width="20" height="20" rx="2" fill="var(--w-sig)" stroke="#04302D" stroke-width="1.4"/>
+        <text x="585" y="240" text-anchor="middle" font-size="10.5" font-weight="700" fill="#FFF">7</text>
+        <rect x="622" y="248" width="20" height="20" rx="2" fill="var(--w-sig)" stroke="#04302D" stroke-width="1.4"/>
+        <text x="632" y="240" text-anchor="middle" font-size="10.5" font-weight="700" fill="#FFF">8</text>
+        <rect x="669" y="248" width="20" height="20" rx="2" fill="var(--w-sig)" stroke="#04302D" stroke-width="1.4"/>
+        <text x="679" y="240" text-anchor="middle" font-size="10.5" font-weight="700" fill="#FFF">9</text>
+      </g>
+
+      <!-- 아래 브래킷: 버튼 1-7 -->
+      <path d="M397 276 L397 292 L679 292 L679 276" fill="none" stroke="var(--w-sig)" stroke-width="1.6"/>
+      <text x="538" y="310" text-anchor="middle" font-size="12" font-weight="600" fill="var(--w-sig)">버튼 1–7 · D3–D9</text>
+      <!-- GND 콜아웃 -->
+      <path d="M256 276 L256 330 L200 330" fill="none" stroke="var(--w-gnd)" stroke-width="1.6"/>
+      <text x="192" y="334" text-anchor="end" font-size="12" font-weight="600" fill="var(--w-gnd)">스위치 공통 GND</text>
+
+      <!-- 범례 -->
+      <g font-size="11">
+        <rect x="400" y="330" width="12" height="12" rx="2" fill="var(--w-sig)"/>
+        <text x="420" y="340" class="svg-label-2">버튼</text>
+        <rect x="470" y="330" width="12" height="12" rx="2" fill="var(--w-data)"/>
+        <text x="490" y="340" class="svg-label-2">LED 데이터</text>
+        <rect x="590" y="330" width="12" height="12" rx="2" fill="var(--w-5v)"/>
+        <text x="610" y="340" class="svg-label-2">전원</text>
+        <rect x="662" y="330" width="12" height="12" rx="2" fill="#0B0D0E"/>
+        <text x="682" y="340" class="svg-label-2">접지</text>
+      </g>
+    </svg>
+    <figcaption class="caption" style="margin-top:10px">그림 1 — Pro Micro 상면도와 사용 핀</figcaption>
+  </figure>
+
+<div class="note stop">
+  <p><b>VCC와 RAW를 헷갈리지 마세요.</b> <code>RAW</code>는 USB VBUS가 그대로 나오는 핀,
+  <code>VCC</code>는 레귤레이터를 거친 5 V 출력입니다. WS2812B는 <b><code>VCC</code></b>에 물립니다.
+  그리고 반드시 <b>5 V / 16 MHz 버전</b>이어야 합니다 — 3.3 V / 8 MHz는 VCC가 3.3 V라서 LED가
+  안 켜지거나 색이 엉킵니다.</p>
+</div>
+
+<h2><span class="n">03</span>조립 순서</h2>
+
+<ol>
+  <li><b>공통 GND 레일부터.</b> 브레드보드 GND 열이나 배선재 한 줄을 잡고 Pro Micro의 GND 핀
+  하나를 물립니다. 스위치 8개와 WS2812B의 GND가 전부 여기로 모입니다. GND가 갈라져 있으면
+  LED 색이 튀고 원인 찾기가 어렵습니다.</li>
+
+  <li><b>택트 스위치 8개를 D3–D10에.</b> 한쪽 다리는 핀, 반대쪽은 GND 레일. 내부 풀업을 쓰므로
+  외부 저항은 필요 없습니다. 4핀 택트 스위치는 <b>대각선으로 마주 보는 두 핀</b>을 쓰세요 —
+  같은 변의 두 핀은 스위치 안에서 이미 붙어 있어 항상 눌린 상태가 됩니다.
+  키 번호는 <code>MK_KEY_PINS</code> 배열 순서 = D3이 1번, D10이 8번입니다.</li>
+
+  <li><b>WS2812B를 VCC · GND · A0에.</b> DIN 라인에 <b>330 Ω</b>을 모듈 가까이 직렬로, VCC–GND
+  사이에 <b>100 µF</b> 전해 커패시터를 극성 맞춰 답니다. 1000 µF는 쓰지 마세요 — 그 값은 전용
+  어댑터를 쓰는 긴 스트립 기준이고, USB 2.0은 장치 벌크 커패시턴스를 10 µF로 제한해서 돌입
+  전류로 포트 보호가 걸릴 수 있습니다. 픽셀 1개에는 100 µF면 충분합니다.</li>
+
+  <li><b>전원 넣기 전 마지막 확인.</b> VCC–GND 단락 여부, 커패시터 극성, DIN이 A0인지,
+  <code>RST</code>–<code>GND</code>에 닿을 점퍼선을 미리 하나 꽂아 뒀는지. 마지막 항목이 잘못된
+  펌웨어에서 빠져나오는 유일한 길입니다.</li>
+</ol>
+
+<h2><span class="n">04</span>결선도</h2>
+
+<p class="small muted">선을 읽기 쉽게 배치한 논리 결선도입니다. 핀의 <i>실제 물리 위치</i>는
+그림 1을 보세요.</p>
+
+  <figure class="panel panel-scroll" style="margin:0">
+    <svg viewBox="0 0 900 540" role="img" aria-label="전체 결선도. 스위치 8개가 공통 GND 레일과 D3에서 D10까지에 연결되고, WS2812B 한 개가 A0, VCC, GND에 연결됩니다.">
+      <rect x="336" y="96" width="230" height="330" rx="10" fill="var(--pcb)" stroke="var(--pcb-dark)" stroke-width="2"/>
+      <text x="451" y="146" text-anchor="middle" font-size="15" font-weight="700" fill="#DCE8F2">Pro Micro</text>
+      <text x="451" y="168" text-anchor="middle" font-size="10.5" fill="#8FA6BC">ATmega32u4 · 5 V / 16 MHz</text>
+      <text x="451" y="186" text-anchor="middle" font-size="10.5" fill="#8FA6BC">USB HID</text>
+      <rect x="300" y="106" width="40" height="34" rx="3" fill="var(--metal)" stroke="#8A9196"/>
+      <text x="320" y="98" text-anchor="middle" font-size="10" class="svg-label-2">USB</text>
+
+      <!-- GND 레일 -->
+      <line x1="96" y1="212" x2="96" y2="422" stroke="var(--w-gnd)" stroke-width="3.4"/>
+      <line x1="96" y1="422" x2="96" y2="452" stroke="var(--w-gnd)" stroke-width="3.4"/>
+      <line x1="74" y1="452" x2="118" y2="452" stroke="var(--w-gnd)" stroke-width="3.4"/>
+      <line x1="82" y1="460" x2="110" y2="460" stroke="var(--w-gnd)" stroke-width="3.4"/>
+      <line x1="90" y1="468" x2="102" y2="468" stroke="var(--w-gnd)" stroke-width="3.4"/>
+      <text x="96" y="488" text-anchor="middle" font-size="11" class="svg-label-2">공통 GND</text>
+
+      <!-- 스위치 8개 -->
+      <g>
+        <line x1="96" y1="212" x2="152" y2="212" stroke="var(--w-gnd)" stroke-width="2.4"/>
+        <circle cx="152" cy="212" r="3.6" fill="var(--ink)"/>
+        <line x1="152" y1="212" x2="204" y2="196" stroke="var(--ink)" stroke-width="2.2"/>
+        <circle cx="210" cy="212" r="3.6" fill="var(--ink)"/>
+        <line x1="210" y1="212" x2="324" y2="212" stroke="var(--w-sig)" stroke-width="2.6"/>
+        <text x="152" y="188" font-size="10.5" class="svg-label-2">S1</text>
+      </g>
+      <g>
+        <line x1="96" y1="242" x2="152" y2="242" stroke="var(--w-gnd)" stroke-width="2.4"/>
+        <circle cx="152" cy="242" r="3.6" fill="var(--ink)"/>
+        <line x1="152" y1="242" x2="204" y2="226" stroke="var(--ink)" stroke-width="2.2"/>
+        <circle cx="210" cy="242" r="3.6" fill="var(--ink)"/>
+        <line x1="210" y1="242" x2="324" y2="242" stroke="var(--w-sig)" stroke-width="2.6"/>
+        <text x="152" y="218" font-size="10.5" class="svg-label-2">S2</text>
+      </g>
+      <g>
+        <line x1="96" y1="272" x2="152" y2="272" stroke="var(--w-gnd)" stroke-width="2.4"/>
+        <circle cx="152" cy="272" r="3.6" fill="var(--ink)"/>
+        <line x1="152" y1="272" x2="204" y2="256" stroke="var(--ink)" stroke-width="2.2"/>
+        <circle cx="210" cy="272" r="3.6" fill="var(--ink)"/>
+        <line x1="210" y1="272" x2="324" y2="272" stroke="var(--w-sig)" stroke-width="2.6"/>
+        <text x="152" y="248" font-size="10.5" class="svg-label-2">S3</text>
+      </g>
+      <g>
+        <line x1="96" y1="302" x2="152" y2="302" stroke="var(--w-gnd)" stroke-width="2.4"/>
+        <circle cx="152" cy="302" r="3.6" fill="var(--ink)"/>
+        <line x1="152" y1="302" x2="204" y2="286" stroke="var(--ink)" stroke-width="2.2"/>
+        <circle cx="210" cy="302" r="3.6" fill="var(--ink)"/>
+        <line x1="210" y1="302" x2="324" y2="302" stroke="var(--w-sig)" stroke-width="2.6"/>
+        <text x="152" y="278" font-size="10.5" class="svg-label-2">S4</text>
+      </g>
+      <g>
+        <line x1="96" y1="332" x2="152" y2="332" stroke="var(--w-gnd)" stroke-width="2.4"/>
+        <circle cx="152" cy="332" r="3.6" fill="var(--ink)"/>
+        <line x1="152" y1="332" x2="204" y2="316" stroke="var(--ink)" stroke-width="2.2"/>
+        <circle cx="210" cy="332" r="3.6" fill="var(--ink)"/>
+        <line x1="210" y1="332" x2="324" y2="332" stroke="var(--w-sig)" stroke-width="2.6"/>
+        <text x="152" y="308" font-size="10.5" class="svg-label-2">S5</text>
+      </g>
+      <g>
+        <line x1="96" y1="362" x2="152" y2="362" stroke="var(--w-gnd)" stroke-width="2.4"/>
+        <circle cx="152" cy="362" r="3.6" fill="var(--ink)"/>
+        <line x1="152" y1="362" x2="204" y2="346" stroke="var(--ink)" stroke-width="2.2"/>
+        <circle cx="210" cy="362" r="3.6" fill="var(--ink)"/>
+        <line x1="210" y1="362" x2="324" y2="362" stroke="var(--w-sig)" stroke-width="2.6"/>
+        <text x="152" y="338" font-size="10.5" class="svg-label-2">S6</text>
+      </g>
+      <g>
+        <line x1="96" y1="392" x2="152" y2="392" stroke="var(--w-gnd)" stroke-width="2.4"/>
+        <circle cx="152" cy="392" r="3.6" fill="var(--ink)"/>
+        <line x1="152" y1="392" x2="204" y2="376" stroke="var(--ink)" stroke-width="2.2"/>
+        <circle cx="210" cy="392" r="3.6" fill="var(--ink)"/>
+        <line x1="210" y1="392" x2="324" y2="392" stroke="var(--w-sig)" stroke-width="2.6"/>
+        <text x="152" y="368" font-size="10.5" class="svg-label-2">S7</text>
+      </g>
+      <g>
+        <line x1="96" y1="422" x2="152" y2="422" stroke="var(--w-gnd)" stroke-width="2.4"/>
+        <circle cx="152" cy="422" r="3.6" fill="var(--ink)"/>
+        <line x1="152" y1="422" x2="204" y2="406" stroke="var(--ink)" stroke-width="2.2"/>
+        <circle cx="210" cy="422" r="3.6" fill="var(--ink)"/>
+        <line x1="210" y1="422" x2="324" y2="422" stroke="var(--w-sig)" stroke-width="2.6"/>
+        <text x="152" y="398" font-size="10.5" class="svg-label-2">S8</text>
+      </g>
+
+      <g>
+        <rect x="324" y="203" width="30" height="18" rx="2" fill="var(--w-sig)"/><text x="339" y="216" text-anchor="middle" font-size="11" font-weight="700" fill="#FFF">D3</text>
+        <rect x="324" y="233" width="30" height="18" rx="2" fill="var(--w-sig)"/><text x="339" y="246" text-anchor="middle" font-size="11" font-weight="700" fill="#FFF">D4</text>
+        <rect x="324" y="263" width="30" height="18" rx="2" fill="var(--w-sig)"/><text x="339" y="276" text-anchor="middle" font-size="11" font-weight="700" fill="#FFF">D5</text>
+        <rect x="324" y="293" width="30" height="18" rx="2" fill="var(--w-sig)"/><text x="339" y="306" text-anchor="middle" font-size="11" font-weight="700" fill="#FFF">D6</text>
+        <rect x="324" y="323" width="30" height="18" rx="2" fill="var(--w-sig)"/><text x="339" y="336" text-anchor="middle" font-size="11" font-weight="700" fill="#FFF">D7</text>
+        <rect x="324" y="353" width="30" height="18" rx="2" fill="var(--w-sig)"/><text x="339" y="366" text-anchor="middle" font-size="11" font-weight="700" fill="#FFF">D8</text>
+        <rect x="324" y="383" width="30" height="18" rx="2" fill="var(--w-sig)"/><text x="339" y="396" text-anchor="middle" font-size="11" font-weight="700" fill="#FFF">D9</text>
+        <rect x="324" y="413" width="30" height="18" rx="2" fill="var(--w-sig)"/><text x="339" y="426" text-anchor="middle" font-size="10.5" font-weight="700" fill="#FFF">D10</text>
+      </g>
+      <rect x="324" y="443" width="30" height="18" rx="2" fill="#0B0D0E"/>
+      <text x="339" y="456" text-anchor="middle" font-size="9.5" font-weight="700" fill="#FFF">GND</text>
+      <path d="M324 452 L240 452 L240 500 L96 500 L96 470" fill="none" stroke="var(--w-gnd)" stroke-width="3.4"/>
+
+      <!-- 오른쪽 패드 -->
+      <rect x="548" y="203" width="30" height="18" rx="2" fill="var(--w-data)"/><text x="563" y="216" text-anchor="middle" font-size="11" font-weight="700" fill="#FFF">A0</text>
+      <rect x="548" y="323" width="30" height="18" rx="2" fill="var(--w-5v)"/><text x="563" y="336" text-anchor="middle" font-size="10" font-weight="700" fill="#FFF">VCC</text>
+      <rect x="548" y="383" width="30" height="18" rx="2" fill="#0B0D0E"/><text x="563" y="396" text-anchor="middle" font-size="9.5" font-weight="700" fill="#FFF">GND</text>
+
+      <!-- 데이터 -->
+      <path d="M578 212 L616 212 L616 228" fill="none" stroke="var(--w-data)" stroke-width="3"/>
+      <path d="M616 228 L606 234 L628 243 L606 252 L628 261 L616 267 L616 280 L700 280"
+            fill="none" stroke="var(--w-data)" stroke-width="3"/>
+      <text x="638" y="246" font-size="11.5" font-weight="700" fill="var(--w-data)">330 Ω</text>
+      <!-- 전원 -->
+      <path d="M578 332 L648 332 L648 320 L700 320" fill="none" stroke="var(--w-5v)" stroke-width="3"/>
+      <path d="M578 392 L630 392 L630 360 L700 360" fill="none" stroke="var(--w-gnd)" stroke-width="3"/>
+      <!-- 커패시터 -->
+      <line x1="664" y1="320" x2="664" y2="332" stroke="var(--ink)" stroke-width="2.2"/>
+      <line x1="650" y1="332" x2="678" y2="332" stroke="var(--ink)" stroke-width="2.6"/>
+      <path d="M650 344 Q 664 335 678 344" fill="none" stroke="var(--ink)" stroke-width="2.6"/>
+      <line x1="664" y1="344" x2="664" y2="360" stroke="var(--ink)" stroke-width="2.2"/>
+      <text x="644" y="330" text-anchor="end" font-size="12" font-weight="700" fill="var(--w-5v)">＋</text>
+      <text x="664" y="392" text-anchor="middle" font-size="10.5" class="svg-label">100 µF</text>
+
+      <!-- WS2812B 모듈 -->
+      <rect x="700" y="250" width="140" height="140" rx="7" fill="var(--mod-pcb)" stroke="#A9B0A6" stroke-width="1.5"/>
+      <text x="770" y="242" text-anchor="middle" font-size="11" class="svg-label-2">WS2812B ×1</text>
+      <g font-size="9.5" fill="#3A423C">
+        <text x="706" y="284">DIN</text>
+        <text x="706" y="324">5V</text>
+        <text x="706" y="364">GND</text>
+      </g>
+      <rect x="748" y="290" width="60" height="60" rx="5" fill="#F7F8F5" stroke="#8E958B" stroke-width="1.4"/>
+      <circle cx="778" cy="320" r="19" fill="#2FA2A8"/>
+      <circle cx="778" cy="320" r="8" fill="#BFEDEF"/>
+
+      <g font-size="11">
+        <rect x="40" y="510" width="16" height="4" rx="2" fill="var(--w-sig)"/><text x="64" y="516" class="svg-label-2">버튼 신호</text>
+        <rect x="150" y="510" width="16" height="4" rx="2" fill="var(--w-data)"/><text x="174" y="516" class="svg-label-2">LED 데이터</text>
+        <rect x="268" y="510" width="16" height="4" rx="2" fill="var(--w-5v)"/><text x="292" y="516" class="svg-label-2">VCC</text>
+        <rect x="346" y="510" width="16" height="4" rx="2" fill="var(--w-gnd)"/><text x="370" y="516" class="svg-label-2">GND</text>
+      </g>
+    </svg>
+    <figcaption class="caption" style="margin-top:10px">그림 2 — 전체 결선도 (논리 배치)</figcaption>
+  </figure>
+
+<h2><span class="n">05</span>빌드와 업로드</h2>
+
+<p>Pro Micro는 <code>arduino:avr</code> 코어에 없습니다. SparkFun 보드 패키지를 먼저 추가합니다.</p>
+
+<pre><code>arduino-cli config add board_manager.additional_urls \
+  https://raw.githubusercontent.com/sparkfun/Arduino_Boards/master/IDE_Board_Manager/package_sparkfun_index.json
+arduino-cli core update-index
+arduino-cli core install SparkFun:avr
+arduino-cli lib install "Adafruit NeoPixel"
+
+arduino-cli compile --fqbn SparkFun:avr:promicro:cpu=16MHzatmega32U4 firmware
+arduino-cli upload  --fqbn SparkFun:avr:promicro:cpu=16MHzatmega32U4 -p /dev/ttyACM0 firmware</code></pre>
+
+<div class="note warn">
+  <p><b>업로드는 타이밍 싸움입니다.</b> Pro Micro는 리셋 버튼이 없고 부트로더가 8초만 떠 있습니다.
+  <code>RST</code>–<code>GND</code>를 빠르게 두 번 단락시킨 <b>직후에</b> upload를 실행하세요.
+  부트로더 모드에서는 포트 번호가 바뀌는 경우가 많으니 <code>arduino-cli board list</code> 또는
+  <code>macrokey ports</code>로 확인하세요.</p>
+</div>
+
+<p class="small muted"><code>Keyboard</code>와 <code>Mouse</code>는 AVR 코어에 포함돼 있어 따로
+설치하지 않습니다. 배선이 맞는지는 <code>macrokey monitor</code>로 확인하는 것이 가장 빠릅니다 —
+키를 누르면 <code>EV t=key k=0 g=tap</code> 같은 줄이 찍힙니다.</p>
+
+<h2><span class="n">06</span>안 될 때</h2>
+
+<div class="scroll">
+<table>
+  <thead><tr><th style="width:32%">증상</th><th style="width:30%">가장 흔한 원인</th><th>확인/조치</th></tr></thead>
+  <tbody>
+    <tr><td>LED가 전혀 안 켜짐</td><td>3.3 V 버전 보드이거나 DIN이 A0가 아님</td><td>보드 뒷면 전압 표기, <code>MK_LED_PIN</code>이 18인지 확인</td></tr>
+    <tr><td>색이 엉뚱하거나 깜빡임</td><td>직렬 저항 없음 또는 GND 미공통</td><td>330 Ω을 모듈 가까이로, GND를 한 점으로</td></tr>
+    <tr><td>빨강↔초록이 바뀜</td><td>모듈 색 순서가 GRB가 아님</td><td><code>LedController.h</code>의 <code>NEO_GRB</code>를 <code>NEO_RGB</code>로</td></tr>
+    <tr><td>전원 인가 때 한 번 번쩍임</td><td>커패시터 없음</td><td>100 µF를 VCC–GND 사이에 추가</td></tr>
+    <tr><td>특정 키가 계속 눌린 상태</td><td>택트 스위치의 같은 변 두 핀 사용</td><td>대각선으로 마주 보는 두 핀으로 이동</td></tr>
+    <tr><td>여덟 번째 키만 반응 없음</td><td>D10을 아래쪽 줄에서 찾음</td><td>D10은 <b>위쪽 줄 맨 끝</b>입니다 (그림 1)</td></tr>
+    <tr><td>업로드가 안 되고 포트가 사라짐</td><td>매크로가 키를 계속 뿜는 상태</td><td>RST–GND 빠르게 두 번 단락 → 8초 안에 업로드</td></tr>
+    <tr><td>키가 씹히거나 보드가 리셋됨</td><td>USB 케이블 전압 강하</td><td>1 m 이하 데이터용 케이블로 교체</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="note stop">
+  <p><b>케이블이 조용한 원인입니다.</b> 길고 얇은 충전 전용 케이블(28 AWG, 2 m 이상)은 보드 쪽
+  전압을 4.6 V 근처까지 끌어내려 LED 색을 틀어지게 하거나 ATmega32u4를 브라운아웃으로
+  리셋시킵니다. 원인을 못 찾는 불안정의 상당수가 이겁니다.</p>
+</div>
+
+<h2><span class="n">07</span>부품 목록</h2>
+
+<div class="scroll">
+<table>
+  <thead><tr><th>부품</th><th>수량</th><th>비고</th></tr></thead>
+  <tbody>
+    <tr><td>Pro Micro (ATmega32u4)</td><td>1</td><td><b>5 V / 16 MHz 버전.</b> 3.3 V / 8 MHz는 안 됨</td></tr>
+    <tr><td>6 mm 택트 스위치</td><td>8</td><td>4핀형이면 대각선 두 핀 사용</td></tr>
+    <tr><td>WS2812B 모듈</td><td>1</td><td>5 V 품종. 단품 또는 스트립에서 1픽셀</td></tr>
+    <tr><td>330 Ω 저항 (1/4 W)</td><td>1</td><td>300–500 Ω이면 무방</td></tr>
+    <tr><td>100 µF 전해 커패시터</td><td>1</td><td>정격 6.3 V 이상, 극성 있음</td></tr>
+    <tr><td>점퍼선 / 배선재</td><td>—</td><td>RST–GND용으로 한 가닥 여유 있게</td></tr>
+    <tr><td>USB 데이터 케이블 (micro-B)</td><td>1</td><td>1 m 이하 권장. 충전 전용 불가</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p class="small muted">전력은 실질적인 제약이 아닙니다. 픽셀 1개 흰색 최대 60 mA + MCU 30 mA =
+90 mA로 USB 500 mA 예산의 18%입니다. 밝기를 255까지 올려도 안전합니다. 계산 근거와 픽셀 수를
+늘릴 때의 상한은 <code>docs/HARDWARE.md</code>에 있습니다.</p>
+
+<footer>
+  macroKey · 배선 가이드 · 펌웨어 0.3.0 — 핀 정의의 출처는 <code>firmware/src/Config.h</code>.
+  사용법은 <a href="manual.html">manual.html</a>, 설계 배경은 <code>docs/ARCHITECTURE.md</code>.
+</footer>
+
+</div>
+</body>
+</html>

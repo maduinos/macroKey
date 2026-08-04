@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+
+# Arduino build output
+/firmware/build/
+*.hex
+*.elf
+
+# Local app configuration (lives in the user config dir, but MACROKEY_CONFIG_DIR
+# can point it here during testing)
+profile.json
+settings.json

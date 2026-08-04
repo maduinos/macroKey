@@ -14,15 +14,14 @@ Maduinos의 개인 매크로 키패드 프로젝트입니다.
 
 | 경로 | 설명 |
 | --- | --- |
-| `arduino/macrokey/` | Pro Micro(ATmega32u4, 5 V / 16 MHz) 펌웨어 |
-| `arduino/macrokey/src/` | `KeyEngine`, `Profile`(EEPROM), `LedController`, `ButtonInput`, `SerialProtocol` |
-| `host/macrokey/` | Python 호스트 앱 패키지 (CLI + Tkinter GUI + 헤드리스 데몬) |
-| `host/macros/` | 기본 매크로 이미지 샘플 |
-| `host/pyproject.toml` | 호스트 앱 패키징 및 의존성 |
+| `firmware/` | Pro Micro(ATmega32u4, 5 V / 16 MHz) 펌웨어 |
+| `firmware/src/` | `KeyEngine`, `Profile`(EEPROM), `LedController`, `ButtonInput`, `SerialProtocol` |
+| `macrokey/` | Python 호스트 앱 패키지 (CLI + PySide6 GUI + 헤드리스 데몬) |
+| `pyproject.toml` | 호스트 앱 패키징 및 의존성 |
+| `manual.html` | **사용 설명서** — 연결, 키 설정, 녹화, CLI (먼저 읽으세요) |
+| `wiring.html` | **배선 가이드** — 핀 맵, 결선도, 조립 순서 (인쇄용) |
 | `docs/ARCHITECTURE.md` | 설계 문서 — 계층, 액션 모델, 메모리 예산, 확장 지점 |
-| `docs/HARDWARE.md` | 배선, 전력 예산, 빌드/업로드 |
-| `docs/wiring.html` | 그림으로 된 배선 가이드 — 핀 맵, 결선도, 조립 순서 (인쇄용) |
-| `docs/manual.html` | 사용 설명서 — 키 설정, 액션 종류, 녹화, 호스트 액션, CLI |
+| `docs/HARDWARE.md` | 배선 상세 — 전력 예산, 부품 근거, 빌드/업로드 |
 | `docs/PROTOCOL.md` | 호스트↔장치 시리얼 프로토콜 v1 |
 
 현재 버전: 펌웨어 `0.3.0`, 호스트 앱 `0.3.0`, 시리얼 프로토콜 `v1`.
@@ -41,7 +40,7 @@ Maduinos의 개인 매크로 키패드 프로젝트입니다.
 
 배선 주의사항(직렬 저항, 커패시터, VCC/RAW 구분)과 전력 예산은
 [`docs/HARDWARE.md`](docs/HARDWARE.md)에 있고, 그림으로 된 전체 결선도와 조립 순서는
-[`docs/wiring.html`](docs/wiring.html)에 있습니다. LED 없이 버튼만 연결해도 펌웨어는 그대로
+[`wiring.html`](wiring.html)에 있습니다. LED 없이 버튼만 연결해도 펌웨어는 그대로
 동작합니다.
 
 ## 펌웨어 빌드
@@ -55,8 +54,8 @@ arduino-cli core update-index
 arduino-cli core install SparkFun:avr
 arduino-cli lib install "Adafruit NeoPixel"
 
-arduino-cli compile --fqbn SparkFun:avr:promicro:cpu=16MHzatmega32U4 arduino/macrokey
-arduino-cli upload  --fqbn SparkFun:avr:promicro:cpu=16MHzatmega32U4 -p /dev/ttyACM0 arduino/macrokey
+arduino-cli compile --fqbn SparkFun:avr:promicro:cpu=16MHzatmega32U4 firmware
+arduino-cli upload  --fqbn SparkFun:avr:promicro:cpu=16MHzatmega32U4 -p /dev/ttyACM0 firmware
 ```
 
 `Keyboard`와 `Mouse`는 AVR 코어에 포함돼 있어 따로 설치하지 않습니다. Pro Micro는 리셋 버튼이
@@ -94,12 +93,15 @@ arduino-cli upload  --fqbn SparkFun:avr:promicro:cpu=16MHzatmega32U4 -p /dev/tty
 설치:
 
 ```bash
-python -m pip install -e "host[input]"        # Linux / macOS
-python -m pip install -e "host[input,windows]" # Windows (클립보드 이미지 지원)
+python -m pip install -e ".[gui,input]"         # Linux / macOS
+python -m pip install -e ".[gui,input,windows]" # Windows (클립보드 이미지 지원)
+python -m pip install -e .                      # 헤드리스 (CLI만, Qt 없이)
 ```
 
-`pyserial`만 필수이고, `pynput`(입력 합성·레코딩)과 `Pillow`/`pywin32`(Windows 이미지
-클립보드)는 선택입니다. 없으면 해당 기능만 비활성화되고 나머지는 그대로 동작합니다.
+`pyserial`만 필수입니다. `PySide6`(편집기 창), `pynput`(입력 합성·레코딩),
+`Pillow`/`pywin32`(Windows 이미지 클립보드)는 선택이고, 없으면 해당 기능만 비활성화되고
+나머지는 그대로 동작합니다. Qt는 용량이 크므로 데스크톱 없는 장비에서는 마지막 줄로 설치하세요 —
+`gui`를 뺀 설치에서 `macrokey gui`를 실행하면 설치 안내를 출력하고 종료합니다.
 
 ### CLI
 

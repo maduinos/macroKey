@@ -1,7 +1,7 @@
 """Profile model.
 
 These dataclasses are the host-side mirror of the firmware's EEPROM layout.
-The constants below must match ``arduino/macrokey/src/Config.h``; ``binary.py``
+The constants below must match ``firmware/src/Config.h``; ``binary.py``
 depends on both agreeing and the device rejects a blob of the wrong size.
 """
 
