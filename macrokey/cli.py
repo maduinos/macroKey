@@ -18,6 +18,7 @@ from .app import MacroKeyApp
 from .config import GESTURES, KEY_COUNT, LAYER_COUNT
 from .device import DeviceError, candidates, pyserial_available
 from .led import default_socket_path
+from .ui import MissingToolkit
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -76,6 +77,9 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         return handler(args)
+    except MissingToolkit as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
     except DeviceError as exc:
         print(f"device error: {exc}", file=sys.stderr)
         return 2
@@ -87,7 +91,7 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def cmd_gui(args: argparse.Namespace) -> int:
-    from .ui.app import run_gui
+    from .ui import run_gui
 
     return run_gui(port=args.port)
 

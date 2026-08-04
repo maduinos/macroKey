@@ -1,6 +1,6 @@
 """Profile <-> device blob.
 
-Byte-for-byte mirror of the EEPROM layout in ``arduino/macrokey/src/Profile.h``.
+Byte-for-byte mirror of the EEPROM layout in ``firmware/src/Profile.h``.
 If that header changes, this module changes with it and ``SCHEMA`` goes up.
 """
 

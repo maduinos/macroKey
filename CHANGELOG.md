@@ -1,5 +1,45 @@
 # Changelog
 
+## 2026-08-04 (2) — GUI를 PySide6로 교체
+
+- **편집기 창을 Tkinter에서 PySide6로 옮겼습니다.** `ui/app.py` 한 파일만 다시 썼고
+  `config/` · `device/` · `actions/` · `recorder/` · `led/` · `backends/`는 한 줄도
+  건드리지 않았습니다. "`ui/`를 제외한 어느 모듈도 UI 툴킷을 import 하지 않는다"는 규칙이
+  실제로 값을 한 지점입니다.
+- 화면 구성과 동작은 그대로입니다. 툴바(Port · Connect · Disconnect · Save · Write to device ·
+  Read from device · Brightness), 레이어 탭 4개, 키 8행 × 제스처 3열 = 96슬롯 격자, 상태 표시줄,
+  슬롯 편집·녹화 다이얼로그, 값 검증 시점(OK 누를 때) 모두 동일합니다.
+- 스레드→UI 전달 방식이 `root.after(0, ...)`에서 **Qt 시그널**로 바뀌었습니다
+  (`statusMessage` · `failed` · `pulled`). 장치 통신은 이전과 같이 평범한 스레드에서 돕니다.
+- **`PySide6`를 선택 의존성 `gui`로 추가했습니다.** Qt는 용량이 크고 헤드리스 사용 경로가
+  실재하므로 필수로 넣지 않았습니다. 없으면 `macrokey gui`만 설치 안내(`MissingToolkit`)와
+  함께 종료 코드 2로 끝나고 나머지 명령은 그대로 동작합니다.
+  설치는 `pip install -e ".[gui,input]"`입니다.
+- `cli.py`가 `from .ui.app import run_gui` 대신 `from .ui import run_gui`를 씁니다.
+  안내 메시지를 담은 얇은 진입점을 거치게 하기 위해서입니다.
+
+## 2026-08-04
+
+저장소 레이아웃을 평탄화하고 사용 문서를 최상위로 올렸습니다. 코드 동작은 그대로입니다.
+
+- **`arduino/macrokey/` → `firmware/`**, 스케치 이름도 `macrokey.ino` → `firmware.ino`.
+  아두이노는 스케치 파일 이름이 폴더 이름과 같아야 하므로 함께 바뀝니다.
+  빌드는 이제 `arduino-cli compile ... firmware`입니다.
+- **`host/macrokey/` → `macrokey/`**, `host/pyproject.toml` → `pyproject.toml`.
+  중간 `host/` 계층이 없어져 파이썬 앱 폴더로 바로 들어갑니다.
+  설치는 `pip install -e ".[input]"`입니다.
+- **`docs/manual.html` → `manual.html`, `docs/wiring.html` → `wiring.html`.**
+  가장 자주 여는 두 문서를 최상위로 올리고 내용을 요약했습니다
+  (사용 설명서 1042 → 375줄, 배선 가이드 1070 → 504줄). 핀 맵과 전체 결선도 그림은
+  그대로 두고 설명 문장, 화면 목업, 레시피 모음, 중복된 전력 예산 절을 덜어냈습니다.
+  전력 계산 근거는 `docs/HARDWARE.md`에 그대로 있습니다.
+- **`host/macros/*.png` 샘플 이미지 8개를 삭제했습니다.** 구버전 "단축키 → 이미지 붙여넣기"
+  앱의 잔재이고 코드가 참조하지 않았습니다. `clipboard_image` 액션과 구버전
+  `bindings.json` 마이그레이션은 그대로 남아 있습니다.
+- 위 삭제에 따라 `resolve_asset()`의 상대 경로 기준을 저장소 경로에서 **설정 폴더**
+  (`profile.json`이 있는 곳)로 바꿨습니다. 기존 기준 폴더에는 이제 참조할 자산이 없고,
+  설치본에서는 애초에 의미가 없는 경로였습니다. 절대 경로와 `~`는 이전과 동일합니다.
+
 ## 2026-08-03
 
 저장소를 `arduino/` · `host/` · `docs/` 세 트리로 분리하고, 펌웨어와 호스트 앱을 모두

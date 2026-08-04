@@ -6,15 +6,18 @@ build-backend = "setuptools.build_meta"
 name = "macrokey"
 version = "0.3.0"
 description = "Host application for the Maduinos macroKey keypad"
-readme = "../README.md"
+readme = "README.md"
 requires-python = ">=3.10"
-license = { file = "../LICENSE" }
+license = { file = "LICENSE" }
 authors = [{ name = "Maduinos" }]
 dependencies = [
     "pyserial>=3.5",
 ]
 
 [project.optional-dependencies]
+# The editor window. Left optional so a headless box can install the CLI without
+# pulling in Qt; every command other than `macrokey gui` works without it.
+gui = ["PySide6>=6.6"]
 # Host-side input synthesis and recording. Without it the device still works;
 # only host actions and the recorder are unavailable.
 input = ["pynput>=1.7"]

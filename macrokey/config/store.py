@@ -12,9 +12,6 @@ from typing import Any
 from .model import Action, HostAction, Profile, SCHEMA_VERSION, default_profile
 
 APP_NAME = "MaduinosMacroKey"
-PACKAGE_ROOT = Path(__file__).resolve().parent.parent
-# host/ -- macros/ and other bundled assets sit next to the package.
-ASSET_ROOT = PACKAGE_ROOT.parent
 
 
 def config_dir() -> Path:
@@ -47,9 +44,15 @@ def legacy_bindings_path() -> Path:
 
 
 def resolve_asset(path: str) -> Path:
-    """Resolves a profile-relative path such as ``macros/macro_1.png``."""
+    """Resolves a file path named by a host action.
+
+    ``~`` expands and absolute paths pass through. A relative path is taken
+    against the config directory, next to ``profile.json``, which is the only
+    folder that is still there after an install; the repository no longer
+    ships sample assets to point at.
+    """
     candidate = Path(path).expanduser()
-    return candidate if candidate.is_absolute() else ASSET_ROOT / candidate
+    return candidate if candidate.is_absolute() else config_dir() / candidate
 
 
 @dataclass

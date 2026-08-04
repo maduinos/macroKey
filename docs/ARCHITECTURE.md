@@ -242,19 +242,29 @@ pynput 리스너 → RawEvent 스트림 → ActionSequence → 슬롯(키·제�
 ## 8. 호스트 앱 구조
 
 ```
-host/macrokey/
+macrokey/
 ├── config/      profile 모델 · 저장소 · 스키마 마이그레이션
 ├── device/      시리얼 transport · 프로토콜 코덱 · 포트 탐색 · 자동 재연결
 ├── actions/     registry + 실행기 (hotkey, text, clipboard_image, shell, …)
 ├── recorder/    입력 캡처 · 정규화
 ├── led/         팔레트 · 합성 · AgentPet 클라이언트 · 송출 서비스
 ├── backends/    OS별 백엔드 (키보드, 클립보드, 활성 창)
-└── ui/          Tkinter 화면 (얇게 유지, 교체 가능)
+└── ui/          PySide6 화면 (얇게 유지, 교체 가능)
 ```
 
-핵심 규칙은 **`ui/`를 제외한 어느 모듈도 tkinter를 import 하지 않는다**입니다. 나중에
-PySide6로 갈아끼우거나 헤드리스 데몬으로 돌릴 때 UI만 바꾸면 됩니다. 헤드리스 실행
-(`macrokey daemon`)은 이 규칙 덕분에 이미 됩니다.
+핵심 규칙은 **`ui/`를 제외한 어느 모듈도 UI 툴킷을 import 하지 않는다**입니다. 헤드리스 실행
+(`macrokey daemon`)은 이 규칙 덕분에 그냥 됩니다. 이 규칙의 값어치는 실제로 확인됐습니다 —
+0.4.0에서 Tkinter를 PySide6로 갈아끼울 때 `ui/app.py` 한 파일만 다시 썼고 나머지 계층은
+한 줄도 건드리지 않았습니다.
+
+PySide6는 **선택 의존성**입니다. Qt는 설치 용량이 크고, 데스크톱이 없는 장비에서 `push`나
+`daemon`만 돌리는 경우가 이 프로젝트의 실제 사용 경로에 있기 때문입니다. 없으면 `macrokey gui`
+하나만 설치 안내와 함께 실패하고 나머지 명령은 그대로 동작합니다.
+
+장치와 통신하는 작업(connect · push · pull)은 이전과 같이 평범한 스레드에서 돌고, 결과는 Qt
+시그널로 GUI 스레드에 전달됩니다. 워커 스레드에서 emit한 시그널을 이벤트 루프가 GUI 스레드에서
+받아 주기 때문에 슬롯 안에서는 위젯을 직접 만져도 안전합니다. Tkinter의 `root.after(0, ...)`가
+하던 일을 시그널이 대신합니다.
 
 플랫폼 백엔드도 같은 이유로 분리했습니다. 기존 앱은 `win32clipboard`를 최상위에서 import 해서
 Windows 밖에서는 이미지 기능이 통째로 죽었습니다. 이제 Windows/Linux/macOS 백엔드를
