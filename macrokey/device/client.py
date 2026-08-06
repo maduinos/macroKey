@@ -239,7 +239,7 @@ class DeviceClient:
                 elif message.sub == "data":
                     sequence = message.int("seq", -1)
                     payload = message.get("b64", "") or ""
-                    if sequence is None or sequence < 0:
+                    if sequence < 0:
                         continue
                     chunks[sequence] = base64.b64decode(payload)
                 elif message.sub == "end":
