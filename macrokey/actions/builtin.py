@@ -7,7 +7,7 @@ import subprocess
 import time
 
 from ..config.store import resolve_asset
-from .base import ActionContext, ActionError, HostActionHandler, create, register
+from .base import ActionContext, ActionError, HostActionHandler, Param, create, register
 
 MAX_SEQUENCE_STEPS = 64
 MAX_DELAY_MS = 10_000
@@ -34,6 +34,11 @@ class StopAction(HostActionHandler):
 
 @register("hotkey", "Send a keyboard shortcut")
 class HotkeyAction(HostActionHandler):
+    param_spec = (
+        Param("hotkey", "Shortcut", hint="ctrl+shift+p"),
+        Param("hold_ms", "Hold", "int", 10, hint="ms between press and release"),
+    )
+
     def run(self, context: ActionContext) -> None:
         hotkey = self.string("hotkey")
         if not hotkey:
@@ -44,6 +49,8 @@ class HotkeyAction(HostActionHandler):
 
 @register("text", "Type text")
 class TextAction(HostActionHandler):
+    param_spec = (Param("text", "Text", "multiline", "", hint="typed exactly as written"),)
+
     def run(self, context: ActionContext) -> None:
         text = self.string("text")
         if not text:
@@ -54,6 +61,8 @@ class TextAction(HostActionHandler):
 
 @register("delay", "Wait")
 class DelayAction(HostActionHandler):
+    param_spec = (Param("ms", "Wait", "int", 100, hint=f"milliseconds, capped at {MAX_DELAY_MS}"),)
+
     def run(self, context: ActionContext) -> None:
         milliseconds = max(0, min(MAX_DELAY_MS, self.integer("ms", 100)))
         # Waiting on the cancel event rather than sleeping keeps a long delay
@@ -64,6 +73,12 @@ class DelayAction(HostActionHandler):
 @register("clipboard_image", "Copy an image and paste it")
 class ClipboardImageAction(HostActionHandler):
     """The original app's feature, kept intact and made cross-platform."""
+
+    param_spec = (
+        Param("path", "Image file", hint="absolute, ~, or relative to profile.json"),
+        Param("paste", "Paste after copying", "bool", True),
+        Param("press_enter", "Press Enter after pasting", "bool", True),
+    )
 
     def run(self, context: ActionContext) -> None:
         raw = self.string("path")
@@ -92,6 +107,11 @@ class ShellAction(HostActionHandler):
     would freeze every other action behind it.
     """
 
+    param_spec = (
+        Param("command", "Command", hint="split with shell rules, e.g. code --new-window"),
+        Param("cwd", "Working directory", hint="optional"),
+    )
+
     def run(self, context: ActionContext) -> None:
         command = self.params.get("command")
         if isinstance(command, str):
@@ -116,6 +136,8 @@ class ShellAction(HostActionHandler):
 
 @register("layer", "Switch the device layer")
 class LayerAction(HostActionHandler):
+    param_spec = (Param("layer", "Layer", "int", 0),)
+
     def run(self, context: ActionContext) -> None:
         if context.device is None:
             raise ActionError("layer action needs a connected device")
@@ -124,6 +146,17 @@ class LayerAction(HostActionHandler):
 
 @register("sequence", "Run several actions in order")
 class SequenceAction(HostActionHandler):
+    param_spec = (
+        Param(
+            "steps",
+            "Steps",
+            "json",
+            [],
+            hint=f'[{{"type": "hotkey", "params": {{"hotkey": "ctrl+n"}}}}], '
+            f"max {MAX_SEQUENCE_STEPS}",
+        ),
+    )
+
     def run(self, context: ActionContext) -> None:
         from ..config import HostAction  # local import avoids a cycle
 
