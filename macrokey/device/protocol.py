@@ -27,7 +27,13 @@ class Message:
     def get(self, key: str, default: str | None = None) -> str | None:
         return self.args.get(key, default)
 
-    def int(self, key: str, default: int | None = None) -> int | None:
+    def int(self, key: str, default: int = 0) -> int:
+        """The value as an integer, or `default` when it is absent or malformed.
+
+        Always returns an int, so callers must not write ``message.int(k, -1)
+        or -1``: a legitimate ``0`` is falsy and that idiom turned key 0 and
+        host token 0 into -1.
+        """
         value = self.args.get(key)
         if value is None:
             return default
@@ -105,13 +111,13 @@ class Hello:
         if message.verb != "HELLO":
             raise ProtocolError(f"expected HELLO, got {message.verb}")
         return cls(
-            protocol=message.int("proto", 0) or 0,
+            protocol=message.int("proto"),
             firmware=message.get("fw", "?") or "?",
             board=message.get("board", "?") or "?",
-            keys=message.int("keys", 0) or 0,
-            leds=message.int("leds", 0) or 0,
-            layers=message.int("layers", 0) or 0,
-            profile_bytes=message.int("bytes", 0) or 0,
+            keys=message.int("keys"),
+            leds=message.int("leds"),
+            layers=message.int("layers"),
+            profile_bytes=message.int("bytes"),
         )
 
     @property
@@ -150,17 +156,17 @@ def parse_event(message: Message) -> KeyEvent | HostEvent | ChordEvent | None:
     kind = message.get("t")
     if kind == "key":
         return KeyEvent(
-            key=message.int("k", -1) or -1,
+            key=message.int("k", -1),
             gesture=message.get("g", "?") or "?",
-            layer=message.int("l", 0) or 0,
-            uptime_ms=message.int("ms", 0) or 0,
+            layer=message.int("l"),
+            uptime_ms=message.int("ms"),
         )
     if kind == "host":
         return HostEvent(
             # `tok`, not `id`: `id` is reserved for request/response correlation.
-            token=message.int("tok", -1) or -1,
-            key=message.int("k", -1) or -1,
-            layer=message.int("l", 0) or 0,
+            token=message.int("tok", -1),
+            key=message.int("k", -1),
+            layer=message.int("l"),
         )
     if kind == "chord":
         mask_text = message.get("m", "0") or "0"
@@ -170,6 +176,6 @@ def parse_event(message: Message) -> KeyEvent | HostEvent | ChordEvent | None:
             mask = 0
         return ChordEvent(
             keys=[bit for bit in range(8) if mask & (1 << bit)],
-            layer=message.int("l", 0) or 0,
+            layer=message.int("l"),
         )
     return None
