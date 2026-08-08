@@ -68,9 +68,18 @@ class DeviceClient:
         if serial is None:
             raise DeviceError("pyserial is not installed: pip install pyserial")
 
-        ports = [port] if port else [item.device for item in discovery.candidates()]
+        if port:
+            ports = [port]
+        else:
+            found = discovery.candidates()
+            # Try the boards that identify themselves as one first and stop
+            # there if any answers. Falling through to every other USB serial
+            # port costs two seconds of settle time each and turns a wrong guess
+            # into a wall of unrelated errors.
+            likely = [item.device for item in found if item.likely]
+            ports = likely or [item.device for item in found]
         if not ports:
-            raise DeviceError("no serial ports found")
+            raise DeviceError("no USB serial ports found. Is the keypad plugged in?")
 
         errors: list[str] = []
         for candidate in ports:

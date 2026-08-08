@@ -17,6 +17,7 @@ from .config import Profile, Settings, binary, load_profile, save_profile
 from .device import ChordEvent, DeviceClient, DeviceError, HostEvent, KeyEvent
 from .led import LedService
 from .recorder import Recorder
+from .recorder.normalize import redact_secrets
 
 log = logging.getLogger(__name__)
 
@@ -39,6 +40,8 @@ class MacroKeyApp:
         self.actions = HostActionRunner(self.profile, status=self.status, device=self.device)
         self.leds: LedService | None = None
         self.recorder = Recorder(min_gap_ms=self.settings.recorder_min_gap_ms)
+        #: How many steps the last recording lost to the password filter.
+        self.last_redacted = 0
 
         self._app_layer_rules: dict[str, int] = {}
         self._app_layer_thread: threading.Thread | None = None
@@ -180,6 +183,14 @@ class MacroKeyApp:
         if self.leds is not None:
             self.leds.show_recording(False)
         steps = self.recorder.steps(events)
+        # Before anything can look at it, let alone store it. Capture is
+        # global, so a recording running while a sudo prompt was answered
+        # holds that password verbatim -- which has already happened once.
+        steps, self.last_redacted = redact_secrets(steps)
+        if self.last_redacted:
+            self.status(
+                f"Dropped {self.last_redacted} step(s) that looked like a password"
+            )
         self.status(f"Recorded {len(steps)} step(s)")
         return steps
 
