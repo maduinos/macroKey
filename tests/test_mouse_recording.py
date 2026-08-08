@@ -82,9 +82,17 @@ def test_an_unknown_button_is_not_forced_onto_the_device() -> None:
     assert reduce_to_device_macro([{"type": "mouse_button", "params": {"button": "x9"}}]) is None
 
 
-def test_typed_text_mixed_with_mouse_still_needs_the_host() -> None:
+def test_short_typed_text_mixed_with_mouse_fits_on_the_device() -> None:
+    """Text expands to key presses, so this no longer needs the host at all."""
     recording = normalize([press("h", 1.0, "h"), press("i", 1.05, "i"), click("left", 1.5)])
     assert any(step["type"] == "text" for step in recording)
+    macro = reduce_to_device_macro(recording)
+    assert macro is not None
+    assert [action.kind for action in macro] == ["key", "key", "delay", "mouse_button"]
+
+
+def test_text_the_keypad_has_no_keys_for_still_needs_the_host() -> None:
+    recording = normalize([press("\uc548", 1.0, "\uc548"), click("left", 1.5)])
     assert reduce_to_device_macro(recording) is None
 
 

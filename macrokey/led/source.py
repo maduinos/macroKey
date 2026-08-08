@@ -132,6 +132,10 @@ class ActivityEventServer:
             self.endpoint = f"127.0.0.1:{self._server.getsockname()[1]}"
         else:
             path = self._socket_path or default_socket_path()
+            # Remember it so stop() can remove it. Without this a socket made
+            # from the default path outlived the process, and anything checking
+            # whether the daemon is up by looking for the file was told yes.
+            self._socket_path = path
             path.parent.mkdir(parents=True, exist_ok=True)
             path.parent.chmod(stat.S_IRWXU)  # 0700: this user only
             if path.exists():

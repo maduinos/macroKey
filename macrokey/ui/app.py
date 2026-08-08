@@ -49,6 +49,32 @@ from ..device import DeviceError, candidates
 #: follows, and is bounded so a crash cannot park the pixel for good.
 PREVIEW_HOLD_MS = 45000
 
+def _daemon_running() -> bool:
+    """Whether anything is actually listening on the daemon's state socket.
+
+    Existence is not enough: the socket file outlives the process that made it,
+    so a stopped daemon leaves one behind and a check on the path alone reports
+    a daemon that is not there. Connecting is the only answer that means
+    anything.
+    """
+    import socket as socket_module
+
+    from ..led import default_socket_path
+
+    if not hasattr(socket_module, "AF_UNIX"):
+        return False
+    try:
+        path = default_socket_path()
+        if not path.exists():
+            return False
+        with socket_module.socket(socket_module.AF_UNIX, socket_module.SOCK_STREAM) as probe:
+            probe.settimeout(0.2)
+            probe.connect(str(path))
+        return True
+    except OSError:
+        return False
+
+
 def _nothing_captured_hint() -> str:
     """Why a recording can come back empty, when that has a known cause.
 
@@ -460,10 +486,18 @@ class SlotDialog(QDialog):
                 "Works with nothing running here."
             )
         else:
+            # Saying "needs the daemon" is not enough when the daemon is not
+            # running: the key would be bound, look bound, and do nothing at
+            # all. Check and say which of the two situations this is.
             self.where.setText(
-                "Has steps the keypad cannot replay by itself, such as mouse "
-                "movement or typed text, so this one needs the macroKey daemon "
-                "running to work."
+                "Has steps the keypad cannot replay by itself -- text too long "
+                "for its macro slots, or characters it has no keys for. "
+                + (
+                    "The macroKey daemon is running, so it will work."
+                    if _daemon_running()
+                    else "The macroKey daemon is NOT running, so this key will do "
+                    "nothing until it is started:  systemctl --user start macrokey"
+                )
             )
 
     # --------------------------------------------------------------- choices --
