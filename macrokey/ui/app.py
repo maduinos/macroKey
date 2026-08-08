@@ -40,7 +40,8 @@ from PySide6.QtWidgets import (
 
 from .. import __version__
 from ..app import MacroKeyApp
-from ..config import GESTURES, KEY_COUNT, LAYER_COUNT, Action, Profile
+from ..config import KEY_COUNT, LAYER_COUNT, Action, Profile
+from ..config.model import EDITABLE_GESTURES
 from ..device import DeviceError, candidates
 
 #: How long the device holds a previewed colour without hearing from us. Covers
@@ -91,6 +92,98 @@ def describe_binding(profile: Profile, action: Action) -> str:
     return action.describe()
 
 
+class ShortcutEdit(QLineEdit):
+    """Records a shortcut by having it pressed, the way desktop settings do.
+
+    Typing "ctrl+alt+shift+1" means knowing the vocabulary and the separator and
+    that it is "gui" rather than "super" here. Pressing the combination needs
+    none of that, and it is how every shortcut setting on this desktop already
+    works.
+
+    This reads Qt key events rather than capturing globally: the dialog has
+    focus while it is open, so the combination arrives here and nowhere else --
+    which also means it cannot trigger whatever it is currently bound to.
+    """
+
+    QT_MODIFIERS = (
+        (Qt.ControlModifier, "ctrl"),
+        (Qt.ShiftModifier, "shift"),
+        (Qt.AltModifier, "alt"),
+        (Qt.MetaModifier, "gui"),
+    )
+    #: Qt names these differently from macroKey's vocabulary.
+    QT_NAMES = {
+        Qt.Key_Escape: "esc",
+        Qt.Key_Return: "enter",
+        Qt.Key_Enter: "enter",
+        Qt.Key_Backspace: "backspace",
+        Qt.Key_Delete: "delete",
+        Qt.Key_Space: "space",
+        Qt.Key_Tab: "tab",
+        Qt.Key_Up: "up",
+        Qt.Key_Down: "down",
+        Qt.Key_Left: "left",
+        Qt.Key_Right: "right",
+        Qt.Key_Home: "home",
+        Qt.Key_End: "end",
+        Qt.Key_PageUp: "pageup",
+        Qt.Key_PageDown: "pagedown",
+        Qt.Key_Insert: "insert",
+        Qt.Key_CapsLock: "capslock",
+        Qt.Key_Print: "printscreen",
+    }
+    BARE_MODIFIERS = {
+        Qt.Key_Control,
+        Qt.Key_Shift,
+        Qt.Key_Alt,
+        Qt.Key_Meta,
+        Qt.Key_AltGr,
+    }
+
+    changed = Signal(str)
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.setReadOnly(True)
+        self.setPlaceholderText("Click here, then press the shortcut")
+
+    def keyPressEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        key = event.key()
+        if key in self.BARE_MODIFIERS:
+            # Held on its own it is not a shortcut yet; show it building up.
+            self.setText("+".join(self._modifiers(event)) + "+" if self._modifiers(event) else "")
+            return
+
+        parts = self._modifiers(event)
+        name = self.QT_NAMES.get(key)
+        if name is None:
+            if Qt.Key_F1 <= key <= Qt.Key_F24:
+                name = f"f{key - Qt.Key_F1 + 1}"
+            else:
+                text = event.text()
+                # The unshifted character: a macro binds the key, not the glyph
+                # shift happens to produce, or ctrl+shift+2 would come out as
+                # ctrl+shift+@ and fail to parse.
+                name = (text or "").lower()
+                if not name or not name.isprintable() or len(name) != 1:
+                    name = chr(key).lower() if 32 < key < 127 else ""
+        if not name:
+            return
+
+        parts.append(name)
+        value = "+".join(parts)
+        self.setText(value)
+        self.changed.emit(value)
+
+    def keyReleaseEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        if event.key() in self.BARE_MODIFIERS and self.text().endswith("+"):
+            self.setText("")
+
+    def _modifiers(self, event) -> list[str]:
+        state = event.modifiers()
+        return [name for flag, name in self.QT_MODIFIERS if state & flag]
+
+
 class SlotDialog(QDialog):
     """Everything one key can be, in one window.
 
@@ -127,11 +220,9 @@ class SlotDialog(QDialog):
         self.now.setStyleSheet("font-weight: 600;")
 
         # ---- shortcut ---------------------------------------------------------
-        self.shortcut = QLineEdit()
-        self.shortcut.setPlaceholderText("ctrl+alt+shift+1")
+        self.shortcut = ShortcutEdit()
         if current.kind == "key":
             self.shortcut.setText(current.hotkey)
-        self.shortcut.returnPressed.connect(self._use_shortcut)
         set_shortcut = QPushButton("Set")
         set_shortcut.clicked.connect(self._use_shortcut)
         shortcut_row = QHBoxLayout()
@@ -473,7 +564,7 @@ class MainWindow(QMainWindow):
             grid = QGridLayout(page)
             grid.setContentsMargins(8, 8, 8, 8)
 
-            for column, title in enumerate(("Key", *(gesture.title() for gesture in GESTURES))):
+            for column, title in enumerate(("Key", *(g.title() for g in EDITABLE_GESTURES))):
                 header = QLabel(title)
                 header.setStyleSheet("font-weight: 600;")
                 grid.addWidget(header, 0, column)
@@ -482,7 +573,7 @@ class MainWindow(QMainWindow):
 
             for key in range(KEY_COUNT):
                 grid.addWidget(QLabel(str(key + 1)), key + 1, 0)
-                for index, gesture in enumerate(GESTURES):
+                for index, gesture in enumerate(EDITABLE_GESTURES):
                     button = QPushButton("-")
                     button.setStyleSheet("text-align: left; padding: 4px 8px;")
                     button.clicked.connect(
@@ -507,7 +598,7 @@ class MainWindow(QMainWindow):
             swatch.clicked.connect(
                 lambda _checked=False, layer=layer: self._edit_layer_color(layer)
             )
-            grid.addWidget(swatch, KEY_COUNT + 1, 1, 1, len(GESTURES))
+            grid.addWidget(swatch, KEY_COUNT + 1, 1, 1, len(EDITABLE_GESTURES))
             self.swatches[layer] = swatch
 
             grid.setRowStretch(KEY_COUNT + 2, 1)
