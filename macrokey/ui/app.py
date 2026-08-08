@@ -431,6 +431,15 @@ class SlotDialog(QDialog):
             self.where.setText(_nothing_captured_hint())
             return
 
+        if self.app.last_redacted:
+            # Say it plainly. A step vanishing without explanation looks like a
+            # capture bug, and the person needs to know their password was in
+            # range of the recorder so they can judge whether to change it.
+            self.log.addItem(
+                f"!  {self.app.last_redacted} step(s) removed: a password prompt "
+                "was answered while recording"
+            )
+
         typed = _longest_typed_run(steps)
         if typed >= SECRET_TEXT_LENGTH:
             # Capture is global: it sees whatever was typed while it ran, into

@@ -111,6 +111,77 @@ def _quantize(milliseconds: int) -> int:
     return int(round(milliseconds / DELAY_QUANTUM_MS)) * DELAY_QUANTUM_MS
 
 
+#: Commands that answer with a password prompt. What gets typed next is the
+#: password, and it is typed into a terminal like anything else -- a recording
+#: running at the time captures it verbatim and stores it in the profile.
+PROMPTING_COMMANDS = ("sudo", "su", "ssh", "scp", "sftp", "passwd", "gpg", "mysql", "psql")
+
+
+def find_likely_secrets(steps: list[dict[str, Any]]) -> list[int]:
+    """Indices of text steps that are probably a password being answered.
+
+    The shape is specific: a command that prompts, the Enter that submits it,
+    then text. Requiring the Enter matters -- without it every word typed after
+    the string "sudo" appeared anywhere would be suspected, and a macro that
+    types `sudo apt update` and nothing else would lose its own command.
+
+    This is a guess, and it is meant to be. Getting it wrong costs a step that
+    has to be recorded again; getting it wrong the other way puts a password in
+    a file, which is what already happened once.
+    """
+    secrets: list[int] = []
+    # idle -> saw the command -> submitted it -> the next text is the answer.
+    state = "idle"
+    for index, step in enumerate(steps):
+        kind = step.get("type")
+        if kind == "delay":
+            continue  # a pause is exactly what a prompt looks like
+
+        if kind == "text":
+            if state == "submitted":
+                secrets.append(index)
+                state = "idle"
+                continue
+            state = "saw-command" if _runs_prompting_command(step) else "idle"
+            continue
+
+        if kind == "hotkey" and step.get("params", {}).get("hotkey") == "enter":
+            state = "submitted" if state == "saw-command" else "idle"
+            continue
+
+        state = "idle"
+    return secrets
+
+
+def _runs_prompting_command(step: dict[str, Any]) -> bool:
+    """Whether this typed text runs something that will ask for a password.
+
+    The command has to be what is being run, not merely mentioned: first word,
+    or straight after a shell separator. Otherwise `echo "use sudo for this"`
+    would arm the detector and eat the next thing typed.
+    """
+    words = step.get("params", {}).get("text", "").lower().split()
+    separators = ("|", "&&", ";", "||", "&")
+    return any(
+        word in PROMPTING_COMMANDS and (position == 0 or words[position - 1] in separators)
+        for position, word in enumerate(words)
+    )
+
+
+def redact_secrets(steps: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], int]:
+    """Drops probable passwords, returning the steps and how many went.
+
+    Dropping rather than masking: a masked step would still be replayed, typing
+    the wrong thing into a password prompt, and the point is that the secret
+    never reaches storage at all.
+    """
+    secrets = set(find_likely_secrets(steps))
+    if not secrets:
+        return steps, 0
+    kept = [step for index, step in enumerate(steps) if index not in secrets]
+    return kept, len(secrets)
+
+
 def summarize(steps: list[dict[str, Any]]) -> list[str]:
     """One readable line per step, shown before a recording is saved."""
     lines = []

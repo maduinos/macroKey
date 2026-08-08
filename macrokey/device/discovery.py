@@ -31,11 +31,17 @@ class PortCandidate:
 
 
 def candidates() -> list[PortCandidate]:
-    """Serial ports, most likely first.
+    """Serial ports worth trying, most likely first.
 
-    Ordering matters more than filtering: a board with a generic USB-serial
-    bridge still answers IDENT, so unlikely ports are tried last rather than
-    excluded.
+    Ordering matters more than filtering among USB ports: a board with a generic
+    USB-serial bridge still answers IDENT, so an unrecognised vendor is tried
+    last rather than excluded.
+
+    Ports with no vendor id are dropped, though. On a PC those are the legacy
+    /dev/ttyS0..31, and there are thirty-two of them: probing each one meant a
+    page of "Could not configure port" for every auto-connect, and two seconds
+    of settle time for any that did open. The keypad is a USB device, so it
+    always has a vendor id.
     """
     if list_ports is None:
         return []
@@ -47,6 +53,7 @@ def candidates() -> list[PortCandidate]:
             pid=port.pid,
         )
         for port in list_ports.comports()
+        if port.vid is not None
     ]
     found.sort(key=lambda candidate: (not candidate.likely, candidate.device))
     return found
