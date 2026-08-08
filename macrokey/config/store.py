@@ -83,8 +83,9 @@ class Settings:
 
     def save(self) -> None:
         path = settings_path()
-        path.parent.mkdir(parents=True, exist_ok=True)
+        path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         path.write_text(json.dumps(asdict(self), indent=2), encoding="utf-8")
+        _restrict(path)
 
 
 def _quarantine(path: Path, exc: Exception) -> Profile:
@@ -129,13 +130,27 @@ def load_profile() -> Profile:
 
 def save_profile(profile: Profile) -> None:
     path = profile_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     payload = profile.to_dict()
     payload["schema_version"] = SCHEMA_VERSION
     # Write-then-rename: a crash mid-save leaves the previous profile intact.
     temporary = path.with_suffix(".json.tmp")
     temporary.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    # A recording holds whatever was typed while it ran, verbatim, and it only
+    # takes one macro started a moment too early to put a password in here. The
+    # default 0644 made that readable by every account on the machine.
+    _restrict(temporary)
     temporary.replace(path)
+    _restrict(path)
+    _restrict(path.parent, directory=True)
+
+
+def _restrict(path: Path, *, directory: bool = False) -> None:
+    """Owner-only. Best effort: a filesystem without modes must not stop a save."""
+    try:
+        path.chmod(0o700 if directory else 0o600)
+    except OSError:
+        log.debug("could not restrict %s", path, exc_info=True)
 
 
 def migrate(data: dict[str, Any]) -> dict[str, Any]:
