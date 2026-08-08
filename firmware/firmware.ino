@@ -58,6 +58,10 @@ static void reportChord(uint8_t mask, uint8_t layer) {
   gSerial.sendChord(mask, layer);
 }
 
+static void reportRecordRequest(uint8_t key) {
+  gSerial.sendRecordRequest(key);
+}
+
 void setup() {
   quietBoardLeds();
   gInput.begin();
@@ -66,6 +70,7 @@ void setup() {
   gLeds.begin(&gProfile);
   gEngine.begin(&gProfile, &gInput, &gLeds);
   gEngine.setReportCallbacks(reportKey, reportHost, reportChord);
+  gEngine.setRecordCallback(reportRecordRequest);
   gSerial.begin(&gProfile, &gEngine, &gLeds);
 
   // Announce ourselves unconditionally: a host that opens the port later will

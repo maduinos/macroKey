@@ -43,6 +43,7 @@ from ..app import MacroKeyApp
 from ..config import KEY_COUNT, LAYER_COUNT, Action, Profile
 from ..config.model import EDITABLE_GESTURES
 from ..device import DeviceError, candidates
+from ..session import RecordingSession
 
 #: How long the device holds a previewed colour without hearing from us. Covers
 #: a person deliberating over a colour wheel plus the profile write that
@@ -561,6 +562,7 @@ class MainWindow(QMainWindow):
     pulled = Signal(object)
     connectionChanged = Signal()
     pushFinished = Signal()
+    recordingChanged = Signal()
 
     def __init__(self, port: str = "") -> None:
         super().__init__()
@@ -582,6 +584,14 @@ class MainWindow(QMainWindow):
         layout.addWidget(self._build_layers(), 1)
         self.setCentralWidget(central)
 
+        self.record_banner = QLabel("  ● RECORDING - hold the same key again to finish  ")
+        self.record_banner.setStyleSheet(
+            "background: #c0392b; color: white; font-weight: 600; padding: 6px;"
+        )
+        self.record_banner.setAlignment(Qt.AlignCenter)
+        self.record_banner.setVisible(False)
+        layout.insertWidget(0, self.record_banner)
+
         self.statusBar().showMessage("Not connected")
         self.statusMessage.connect(self.statusBar().showMessage)
         self.pushFinished.connect(self._on_push_finished)
@@ -596,8 +606,20 @@ class MainWindow(QMainWindow):
         self._connection_timer.timeout.connect(self._refresh_connection)
         self._connection_timer.start()
 
+        # Hold-to-record: the pad drives it, this window just reflects it.
+        self.session = RecordingSession(self.app, on_change=self.recordingChanged.emit)
+        self.app.session = self.session
+        self.recordingChanged.connect(self._refresh_recording)
+        self._record_timer = QTimer(self)
+        self._record_timer.setInterval(5000)
+        self._record_timer.timeout.connect(self.session.refresh_led)
+        self._record_timer.start()
+
         self._refresh_all()
         self._refresh_connection()
+        # Connect straight away rather than making someone press a button to
+        # reach a device that is already plugged in and already identified.
+        QTimer.singleShot(0, self._autoconnect)
 
     # ------------------------------------------------------------------ build --
 
@@ -877,7 +899,13 @@ class MainWindow(QMainWindow):
     def _in_background(self, work) -> None:
         threading.Thread(target=work, daemon=True).start()
 
-    def _toggle_connection(self) -> None:
+    def _toggle_connection(self, *, quiet: bool = False) -> None:
+        """Connects or disconnects. `quiet` reports failure without a dialog.
+
+        Auto-connect at startup must not be able to greet anyone with a modal
+        error: the pad may simply not be plugged in, which is not a problem
+        worth interrupting for, and the toolbar still offers the button.
+        """
         if self._connecting:
             return
         if self.app.device.connected:
@@ -887,14 +915,21 @@ class MainWindow(QMainWindow):
         self._connecting = True
         self.connect_button.setEnabled(False)
         self.connect_button.setText("Connecting...")
+        # Read on this thread. Touching a widget from the worker is undefined in
+        # Qt and deadlocks here in practice, which made auto-connect hang the
+        # window before it had finished opening.
+        port = self.port_box.currentText()
 
         def worker() -> None:
             try:
-                self.app.connect(self.port_box.currentText())
+                self.app.connect(port)
                 self.app.settings.port = self.app.device.port
                 self.app.settings.save()
             except DeviceError as exc:
-                self.failed.emit("Connect failed", str(exc))
+                if quiet:
+                    self.statusMessage.emit(f"No keypad found: {exc.args[0].splitlines()[0]}")
+                else:
+                    self.failed.emit("Connect failed", str(exc))
             finally:
                 self._connecting = False
                 self.connectionChanged.emit()
@@ -923,6 +958,28 @@ class MainWindow(QMainWindow):
         # error dialog a moment later.
         for button in self.device_buttons:
             button.setEnabled(connected)
+
+    def _autoconnect(self) -> None:
+        """Opens the obvious device on startup.
+
+        There is one keypad and discovery already knows which port it is, so
+        asking someone to pick it and press Connect is a question with one
+        answer. Failure is quiet: the toolbar still offers the button.
+        """
+        if self.app.device.connected:
+            return
+        self._toggle_connection(quiet=True)
+
+    def _refresh_recording(self) -> None:
+        session = self.session
+        if session.recording:
+            self.statusBar().showMessage(
+                f"Recording into key {session.active_key + 1} - hold it again to finish"
+            )
+        outcome = session.last_outcome
+        if outcome is not None and not session.recording:
+            self._refresh_all()
+        self.record_banner.setVisible(session.recording)
 
     def _rescan_ports(self) -> None:
         """Repopulates the port list, keeping whatever was typed or selected."""

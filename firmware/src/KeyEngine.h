@@ -20,11 +20,15 @@ typedef void (*MkKeyReportFn)(uint8_t key, uint8_t gesture, uint8_t layer, bool 
 typedef void (*MkHostActionFn)(uint8_t token, uint8_t key, uint8_t layer);
 
 typedef void (*MkChordReportFn)(uint8_t mask, uint8_t layer);
+//: The pad asking the host to start or finish recording into this key.
+typedef void (*MkRecordRequestFn)(uint8_t key);
 
 class KeyEngine {
  public:
   void begin(Profile *profile, ButtonInput *input, LedController *leds);
   void update(uint32_t now);
+
+  void setRecordCallback(MkRecordRequestFn onRecord) { onRecord_ = onRecord; }
 
   void setReportCallbacks(MkKeyReportFn key, MkHostActionFn host, MkChordReportFn chord);
 
@@ -52,6 +56,7 @@ class KeyEngine {
   MkKeyReportFn onKey_ = NULL;
   MkHostActionFn onHost_ = NULL;
   MkChordReportFn onChord_ = NULL;
+  MkRecordRequestFn onRecord_ = NULL;
 
   uint8_t baseLayer_ = 0;
   uint8_t momentaryLayer_ = 0;

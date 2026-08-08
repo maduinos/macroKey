@@ -225,6 +225,16 @@ void KeyEngine::serviceRepeat(uint32_t now) {
 }
 
 void KeyEngine::update(uint32_t now) {
+  // Asked for before anything else this pass, so the request is reported even
+  // if the same tick also produces ordinary key events.
+  int8_t recordKey = input_->takeRecordRequest();
+  if (recordKey >= 0 && onRecord_ != NULL) {
+    // The key is still down. Suppressing it stops the release from firing the
+    // binding as well: the person is programming the key, not using it.
+    input_->suppressUntilRelease((uint8_t)(1 << recordKey));
+    onRecord_((uint8_t)recordKey);
+  }
+
   if (!hidEnabled_ && now >= MK_BOOT_GRACE_MS) hidEnabled_ = true;
 
   checkChords(now);

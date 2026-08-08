@@ -31,7 +31,10 @@ static const uint16_t MK_PALETTE_SIZE = (uint16_t)MK_LAYER_COUNT * MK_LED_COUNT 
 static const uint16_t MK_MACRO_OFFSET = MK_PALETTE_OFFSET + MK_PALETTE_SIZE;
 static const uint16_t MK_MACRO_INDEX_SIZE = MK_MACRO_SLOTS * 2;  // offset, count
 static const uint16_t MK_MACRO_STEP_SIZE = 3;
-static const uint16_t MK_MACRO_REGION_SIZE = 480;
+// Grown from 480 when layers went away: the keymap they cost shrank by 288
+// bytes, and macro steps are what a pad with no layers actually needs more
+// of. The static_assert below is what keeps this honest against 1 KB.
+static const uint16_t MK_MACRO_REGION_SIZE = 768;
 static const uint16_t MK_PROFILE_SIZE = MK_MACRO_OFFSET + MK_MACRO_REGION_SIZE;
 
 static_assert(MK_PROFILE_SIZE <= 1024, "profile does not fit in ATmega32u4 EEPROM");

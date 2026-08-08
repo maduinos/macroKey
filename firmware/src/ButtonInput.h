@@ -18,6 +18,9 @@ class ButtonInput {
   bool nextEvent(KeyEvent *out);
 
   uint8_t pressedMask() const { return pressedMask_; }
+  //: Set when a key has been held alone long enough to mean "program me".
+  //: Cleared by reading it, so the engine sees each request exactly once.
+  int8_t takeRecordRequest();
   uint32_t lastPressEdgeAt() const { return lastPressEdgeAt_; }
 
   // Swallows every gesture from these keys until they are released. Used when
@@ -44,6 +47,7 @@ class ButtonInput {
     bool rawPressed;
     bool stablePressed;
     bool holdFired;
+    bool recordFired;
     bool suppressed;
   };
 
@@ -58,6 +62,7 @@ class ButtonInput {
   uint8_t queueHead_ = 0;
   uint8_t queueCount_ = 0;
   uint8_t pressedMask_ = 0;
+  int8_t recordRequest_ = -1;
   uint8_t doubleTapMask_ = 0;
   uint32_t lastPressEdgeAt_ = 0;
 };

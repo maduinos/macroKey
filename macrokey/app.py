@@ -14,7 +14,15 @@ from collections.abc import Callable
 from .actions import HostActionRunner
 from .backends import active_window_title
 from .config import Profile, Settings, binary, load_profile, save_profile
-from .device import ChordEvent, DeviceClient, DeviceError, HostEvent, KeyEvent
+from .device import (
+    ChordEvent,
+    DeviceClient,
+    DeviceError,
+    HostEvent,
+    KeyEvent,
+    RecordRequest,
+    candidates,
+)
 from .led import LedService
 from .recorder import Recorder
 from .recorder.normalize import redact_secrets
@@ -46,6 +54,8 @@ class MacroKeyApp:
         self.recorder = Recorder(min_gap_ms=self.settings.recorder_min_gap_ms)
         #: How many steps the last recording lost to the password filter.
         self.last_redacted = 0
+        #: Set by whoever wants to drive hold-to-record; None disables it.
+        self.session = None
 
         self._app_layer_rules: dict[str, int] = {}
         self._app_layer_thread: threading.Thread | None = None
@@ -70,10 +80,26 @@ class MacroKeyApp:
     # ------------------------------------------------------------- lifecycle --
 
     def connect(self, port: str = "") -> None:
-        self.device.connect(port or self.settings.port)
-        if self.settings.led_enabled:
+        """Opens the keypad, falling back to discovery when a named port is gone.
+
+        The port number changes whenever the board re-enumerates, which happens
+        on every firmware upload, so a remembered port goes stale routinely.
+        Failing on that instead of looking again would mean the app cannot find
+        a device that is plugged in and working.
+        """
+        wanted = port or self.settings.port
+        if wanted and wanted not in {item.device for item in candidates()}:
+            self.status(f"{wanted} is gone; looking for the keypad")
+            wanted = ""
+        self.device.connect(wanted)
+        # The LED service is off unless something asks for it. It holds the pixel
+        # in host mode and refreshes it every second, which fights the recording
+        # colour and leaves the pad lit by this app rather than by its own
+        # profile -- and its reason for existing, feeding AgentPet state in, is
+        # not something this app does any more.
+        if self.settings.led_enabled and self.settings.agentpet_enabled:
             self.leds = LedService(self.device, status=self.status)
-            self.leds.start(listen=self.settings.agentpet_enabled)
+            self.leds.start(listen=True)
 
     def disconnect(self) -> None:
         self.stop_app_layers()
@@ -96,6 +122,15 @@ class MacroKeyApp:
         elif isinstance(event, KeyEvent):
             # Tell the recorder so it drops the keypad's own HID echo.
             self.recorder.note_device_key()
+        elif isinstance(event, RecordRequest):
+            # Runs on the serial reader thread. Views that touch widgets must
+            # marshal; the session itself only touches the app and the device.
+            if self.session is not None:
+                self.session.handle_request(event.key)
+            else:
+                self.status(
+                    f"Key {event.key + 1} asked to record, but nothing is listening"
+                )
         elif isinstance(event, ChordEvent):
             self.status(f"Chord {'+'.join(str(k + 1) for k in event.keys)}")
 

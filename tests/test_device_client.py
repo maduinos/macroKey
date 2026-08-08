@@ -12,6 +12,8 @@ import time
 
 import pytest
 
+from macrokey.config import binary
+from macrokey.config.model import KEY_COUNT, LAYER_COUNT, LED_COUNT
 from macrokey.device import protocol
 from macrokey.device.client import DeviceClient, DeviceError
 
@@ -52,7 +54,12 @@ class FakeSerial:
         self.written.append(data)
         line = data.decode().strip()
         verb = line.split()[0] if line else ""
-        reply = b"HELLO proto=1 fw=0.3.0 board=promicro keys=8 leds=1 layers=4 bytes=932\r\n"
+        # Built from the constants, so a topology change cannot leave the fake
+        # claiming a profile size the app no longer speaks.
+        reply = (
+            f"HELLO proto=1 fw=0.3.0 board=promicro keys={KEY_COUNT} "
+            f"leds={LED_COUNT} layers={LAYER_COUNT} bytes={binary.PROFILE_SIZE}\r\n"
+        ).encode()
         if verb != "IDENT":
             reply = b"OK\r\n"
         if self.reply_after:
@@ -117,7 +124,10 @@ def test_connect_rejects_a_protocol_it_does_not_speak(monkeypatch) -> None:
         line = data.decode().strip()
         reply = b"OK\r\n"
         if line.startswith("IDENT"):
-            reply = b"HELLO proto=99 fw=9.9.9 board=x keys=8 leds=1 layers=4 bytes=932\r\n"
+            reply = (
+                f"HELLO proto=99 fw=9.9.9 board=x keys={KEY_COUNT} leds={LED_COUNT} "
+                f"layers={LAYER_COUNT} bytes={binary.PROFILE_SIZE}\r\n"
+            ).encode()
         fake._pending.extend(reply)
         return len(data)
 

@@ -64,7 +64,9 @@ class Settings:
     port: str = ""             # empty means auto-detect
     auto_connect: bool = True
     led_enabled: bool = True
-    agentpet_enabled: bool = True
+    #: Off by default: the pad drives its own LED from its profile, and this
+    #: turns on an always-connected ambient layer instead.
+    agentpet_enabled: bool = False
     agentpet_socket: str = ""  # empty means the AgentPet default location
     recorder_min_gap_ms: int = 40
     theme: str = "system"

@@ -139,12 +139,25 @@ class HostEvent:
 
 
 @dataclass
+class RecordRequest:
+    """``EV t=record`` -- a key was held alone long enough to mean "program me".
+
+    The device holds no recording state of its own. It reports the request and
+    the host decides whether that starts or finishes a recording, which keeps
+    the two from disagreeing about which mode they are in after a reconnect.
+    """
+
+    key: int
+    uptime_ms: int = 0
+
+
+@dataclass
 class ChordEvent:
     keys: list[int]
     layer: int
 
 
-def parse_event(message: Message) -> KeyEvent | HostEvent | ChordEvent | None:
+def parse_event(message: Message) -> KeyEvent | HostEvent | ChordEvent | RecordRequest | None:
     if message.verb != "EV":
         return None
     kind = message.get("t")
@@ -161,6 +174,11 @@ def parse_event(message: Message) -> KeyEvent | HostEvent | ChordEvent | None:
             token=message.int("tok", -1) or -1,
             key=message.int("k", -1) or -1,
             layer=message.int("l", 0) or 0,
+        )
+    if kind == "record":
+        return RecordRequest(
+            key=message.int("k", -1) or -1,
+            uptime_ms=message.int("ms", 0) or 0,
         )
     if kind == "chord":
         mask_text = message.get("m", "0") or "0"

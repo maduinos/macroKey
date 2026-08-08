@@ -76,6 +76,13 @@ void SerialProtocol::sendState() {
   Serial.println(millis());
 }
 
+void SerialProtocol::sendRecordRequest(uint8_t key) {
+  Serial.print(F("EV t=record k="));
+  Serial.print(key);
+  Serial.print(F(" ms="));
+  Serial.println(millis());
+}
+
 void SerialProtocol::sendKeyEvent(uint8_t key, uint8_t gesture, uint8_t layer,
                                   bool released) {
   Serial.print(F("EV t=key k="));
