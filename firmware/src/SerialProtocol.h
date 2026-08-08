@@ -18,6 +18,8 @@ class SerialProtocol {
 
   void sendHello();
   void sendState();
+  //: The pad asking the host to start or finish recording into this key.
+  void sendRecordRequest(uint8_t key);
   void sendKeyEvent(uint8_t key, uint8_t gesture, uint8_t layer, bool released);
   void sendHostAction(uint8_t token, uint8_t key, uint8_t layer);
   void sendChord(uint8_t mask, uint8_t layer);

@@ -14,7 +14,10 @@
 
 #define MK_KEY_COUNT 8
 #define MK_LED_COUNT 1
-#define MK_LAYER_COUNT 4
+// One layer. Eight keys that each do one thing is the whole product; layers
+// added a mode nobody could see and a shortcut nobody could remember, and the
+// keymap they cost is 288 bytes of EEPROM that macro steps now use instead.
+#define MK_LAYER_COUNT 1
 #define MK_GESTURE_COUNT 3
 #define MK_CHORD_SLOTS 8
 #define MK_MACRO_SLOTS 16
@@ -53,6 +56,11 @@ static const uint8_t MK_KEY_PINS[MK_KEY_COUNT] = {3, 4, 5, 6, 7, 8, 9, 10};
 // HID output is suppressed for this long after boot. If a macro misfires into
 // an infinite key storm this window is the only chance to re-flash the board.
 #define MK_BOOT_GRACE_MS 2000
+
+// A key held this long on its own asks the host to start or finish recording.
+// "On its own" is what keeps it from firing during ordinary use: holding a key
+// while pressing others is someone using the pad, not someone programming it.
+#define MK_RECORD_HOLD_MS 3000
 
 // --------------------------------------------------------------------- LED --
 

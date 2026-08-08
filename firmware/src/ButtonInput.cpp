@@ -49,6 +49,7 @@ void ButtonInput::onPressEdge(uint8_t key, uint32_t now) {
   } else {
     state.phase = PH_DOWN;
     state.holdFired = false;
+    state.recordFired = false;
   }
   state.pressedAt = now;
 }
@@ -101,9 +102,26 @@ void ButtonInput::update(uint32_t now) {
       push(key, GESTURE_HOLD, false);
     }
 
+    // Held on its own, for much longer than a hold: the request to start or
+    // finish recording. Requiring it to be the only key down is what keeps it
+    // out of ordinary use -- holding a key while pressing others is someone
+    // using the pad, not someone programming it.
+    if (state.stablePressed && !state.recordFired &&
+        pressedMask_ == (uint8_t)(1 << key) &&
+        now - state.pressedAt >= MK_RECORD_HOLD_MS) {
+      state.recordFired = true;
+      recordRequest_ = (int8_t)key;
+    }
+
     if (state.phase == PH_PENDING_TAP && now - state.releasedAt >= MK_DOUBLE_TAP_MS) {
       state.phase = PH_IDLE;
       push(key, GESTURE_TAP, false);
     }
   }
+}
+
+int8_t ButtonInput::takeRecordRequest() {
+  int8_t key = recordRequest_;
+  recordRequest_ = -1;
+  return key;
 }

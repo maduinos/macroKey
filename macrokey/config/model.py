@@ -16,10 +16,13 @@ KEY_COUNT = 8
 # One WS2812B on the pad. Kept separate from KEY_COUNT because the two are
 # genuinely independent: the palette is per pixel, the keymap is per key.
 LED_COUNT = 1
-LAYER_COUNT = 4
+# One layer. Eight keys that each do one thing is the product; layers added a
+# mode that was invisible and a way in that had to be remembered, and the keymap
+# they cost is EEPROM that macro steps use instead.
+LAYER_COUNT = 1
 CHORD_SLOTS = 8
 MACRO_SLOTS = 16
-MACRO_STEP_CAPACITY = 149  # (480 - 32 index bytes) // 3 bytes per step
+MACRO_STEP_CAPACITY = 245  # (768 - 32 index bytes) // 3 bytes per step
 
 GESTURES = ("tap", "double", "hold")
 
@@ -321,6 +324,30 @@ class Profile:
         while len(self.layers) < LAYER_COUNT:
             self.layers.append(Layer(name=f"Layer {len(self.layers)}"))
         del self.layers[LAYER_COUNT:]
+        self._drop_unreachable_layer_actions()
+        if self.base_layer >= LAYER_COUNT:
+            self.base_layer = 0
+
+    def _drop_unreachable_layer_actions(self) -> None:
+        """Clears bindings that switch to a layer this build does not have.
+
+        A profile written when there were four layers still holds actions
+        pointing at layers 1 to 3. Leaving them would mean a key bound to a
+        switch that cannot happen -- and anything reading the target's name
+        indexes off the end of the list.
+        """
+        for index, layer in enumerate(self.layers):
+            keys = []
+            for slot in layer.keys:
+                for gesture in GESTURES:
+                    action = slot.gesture(gesture)
+                    if (
+                        action.kind in ("layer_momentary", "layer_toggle")
+                        and action.layer >= LAYER_COUNT
+                    ):
+                        slot = slot.with_gesture(gesture, Action())
+                keys.append(slot)
+            self.layers[index] = replace(layer, keys=keys)
 
     def slot(self, layer: int, key: int) -> KeySlot:
         return self.layers[layer].keys[key]
@@ -378,7 +405,7 @@ class Profile:
 # a dim resting glow rather than off, and the rest are brighter and clearly
 # another hue, because "which layer am I in" is the one question eight keys
 # carrying 96 slots cannot answer by feel.
-LAYER_COLORS = ("3c5073", "00b4c8", "dc6400", "aa00dc")
+LAYER_COLORS = ("3c5073",)  # matches the firmware resting glow (60, 80, 115)
 
 
 def default_profile() -> Profile:
@@ -391,8 +418,7 @@ def default_profile() -> Profile:
     # Every key in a layer carries the same colour: with one pixel the LED shows
     # which layer is active, not which key was hit.
     profile.layers = [
-        Layer(name=name, keys=[KeySlot(color=LAYER_COLORS[index]) for _ in range(KEY_COUNT)])
-        for index, name in enumerate(("Base", "Media", "Layer 2", "Layer 3"))
+        Layer(name="Keys", keys=[KeySlot(color=LAYER_COLORS[0]) for _ in range(KEY_COUNT)])
     ]
 
     # Layer 0: hyper + 1..8. Nothing binds ctrl+alt+shift+digit, so the pad does
@@ -400,21 +426,6 @@ def default_profile() -> Profile:
     # away from anything already running.
     for key in range(KEY_COUNT):
         profile.set_action(0, key, "tap", Action(kind="key", hotkey=f"ctrl+alt+shift+{key + 1}"))
-
-    # Held keys reach the upper layers: key 8 -> layer 1, key 7 -> 2, key 6 -> 3.
-    # Momentary, so a layer cannot become one you forgot you were in, and it
-    # leaves the tap on those keys free.
-    for layer in range(1, LAYER_COUNT):
-        profile.set_action(
-            0, KEY_COUNT - layer, "hold", Action(kind="layer_momentary", layer=layer)
-        )
-
-    # Layer 1 is media, which needs no host: these are HID consumer usages the
-    # firmware sends by itself.
-    media = ("volume_down", "volume_up", "mute", "play_pause", "prev_track", "next_track")
-    for key, usage in enumerate(media):
-        if usage in keycodes.CONSUMER_USAGES:
-            profile.set_action(1, key, "tap", Action(kind="consumer", usage=usage))
 
     # No host actions and no chord by default. The tokens that used to be here
     # pointed at nothing, so three keys on layer 1 did nothing at all and the

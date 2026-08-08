@@ -179,52 +179,18 @@ void Profile::writeDefaults() {
     writeAction(keymapAddress(0, key, GESTURE_TAP), makeKey(hyper, '1' + key));
   }
 
-  // Held keys reach the upper layers: key 8 -> layer 1, key 7 -> 2, key 6 -> 3.
-  // Momentary, so a layer cannot become one you forgot you were in, and holding
-  // leaves the tap on those keys free.
-  for (uint8_t layer = 1; layer < MK_LAYER_COUNT; layer++) {
-    uint8_t key = MK_KEY_COUNT - layer;
-    Action toLayer = {ACT_LAYER_MOMENTARY, layer, 0, 0};
-    writeAction(keymapAddress(0, key, GESTURE_HOLD), toLayer);
-  }
+  // No layer switching and no chord: eight keys that each do one thing, and
+  // everything else is recorded onto them by holding the key.
 
-  // Layer 1 is media, all of it sent by the firmware itself: consumer usages
-  // need no host app. The host tokens that used to sit on keys 5-7 pointed at
-  // nothing, so those keys did nothing at all.
-  const uint16_t consumerUsages[6] = {0x00EA, 0x00E9, 0x00E2, 0x00CD, 0x00B6, 0x00B5};
-  for (uint8_t key = 0; key < 6; key++) {
-    Action action = {ACT_CONSUMER, (uint8_t)(consumerUsages[key] & 0xFF),
-                     (uint8_t)(consumerUsages[key] >> 8), 0};
-    writeAction(keymapAddress(1, key, GESTURE_TAP), action);
-  }
-
-  // No default chord: it asked a host that is not running to stop a job that
-  // never started.
-
-  // One colour per layer, because the question this pixel is best at answering
-  // is which layer you are in. Eight keys carry 96 slots, so the pad is deeply
-  // modal: key 1 is hyper+1 on layer 0 and volume-down on layer 1, and the
-  // finger cannot tell them apart.
-  //
-  // Layer 0 is a dim blue-grey rather than off. Off reads as unplugged, and a
-  // resting glow is most of what this pixel is actually looked at for. The
-  // others are three to four times brighter and clearly another hue, so
-  // entering a layer is a change nobody has to look for -- which matters most
-  // for layer 1, entered by holding key 8, where the colour arriving is also
-  // the confirmation that the hold registered. It leaves when the key comes up.
-  //
-  // These are pre-brightness. At the default brightness of 64 the base lands
-  // near (15, 20, 28): visible in a dark room, not a light source.
-  const Rgb layerColors[4] = {
-      {60, 80, 115}, {0, 180, 200}, {220, 100, 0}, {170, 0, 220}};
-  for (uint8_t layer = 0; layer < MK_LAYER_COUNT; layer++) {
-    const Rgb &color = layerColors[layer < 4 ? layer : 0];
-    for (uint8_t led = 0; led < MK_LED_COUNT; led++) {
-      uint16_t address = MK_PALETTE_OFFSET + ((uint16_t)layer * MK_LED_COUNT + led) * 3;
-      EEPROM.update(address + 0, color.r);
-      EEPROM.update(address + 1, color.g);
-      EEPROM.update(address + 2, color.b);
-    }
+  // A dim blue-grey resting glow. Off reads as unplugged, and this is what the
+  // pixel shows most of the time; the recording and result colours are driven
+  // by the host and compose above it.
+  const Rgb resting = {60, 80, 115};
+  for (uint8_t led = 0; led < MK_LED_COUNT; led++) {
+    uint16_t address = MK_PALETTE_OFFSET + led * 3;
+    EEPROM.update(address + 0, resting.r);
+    EEPROM.update(address + 1, resting.g);
+    EEPROM.update(address + 2, resting.b);
   }
 
   brightness_ = MK_LED_DEFAULT_BRIGHTNESS;
