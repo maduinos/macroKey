@@ -853,7 +853,7 @@ class MainWindow(QMainWindow):
         except (DeviceError, ValueError) as exc:
             self.statusMessage.emit(f"{what} saved, but the device write failed: {exc}")
             return
-        self.statusMessage.emit(f"{what} applied.")
+        self.statusMessage.emit(f"Done - {what} written to the keypad")
 
     def _brightness_changed(self, value: int) -> None:
         """Live while dragging. `LED bright=` is a runtime value only."""
@@ -956,9 +956,12 @@ class MainWindow(QMainWindow):
                 self.app.push_profile()
             except (DeviceError, ValueError) as exc:
                 self.failed.emit("Write failed", str(exc))
+            else:
+                self.statusMessage.emit("Done - written to the keypad")
             finally:
                 self.pushFinished.emit()
 
+        self.statusMessage.emit("Writing to the keypad...")
         self._in_background(worker)
 
     def _on_push_finished(self) -> None:

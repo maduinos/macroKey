@@ -58,8 +58,11 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    # Warnings and worse by default. Status messages already reach the terminal
+    # through the status callback, so logging them at INFO as well printed every
+    # line twice -- once bare, once with a level prefix that read like an error.
     logging.basicConfig(
-        level=logging.DEBUG if args.verbose else logging.INFO,
+        level=logging.DEBUG if args.verbose else logging.WARNING,
         format="%(levelname)s %(name)s: %(message)s",
     )
 
