@@ -179,36 +179,27 @@ void Profile::writeDefaults() {
     writeAction(keymapAddress(0, key, GESTURE_TAP), makeKey(hyper, '1' + key));
   }
 
-  // Held keys reach the upper layers, and the LED colour makes the shift
-  // visible. Momentary rather than toggle throughout: a layer you are holding
-  // cannot be one you forgot you were in, which is the failure mode that makes
-  // a modal keypad feel broken. Keys 8, 7 and 6 so the reach is the same shape
-  // each time, and hold rather than double-tap because arming double-tap on a
-  // key costs every tap of that key MK_DOUBLE_TAP_MS of delay.
+  // Held keys reach the upper layers: key 8 -> layer 1, key 7 -> 2, key 6 -> 3.
+  // Momentary, so a layer cannot become one you forgot you were in, and holding
+  // leaves the tap on those keys free.
   for (uint8_t layer = 1; layer < MK_LAYER_COUNT; layer++) {
-    uint8_t key = MK_KEY_COUNT - layer;  // layer 1 -> key 8, 2 -> key 7, 3 -> key 6
+    uint8_t key = MK_KEY_COUNT - layer;
     Action toLayer = {ACT_LAYER_MOMENTARY, layer, 0, 0};
     writeAction(keymapAddress(0, key, GESTURE_HOLD), toLayer);
   }
 
-  // Layer 1 is a media / desktop-app strip: four consumer controls that need no
-  // host app, then host tokens for whatever the desktop app wants to offer.
-  const uint16_t consumerUsages[4] = {0x00EA, 0x00E9, 0x00E2, 0x00CD};
-  for (uint8_t key = 0; key < 4; key++) {
+  // Layer 1 is media, all of it sent by the firmware itself: consumer usages
+  // need no host app. The host tokens that used to sit on keys 5-7 pointed at
+  // nothing, so those keys did nothing at all.
+  const uint16_t consumerUsages[6] = {0x00EA, 0x00E9, 0x00E2, 0x00CD, 0x00B6, 0x00B5};
+  for (uint8_t key = 0; key < 6; key++) {
     Action action = {ACT_CONSUMER, (uint8_t)(consumerUsages[key] & 0xFF),
                      (uint8_t)(consumerUsages[key] >> 8), 0};
     writeAction(keymapAddress(1, key, GESTURE_TAP), action);
   }
-  for (uint8_t key = 4; key < MK_KEY_COUNT - 1; key++) {
-    Action action = {ACT_HOST, (uint8_t)(key - 4), 0, 0};
-    writeAction(keymapAddress(1, key, GESTURE_TAP), action);
-  }
 
-  // Chord: keys 1+2 together ask the host to stop whatever it is running.
-  uint16_t chord0 = MK_CHORD_OFFSET;
-  EEPROM.update(chord0, 0x03);
-  Action panic = {ACT_HOST, 200, 0, 0};
-  writeAction(chord0 + 1, panic);
+  // No default chord: it asked a host that is not running to stop a job that
+  // never started.
 
   // One colour per layer, because the question this pixel is best at answering
   // is which layer you are in. Eight keys carry 96 slots, so the pad is deeply

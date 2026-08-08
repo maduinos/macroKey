@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import os
 import threading
 import time
 from collections.abc import Callable
 from typing import Any
 
+from . import evdev_source
 from .events import KEY_DOWN, KEY_UP, MOUSE_CLICK, SCROLL, RawEvent
 from .normalize import (
     DEFAULT_MIN_GAP_MS,
@@ -54,6 +56,10 @@ _SPECIAL_NAMES = {
 }
 
 
+def _wayland_session() -> bool:
+    return os.environ.get("XDG_SESSION_TYPE", "").lower() == "wayland"
+
+
 class RecorderError(RuntimeError):
     """Raised when input capture is unavailable."""
 
@@ -85,26 +91,55 @@ class Recorder:
         self._lock = threading.Lock()
         self._keyboard_listener = None
         self._mouse_listener = None
+        self._evdev = None
+        self.backend = ""
         self._last_device_key_at = 0.0
         self.recording = False
 
     @staticmethod
     def available() -> tuple[bool, str]:
+        """Whether anything here can capture, and the most useful reason if not.
+
+        Reports on the backend that will actually be chosen, not merely on
+        whether pynput imports: pynput imports fine under Wayland and then sees
+        nothing, which is the failure this exists to stop reporting as success.
+        """
+        usable, reason = evdev_source.available()
+        if usable:
+            return True, ""
         if pynput_keyboard is None:
-            return False, "pynput is not installed or cannot access an input backend"
+            return False, reason
+        if _wayland_session():
+            return False, (
+                f"{reason}. Without it, capture falls back to X11, which under "
+                "Wayland cannot see typing into most windows."
+            )
         return True, ""
 
     # ---------------------------------------------------------------- control --
 
     def start(self) -> None:
+        if self.recording:
+            return
+        with self._lock:
+            self._events.clear()
+
+        # Prefer the kernel: it is the only source that sees every window under
+        # Wayland. pynput stays as the fallback for boxes without the input
+        # group, and on X11 where it works properly.
+        if evdev_source.available()[0]:
+            self._evdev = evdev_source.EvdevRecorder(
+                self._record, capture_mouse=self.capture_mouse
+            )
+            self._evdev.start()
+            self.backend = "evdev"
+            self.recording = True
+            return
+
         usable, reason = self.available()
         if not usable:
             raise RecorderError(reason)
-        if self.recording:
-            return
-
-        with self._lock:
-            self._events.clear()
+        self.backend = "pynput"
         self._keyboard_listener = pynput_keyboard.Listener(
             on_press=self._on_press, on_release=self._on_release
         )
@@ -118,6 +153,11 @@ class Recorder:
 
     def stop(self) -> list[RawEvent]:
         self.recording = False
+        if self._evdev is not None:
+            self._evdev.stop()
+            self._evdev = None
+            with self._lock:
+                return list(self._events)
         for listener in (self._keyboard_listener, self._mouse_listener):
             if listener is not None:
                 listener.stop()

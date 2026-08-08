@@ -23,6 +23,10 @@ MACRO_STEP_CAPACITY = 149  # (480 - 32 index bytes) // 3 bytes per step
 
 GESTURES = ("tap", "double", "hold")
 
+#: What the editor offers. The same three: eight keys carrying 96 slots is the
+#: reason the pad is worth having, and hold is how the upper layers are reached.
+EDITABLE_GESTURES = GESTURES
+
 SCHEMA_VERSION = 1
 
 # Action type ids, shared with ActionTypes.h.
@@ -391,25 +395,30 @@ def default_profile() -> Profile:
         for index, name in enumerate(("Base", "Media", "Layer 2", "Layer 3"))
     ]
 
-    # Layer 0: hyper + 1..8. Nothing binds ctrl+alt+shift+digit, so the pad is
-    # useful immediately without stealing an existing shortcut.
+    # Layer 0: hyper + 1..8. Nothing binds ctrl+alt+shift+digit, so the pad does
+    # something useful the moment it is plugged in without taking a shortcut
+    # away from anything already running.
     for key in range(KEY_COUNT):
         profile.set_action(0, key, "tap", Action(kind="key", hotkey=f"ctrl+alt+shift+{key + 1}"))
+
     # Held keys reach the upper layers: key 8 -> layer 1, key 7 -> 2, key 6 -> 3.
-    # Without these, layers 2 and 3 had colours defined and no way to enter them.
+    # Momentary, so a layer cannot become one you forgot you were in, and it
+    # leaves the tap on those keys free.
     for layer in range(1, LAYER_COUNT):
         profile.set_action(
             0, KEY_COUNT - layer, "hold", Action(kind="layer_momentary", layer=layer)
         )
 
-    media = ("volume_down", "volume_up", "mute", "play_pause")
+    # Layer 1 is media, which needs no host: these are HID consumer usages the
+    # firmware sends by itself.
+    media = ("volume_down", "volume_up", "mute", "play_pause", "prev_track", "next_track")
     for key, usage in enumerate(media):
-        profile.set_action(1, key, "tap", Action(kind="consumer", usage=usage))
-    for key in range(4, KEY_COUNT - 1):
-        profile.set_action(1, key, "tap", Action(kind="host", token=key - 4))
+        if usage in keycodes.CONSUMER_USAGES:
+            profile.set_action(1, key, "tap", Action(kind="consumer", usage=usage))
 
-    profile.chords = [Chord(keys=[0, 1], action=Action(kind="host", token=200))]
-    profile.host_actions = {
-        200: HostAction(type="stop", name="Stop running host action"),
-    }
+    # No host actions and no chord by default. The tokens that used to be here
+    # pointed at nothing, so three keys on layer 1 did nothing at all and the
+    # chord asked a daemon that is not running to stop a job that never started.
+    profile.chords = []
+    profile.host_actions = {}
     return profile
