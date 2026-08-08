@@ -60,7 +60,9 @@ def test_a_realistic_command_expands_and_encodes() -> None:
 
 
 @pytest.mark.parametrize(
-    "value", ["안녕", "café", "a\tb", "a\nb", ""], ids=["hangul", "accent", "tab", "newline", "empty"]
+    "value",
+    ["안녕", "café", "a\tb", "a\nb", ""],
+    ids=["hangul", "accent", "tab", "newline", "empty"],
 )
 def test_what_the_keypad_has_no_keys_for_stays_on_the_host(value: str) -> None:
     assert expand_text_to_keys(value) is None
@@ -72,7 +74,12 @@ def test_what_the_keypad_has_no_keys_for_stays_on_the_host(value: str) -> None:
 def test_the_terminal_macro_that_used_to_need_a_daemon_now_fits() -> None:
     """Open a terminal, type a command, press enter -- the motivating case."""
     macro = reduce_to_device_macro(
-        [key("ctrl+alt+t"), {"type": "delay", "params": {"ms": 850}}, text("sudo apt update"), key("enter")]
+        [
+            key("ctrl+alt+t"),
+            {"type": "delay", "params": {"ms": 850}},
+            text("sudo apt update"),
+            key("enter"),
+        ]
     )
     assert macro is not None
     assert len(macro) == 18
