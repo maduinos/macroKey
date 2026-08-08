@@ -163,13 +163,27 @@ void KeyEngine::handleEvent(const KeyEvent &event, uint32_t now) {
     return;
   }
 
-  leds_->notePress(event.key, now);
+  // A hold announces itself the moment the threshold is crossed, which is while
+  // the finger is still down. That is the only point where the cue can still
+  // change what the person does -- after the release it is just history.
+  if (event.gesture == GESTURE_HOLD) {
+    leds_->noteHold(event.key, now);
+  } else {
+    leds_->notePress(event.key, now);
+  }
+
   Action action = profile_->action(layer, event.key, event.gesture);
 
   // A tap with no binding still falls through to the layer-0 binding, so a
   // half-configured layer behaves like a shifted keypad rather than a dead one.
   if (action.type == ACT_NONE && layer != 0 && event.gesture == GESTURE_TAP) {
     action = profile_->action(0, event.key, GESTURE_TAP);
+  }
+
+  // Checked after the fallback, so a layer that borrows from layer 0 does not
+  // report itself as empty.
+  if (action.type == ACT_NONE) {
+    leds_->noteUnbound(event.key, now);
   }
 
   dispatch(action, event.key, now);

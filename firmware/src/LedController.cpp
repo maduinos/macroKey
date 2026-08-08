@@ -26,7 +26,7 @@ void LedController::begin(Profile *profile) {
   strip_.show();
   for (uint8_t i = 0; i < MK_LED_COUNT; i++) {
     ambient_[i] = AmbientPixel{{0, 0, 0}, 0, 0, FX_SOLID};
-    pressedAt_[i] = 0;
+    cue_[i] = Cue{Rgb{0, 0, 0}, 0, 0, 0};
     lastShown_[i] = Rgb{0, 0, 0};
     fadeFrom_[i] = Rgb{0, 0, 0};
     lastBase_[i] = Rgb{0, 0, 0};
@@ -36,17 +36,37 @@ void LedController::begin(Profile *profile) {
   }
 }
 
-void LedController::notePress(uint8_t key, uint32_t now) {
+void LedController::startCue(uint8_t key, Rgb color, uint16_t durationMs, uint8_t amount,
+                             uint32_t now) {
   // With one pixel per key each press lights its own. With fewer pixels than
   // keys the surplus keys fold onto the last one, so every key still gives
   // feedback -- dropping the press outright would leave most of the pad dark.
   uint8_t index = key < MK_LED_COUNT ? key : MK_LED_COUNT - 1;
-  pressedAt_[index] = now;
+  // `now` is millis(), which is zero only in the first millisecond after boot,
+  // and HID is suppressed for MK_BOOT_GRACE_MS anyway. Nudging it off zero
+  // keeps "no cue" representable without a second flag.
+  cue_[index] = Cue{color, now == 0 ? 1 : now, durationMs, amount};
 }
 
-void LedController::setHostMode(bool enabled, uint32_t now) {
+void LedController::notePress(uint8_t key, uint32_t now) {
+  startCue(key, Rgb{255, 255, 255}, MK_LED_PRESS_FLASH_MS, MK_LED_PRESS_FLASH_AMOUNT, now);
+}
+
+void LedController::noteHold(uint8_t key, uint32_t now) {
+  startCue(key, Rgb{255, 255, 255}, MK_LED_HOLD_FLASH_MS, MK_LED_HOLD_FLASH_AMOUNT, now);
+}
+
+void LedController::noteUnbound(uint8_t key, uint32_t now) {
+  // Dim rather than saturated: this is "nothing here", not a fault.
+  startCue(key, Rgb{110, 0, 0}, MK_LED_UNBOUND_FLASH_MS, MK_LED_UNBOUND_FLASH_AMOUNT, now);
+}
+
+void LedController::setHostMode(bool enabled, uint32_t now, uint16_t timeoutMs) {
   hostMode_ = enabled;
   lastHostAt_ = now;
+  // Handing control back always restores the default, so one session asking for
+  // a long window cannot leave the next host stuck with it.
+  hostTimeoutMs_ = (enabled && timeoutMs > 0) ? timeoutMs : MK_LED_HOST_TIMEOUT_MS;
   dirty_ = true;
 }
 
@@ -115,7 +135,6 @@ void LedController::applyPowerLimit(Rgb *frame) const {
 
 void LedController::render(uint32_t now) {
   Rgb frame[MK_LED_COUNT];
-  const Rgb white = {255, 255, 255};
 
   for (uint8_t i = 0; i < MK_LED_COUNT; i++) {
     Rgb scene;
@@ -154,11 +173,12 @@ void LedController::render(uint32_t now) {
     // scene, so a fade starting mid-flash must not inherit the white.
     lastBase_[i] = color;
 
-    uint32_t sincePress = now - pressedAt_[i];
-    if (pressedAt_[i] != 0 && sincePress < MK_LED_PRESS_FLASH_MS) {
-      uint16_t amount = (uint16_t)(255 - sincePress * 255 / MK_LED_PRESS_FLASH_MS);
-      amount = amount * MK_LED_PRESS_FLASH_AMOUNT / 255;
-      color = blendToward(color, white, (uint8_t)amount);
+    const Cue &cue = cue_[i];
+    uint32_t sinceCue = now - cue.startedAt;
+    if (cue.startedAt != 0 && sinceCue < cue.durationMs) {
+      uint16_t amount = (uint16_t)(255 - sinceCue * 255 / cue.durationMs);
+      amount = amount * cue.amount / 255;
+      color = blendToward(color, cue.color, (uint8_t)amount);
     }
 
     color.r = (uint8_t)(((uint16_t)color.r * brightness_) >> 8);
@@ -190,7 +210,7 @@ void LedController::render(uint32_t now) {
 }
 
 void LedController::update(uint32_t now) {
-  if (hostMode_ && now - lastHostAt_ > MK_LED_HOST_TIMEOUT_MS) {
+  if (hostMode_ && now - lastHostAt_ > hostTimeoutMs_) {
     // The desktop app went away. Fall back to the local scene instead of
     // freezing on whatever colour it last sent.
     hostMode_ = false;

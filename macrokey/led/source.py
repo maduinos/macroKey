@@ -90,7 +90,15 @@ class ActivityEvent:
 
 def default_socket_path() -> Path:
     runtime = os.environ.get("XDG_RUNTIME_DIR")
-    base = Path(runtime) if runtime else Path(f"/tmp/macrokey-{os.getuid()}")  # noqa: S108
+    if runtime:
+        base = Path(runtime)
+    else:
+        # os.getuid is POSIX-only, and this used to be called unconditionally --
+        # including from `macrokey state`, which checked for AF_UNIX support only
+        # after computing the path. On Windows that raised AttributeError instead
+        # of the message explaining what was unsupported.
+        uid = getattr(os, "getuid", None)
+        base = Path(f"/tmp/macrokey-{uid() if uid else 'user'}")  # noqa: S108
     return base / "macrokey" / "state.sock"
 
 
@@ -166,7 +174,7 @@ class ActivityEventServer:
                 return
             try:
                 connection, _ = server.accept()
-            except (TimeoutError, socket.timeout):
+            except TimeoutError:
                 continue
             except OSError:
                 return
@@ -188,7 +196,7 @@ class ActivityEventServer:
                 while b"\n" in buffer:
                     raw, _, buffer = buffer.partition(b"\n")
                     self._handle(raw)
-        except (OSError, socket.timeout):
+        except (TimeoutError, OSError):
             return
         finally:
             try:

@@ -13,8 +13,7 @@ from collections.abc import Callable
 
 from .actions import HostActionRunner
 from .backends import active_window_title
-from .config import Profile, Settings, load_profile, save_profile
-from .config import binary
+from .config import Profile, Settings, binary, load_profile, save_profile
 from .device import ChordEvent, DeviceClient, DeviceError, HostEvent, KeyEvent
 from .led import LedService
 from .recorder import Recorder

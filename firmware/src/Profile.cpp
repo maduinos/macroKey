@@ -179,9 +179,17 @@ void Profile::writeDefaults() {
     writeAction(keymapAddress(0, key, GESTURE_TAP), makeKey(hyper, '1' + key));
   }
 
-  // Key 8 held is the layer key, and its LED colour makes the shift visible.
-  Action toLayer1 = {ACT_LAYER_MOMENTARY, 1, 0, 0};
-  writeAction(keymapAddress(0, MK_KEY_COUNT - 1, GESTURE_HOLD), toLayer1);
+  // Held keys reach the upper layers, and the LED colour makes the shift
+  // visible. Momentary rather than toggle throughout: a layer you are holding
+  // cannot be one you forgot you were in, which is the failure mode that makes
+  // a modal keypad feel broken. Keys 8, 7 and 6 so the reach is the same shape
+  // each time, and hold rather than double-tap because arming double-tap on a
+  // key costs every tap of that key MK_DOUBLE_TAP_MS of delay.
+  for (uint8_t layer = 1; layer < MK_LAYER_COUNT; layer++) {
+    uint8_t key = MK_KEY_COUNT - layer;  // layer 1 -> key 8, 2 -> key 7, 3 -> key 6
+    Action toLayer = {ACT_LAYER_MOMENTARY, layer, 0, 0};
+    writeAction(keymapAddress(0, key, GESTURE_HOLD), toLayer);
+  }
 
   // Layer 1 is a media / desktop-app strip: four consumer controls that need no
   // host app, then host tokens for whatever the desktop app wants to offer.
@@ -202,11 +210,22 @@ void Profile::writeDefaults() {
   Action panic = {ACT_HOST, 200, 0, 0};
   writeAction(chord0 + 1, panic);
 
-  // The resting scene is dark on every layer: a keypad sitting idle on the desk
-  // should not glow. Press feedback, host ambient and any explicit LED_SCENE
-  // action still light the pixel -- they compose above this layer, so switching
-  // a colour back on here is a one-line change if the layer tint is ever wanted.
-  const Rgb layerColors[4] = {{0, 0, 0}, {0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
+  // One colour per layer, because the question this pixel is best at answering
+  // is which layer you are in. Eight keys carry 96 slots, so the pad is deeply
+  // modal: key 1 is hyper+1 on layer 0 and volume-down on layer 1, and the
+  // finger cannot tell them apart.
+  //
+  // Layer 0 is a dim blue-grey rather than off. Off reads as unplugged, and a
+  // resting glow is most of what this pixel is actually looked at for. The
+  // others are three to four times brighter and clearly another hue, so
+  // entering a layer is a change nobody has to look for -- which matters most
+  // for layer 1, entered by holding key 8, where the colour arriving is also
+  // the confirmation that the hold registered. It leaves when the key comes up.
+  //
+  // These are pre-brightness. At the default brightness of 64 the base lands
+  // near (15, 20, 28): visible in a dark room, not a light source.
+  const Rgb layerColors[4] = {
+      {60, 80, 115}, {0, 180, 200}, {220, 100, 0}, {170, 0, 220}};
   for (uint8_t layer = 0; layer < MK_LAYER_COUNT; layer++) {
     const Rgb &color = layerColors[layer < 4 ? layer : 0];
     for (uint8_t led = 0; led < MK_LED_COUNT; led++) {

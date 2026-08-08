@@ -370,9 +370,11 @@ class Profile:
         )
 
 
-# Dark on every layer, matching the firmware: an idle keypad does not glow.
-# Press feedback and host ambient compose above this, so they still light up.
-LAYER_COLORS = ("000000", "000000", "000000", "000000")
+# Must match `layerColors` in the firmware's Profile::writeDefaults. Layer 0 is
+# a dim resting glow rather than off, and the rest are brighter and clearly
+# another hue, because "which layer am I in" is the one question eight keys
+# carrying 96 slots cannot answer by feel.
+LAYER_COLORS = ("3c5073", "00b4c8", "dc6400", "aa00dc")
 
 
 def default_profile() -> Profile:
@@ -393,7 +395,12 @@ def default_profile() -> Profile:
     # useful immediately without stealing an existing shortcut.
     for key in range(KEY_COUNT):
         profile.set_action(0, key, "tap", Action(kind="key", hotkey=f"ctrl+alt+shift+{key + 1}"))
-    profile.set_action(0, KEY_COUNT - 1, "hold", Action(kind="layer_momentary", layer=1))
+    # Held keys reach the upper layers: key 8 -> layer 1, key 7 -> 2, key 6 -> 3.
+    # Without these, layers 2 and 3 had colours defined and no way to enter them.
+    for layer in range(1, LAYER_COUNT):
+        profile.set_action(
+            0, KEY_COUNT - layer, "hold", Action(kind="layer_momentary", layer=layer)
+        )
 
     media = ("volume_down", "volume_up", "mute", "play_pause")
     for key, usage in enumerate(media):
