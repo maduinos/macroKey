@@ -28,6 +28,7 @@ class ActionContext:
     profile: Profile
     keyboard: KeyboardBackend
     clipboard: ClipboardBackend
+    mouse: Any = None  # MouseBackend, resolved lazily so headless imports stay cheap
     status: Callable[[str], None] = lambda message: None
     device: Any = None  # DeviceClient, or None when running headless
     # Set when the user asks to abort. Long handlers must check it between steps.

@@ -52,6 +52,27 @@ class TextAction(HostActionHandler):
         context.status(f"Typed {len(text)} characters")
 
 
+@register("mouse_button", "Click a mouse button")
+class MouseButtonAction(HostActionHandler):
+    """Clicks where the pointer already is; see backends.mouse for why."""
+
+    def run(self, context: ActionContext) -> None:
+        button = self.string("button") or "left"
+        clicks = self.integer("clicks", 1)
+        _mouse(context).click(button, clicks)
+        context.status(f"Clicked {button}")
+
+
+@register("mouse_wheel", "Scroll")
+class MouseWheelAction(HostActionHandler):
+    def run(self, context: ActionContext) -> None:
+        delta = self.integer("delta", 0)
+        if not delta:
+            return
+        _mouse(context).scroll(delta)
+        context.status(f"Scrolled {delta}")
+
+
 @register("delay", "Wait")
 class DelayAction(HostActionHandler):
     def run(self, context: ActionContext) -> None:
@@ -137,3 +158,12 @@ class SequenceAction(HostActionHandler):
                 context.status(f"Sequence stopped at step {index + 1}")
                 return
             create(HostAction.from_dict(step)).run(child)
+
+
+def _mouse(context: ActionContext):
+    """The mouse backend, created on first use rather than at import."""
+    if context.mouse is None:
+        from ..backends import get_mouse_backend
+
+        context.mouse = get_mouse_backend()
+    return context.mouse

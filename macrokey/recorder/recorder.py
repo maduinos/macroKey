@@ -73,9 +73,14 @@ class Recorder:
         stop_key: str | None = None,
     ) -> None:
         self._on_event = on_event
-        self._capture_mouse = capture_mouse
+        self.capture_mouse = capture_mouse
         self._min_gap_ms = min_gap_ms
         self.stop_key = stop_key
+        #: Screen rectangle whose clicks belong to operating the recorder
+        #: rather than to the macro. Stopping is a button, so without this
+        #: the click that ends a recording is its last step -- and every
+        #: replay would end by clicking wherever that button used to be.
+        self.ignore_click_region: tuple[int, int, int, int] | None = None
         self._events: list[RawEvent] = []
         self._lock = threading.Lock()
         self._keyboard_listener = None
@@ -104,7 +109,7 @@ class Recorder:
             on_press=self._on_press, on_release=self._on_release
         )
         self._keyboard_listener.start()
-        if self._capture_mouse and pynput_mouse is not None:
+        if self.capture_mouse and pynput_mouse is not None:
             self._mouse_listener = pynput_mouse.Listener(
                 on_click=self._on_click, on_scroll=self._on_scroll
             )
@@ -172,12 +177,23 @@ class Recorder:
     def _on_click(self, x: int, y: int, button, pressed: bool) -> None:
         if not pressed:
             return
+        if self._inside_ignored_region(x, y):
+            return
         name = getattr(button, "name", "left")
         self._record(
             RawEvent(kind=MOUSE_CLICK, token=name, at=time.monotonic(), data=(int(x), int(y)))
         )
 
+    def _inside_ignored_region(self, x: int, y: int) -> bool:
+        region = self.ignore_click_region
+        if region is None:
+            return False
+        left, top, width, height = region
+        return left <= x < left + width and top <= y < top + height
+
     def _on_scroll(self, x: int, y: int, dx: int, dy: int) -> None:
+        if self._inside_ignored_region(x, y):
+            return
         self._record(
             RawEvent(kind=SCROLL, token="scroll", at=time.monotonic(), data=(int(dx), int(dy)))
         )

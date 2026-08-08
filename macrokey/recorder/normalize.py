@@ -83,22 +83,24 @@ def normalize(
             continue
 
         if event.kind == MOUSE_CLICK:
-            # A recorded click would replay at whatever coordinates the pointer
-            # happens to be at, which is almost never what was meant. It is kept
-            # as an annotated no-op so the user sees it in the summary and can
-            # decide, rather than silently getting a macro that misclicks.
+            # The button, not the position. Replaying the coordinates too would
+            # mean a macro that clicks the right pixel only while nothing has
+            # moved -- a different window position, a different resolution, a
+            # second monitor, and it silently clicks something else. Buttons at
+            # the current pointer are the part that stays true, and they are the
+            # part the firmware can send by itself.
             flush_text()
             add_delay(event.at)
-            steps.append(
-                {
-                    "type": "noop",
-                    "params": {},
-                    "note": f"mouse {event.token} click (not replayed)",
-                }
-            )
+            steps.append({"type": "mouse_button", "params": {"button": event.token}})
             continue
 
         if event.kind == SCROLL:
+            delta = event.data[1] if len(event.data) > 1 else 0
+            if not delta:
+                continue
+            flush_text()
+            add_delay(event.at)
+            steps.append({"type": "mouse_wheel", "params": {"delta": int(delta)}})
             continue
 
     flush_text()
@@ -123,6 +125,11 @@ def summarize(steps: list[dict[str, Any]]) -> list[str]:
             lines.append(f"type   {preview!r}")
         elif kind == "delay":
             lines.append(f"wait   {params.get('ms')} ms")
+        elif kind == "mouse_button":
+            lines.append(f"click  {params.get('button')} button (where the pointer is)")
+        elif kind == "mouse_wheel":
+            delta = int(params.get("delta", 0))
+            lines.append(f"scroll {'up' if delta > 0 else 'down'} {abs(delta)}")
         elif "note" in step:
             lines.append(f"skip   {step['note']}")
         else:
@@ -209,7 +216,26 @@ def reduce_to_device_macro(
             compiled.append(Action(kind="consumer", usage=usage))
             continue
 
-        # text, mouse movement, scroll, clipboard, shell: host territory.
+        if kind == "mouse_button":
+            button = params.get("button", "left")
+            try:
+                compiled.append(Action(kind="mouse_button", button=button))
+                compiled[-1].encode()
+            except Exception:  # noqa: BLE001 - unknown button, keep it off the device
+                return None
+            continue
+
+        if kind == "mouse_wheel":
+            delta = int(params.get("delta", 0))
+            # One signed byte on the wire; a bigger scroll becomes repeats.
+            step = 127 if delta > 0 else -127
+            while delta:
+                slice_delta = step if abs(delta) > 127 else delta
+                compiled.append(Action(kind="mouse_wheel", delta=int(slice_delta)))
+                delta -= slice_delta
+            continue
+
+        # Typed text, clipboard and shell still need the host.
         return None
 
     if not compiled or len(compiled) > max_steps:
