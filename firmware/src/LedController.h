@@ -51,6 +51,17 @@ class LedController {
   uint32_t pressedAt_[MK_LED_COUNT];
   Rgb lastShown_[MK_LED_COUNT];
 
+  // Cross-fade state. `lastScene_`/`lastEffect_` are what the fade is compared
+  // against, and `lastBase_` is the colour actually lit last frame, which is
+  // where the next fade starts -- so a change part way through a fade continues
+  // from what the eye is seeing rather than snapping back to the old scene.
+  Rgb fadeFrom_[MK_LED_COUNT];
+  Rgb lastBase_[MK_LED_COUNT];
+  Rgb lastScene_[MK_LED_COUNT];
+  uint32_t fadeStartedAt_[MK_LED_COUNT];
+  uint8_t lastEffect_[MK_LED_COUNT];
+  bool lastHostMode_ = false;
+
   uint32_t lastRenderAt_ = 0;
   uint32_t lastHostAt_ = 0;
   uint8_t activeLayer_ = 0;

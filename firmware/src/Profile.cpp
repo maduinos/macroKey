@@ -202,8 +202,11 @@ void Profile::writeDefaults() {
   Action panic = {ACT_HOST, 200, 0, 0};
   writeAction(chord0 + 1, panic);
 
-  // One resting colour per layer so the active layer is readable at a glance.
-  const Rgb layerColors[4] = {{0, 16, 20}, {28, 12, 0}, {18, 0, 28}, {0, 24, 6}};
+  // The resting scene is dark on every layer: a keypad sitting idle on the desk
+  // should not glow. Press feedback, host ambient and any explicit LED_SCENE
+  // action still light the pixel -- they compose above this layer, so switching
+  // a colour back on here is a one-line change if the layer tint is ever wanted.
+  const Rgb layerColors[4] = {{0, 0, 0}, {0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
   for (uint8_t layer = 0; layer < MK_LAYER_COUNT; layer++) {
     const Rgb &color = layerColors[layer < 4 ? layer : 0];
     for (uint8_t led = 0; led < MK_LED_COUNT; led++) {

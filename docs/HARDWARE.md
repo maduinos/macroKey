@@ -110,7 +110,9 @@ arduino-cli compile --fqbn SparkFun:avr:promicro:cpu=16MHzatmega32U4 firmware
 arduino-cli upload  --fqbn SparkFun:avr:promicro:cpu=16MHzatmega32U4 -p /dev/ttyACM0 firmware
 ```
 
-`Keyboard`와 `Mouse`는 AVR 코어에 포함돼 있어 따로 설치하지 않습니다.
+`Keyboard`와 `Mouse`는 AVR 코어에 **들어 있지 않으므로** `arduino-cli lib install "Keyboard"`,
+`arduino-cli lib install "Mouse"`로 각각 설치해야 합니다. 빠뜨리면 `HidBackend.h`가
+`Mouse.h`를 찾지 못하고 컴파일이 멈춥니다.
 
 업로드는 타이밍 싸움입니다. RST–GND를 빠르게 두 번 단락시킨 **직후에** upload를 실행하세요.
 부트로더 모드에서는 포트 번호가 바뀌는 경우가 많으니 `arduino-cli board list` 또는

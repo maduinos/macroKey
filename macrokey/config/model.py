@@ -370,7 +370,9 @@ class Profile:
         )
 
 
-LAYER_COLORS = ("001014", "1c0c00", "12001c", "001806")
+# Dark on every layer, matching the firmware: an idle keypad does not glow.
+# Press feedback and host ambient compose above this, so they still light up.
+LAYER_COLORS = ("000000", "000000", "000000", "000000")
 
 
 def default_profile() -> Profile:
