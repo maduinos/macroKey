@@ -18,6 +18,7 @@ from .app import MacroKeyApp
 from .config import GESTURES, KEY_COUNT, LAYER_COUNT
 from .device import DeviceError, candidates, pyserial_available
 from .led import default_socket_path
+from .recorder.recorder import DEFAULT_STOP_KEY
 from .ui import MissingToolkit
 
 
@@ -180,6 +181,10 @@ def cmd_record(args: argparse.Namespace) -> int:
     app = MacroKeyApp(status=print)
     key_index = args.key - 1
     try:
+        # No window to click Stop in, so the CLI opts into the key. It is
+        # therefore the one path where a macro cannot contain Esc.
+        app.recorder.stop_key = DEFAULT_STOP_KEY
+        print(f"recording -- press {DEFAULT_STOP_KEY} to stop")
         app.start_recording()
         while app.recorder.recording:
             time.sleep(0.1)

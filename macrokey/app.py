@@ -161,14 +161,22 @@ class MacroKeyApp:
 
     # -------------------------------------------------------------- recording --
 
-    def start_recording(self) -> None:
+    def start_recording(self, on_event=None) -> None:
+        """`on_event` receives each raw event as it is captured.
+
+        The editor shows them as they arrive: a recording that is capturing
+        nothing looks identical to one that is working until it is stopped,
+        which on Wayland is a common and confusing way to lose two minutes.
+        """
+        self.recorder._on_event = on_event
         self.recorder.start()
         if self.leds is not None:
             self.leds.show_recording(True)
-        self.status("Recording. Press Esc to stop.")
+        self.status("Recording.")
 
     def stop_recording(self) -> list[dict]:
         events = self.recorder.stop()
+        self.recorder._on_event = None
         if self.leds is not None:
             self.leds.show_recording(False)
         steps = self.recorder.steps(events)
