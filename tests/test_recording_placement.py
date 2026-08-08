@@ -82,13 +82,14 @@ def test_every_compiled_step_encodes() -> None:
 @pytest.mark.parametrize(
     "recording",
     [
-        [{"type": "text", "params": {"text": "hello"}}],
-        [{"type": "mouse_click", "params": {"button": "left"}}],
-        [{"type": "scroll", "params": {"dy": 3}}],
+        [{"type": "clipboard_image", "params": {"path": "x.png"}}],
+        [{"type": "shell", "params": {"command": "ls"}}],
+        [{"type": "text", "params": {"text": "\uc548\ub155"}}],
     ],
-    ids=["typed text", "mouse click", "scroll"],
+    ids=["clipboard", "shell", "text with no keys for it"],
 )
 def test_steps_the_firmware_cannot_replay_stay_on_the_host(recording) -> None:
+    """Short ASCII text now expands to keys; these are what genuinely cannot."""
     assert reduce_to_device_macro(recording) is None
 
 

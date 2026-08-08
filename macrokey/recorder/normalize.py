@@ -233,6 +233,41 @@ def reduce_to_device_action(steps: list[dict[str, Any]]) -> Action | None:
 MAX_DEVICE_DELAY_MS = 255 * 10
 
 
+def expand_text_to_keys(text: str) -> list[Action] | None:
+    """Typed text as one key action per character, or None if it cannot be.
+
+    The firmware has no "type this string" action -- it presses keys -- so text
+    was the thing that forced a recording onto the host, and with the daemon off
+    that meant the macro silently did nothing. Most typed text is plain ASCII and
+    is perfectly expressible as keys.
+
+    Uppercase becomes shift plus the lowercase key, because the keycode parser
+    lower-cases anything it is handed; the shifted symbols carry their own ASCII
+    value, which is what the Arduino keyboard library expects. Tabs, newlines and
+    anything outside printable ASCII return None -- a Korean macro is a host
+    macro, and pretending otherwise would type nothing at all.
+    """
+    if not text:
+        return None
+    keys: list[Action] = []
+    for character in text:
+        if character == " ":
+            hotkey = "space"
+        elif character.isupper() and character.isascii():
+            hotkey = f"shift+{character.lower()}"
+        elif character.isascii() and character.isprintable():
+            hotkey = character
+        else:
+            return None
+        try:
+            action = Action(kind="key", hotkey=hotkey)
+            action.encode()
+        except Exception:  # noqa: BLE001 - anything unparseable belongs on the host
+            return None
+        keys.append(action)
+    return keys
+
+
 def reduce_to_device_macro(
     steps: list[dict[str, Any]],
     *,
@@ -306,7 +341,14 @@ def reduce_to_device_macro(
                 delta -= slice_delta
             continue
 
-        # Typed text, clipboard and shell still need the host.
+        if kind == "text":
+            typed = expand_text_to_keys(params.get("text", ""))
+            if typed is None:
+                return None
+            compiled.extend(typed)
+            continue
+
+        # Clipboard and shell still need the host.
         return None
 
     if not compiled or len(compiled) > max_steps:
