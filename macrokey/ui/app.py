@@ -559,7 +559,6 @@ class MainWindow(QMainWindow):
     # Worker threads emit these; Qt delivers them on the GUI thread.
     statusMessage = Signal(str)
     failed = Signal(str, str)
-    pulled = Signal(object)
     connectionChanged = Signal()
     pushFinished = Signal()
     recordingChanged = Signal()
@@ -596,7 +595,6 @@ class MainWindow(QMainWindow):
         self.statusMessage.connect(self.statusBar().showMessage)
         self.pushFinished.connect(self._on_push_finished)
         self.failed.connect(self._show_error)
-        self.pulled.connect(self._adopt)
         self.connectionChanged.connect(self._refresh_connection)
 
         # The link can drop without anyone clicking, so poll the device rather
@@ -643,19 +641,11 @@ class MainWindow(QMainWindow):
         row.addWidget(QLabel("Port"))
         row.addWidget(self.port_box)
         row.addWidget(self.connect_button)
-        # Kept for offline work and for adopting a profile edited elsewhere;
-        # ordinary edits no longer need either of them.
-        self.device_buttons: list[QPushButton] = []
-        for text, slot, needs_device in (
-            ("Save", self._save, False),
-            ("Write to device", self._push, True),
-            ("Read from device", self._pull, True),
-        ):
-            button = QPushButton(text)
-            button.clicked.connect(slot)
-            row.addWidget(button)
-            if needs_device:
-                self.device_buttons.append(button)
+        # No Save, no Write, no Read. Every edit saves and writes itself, and
+        # connecting reconciles what is on the pad, so all three buttons could
+        # only ever repeat work that had already happened -- or be forgotten,
+        # which is worse, because then the key does not do what the screen says.
+        # `macrokey push` and `macrokey pull` remain for the rare case.
 
         self.brightness = QSlider(Qt.Horizontal)
         self.brightness.setRange(0, 255)
@@ -868,7 +858,7 @@ class MainWindow(QMainWindow):
             self.statusMessage.emit(f"Could not save: {exc}")
             return
         if not self.app.device.connected:
-            self.statusMessage.emit(f"{what} saved. Connect to write it to the device.")
+            self.statusMessage.emit(f"{what} saved. It reaches the keypad on the next connect.")
             return
         try:
             self.app.push_profile()
@@ -925,11 +915,20 @@ class MainWindow(QMainWindow):
                 self.app.connect(port)
                 self.app.settings.port = self.app.device.port
                 self.app.settings.save()
+                # Anything edited while unplugged is still only on disk. Sending
+                # it now is what lets the Write button go: without this, editing
+                # offline and plugging in left the pad running the old profile
+                # with nothing on screen admitting it.
+                if not self.app.device_matches_host():
+                    self.app.push_profile()
+                    self.statusMessage.emit("Keypad brought up to date")
             except DeviceError as exc:
                 if quiet:
                     self.statusMessage.emit(f"No keypad found: {exc.args[0].splitlines()[0]}")
                 else:
                     self.failed.emit("Connect failed", str(exc))
+            except (ValueError, OSError) as exc:
+                self.statusMessage.emit(f"Could not update the keypad: {exc}")
             finally:
                 self._connecting = False
                 self.connectionChanged.emit()
@@ -954,10 +953,6 @@ class MainWindow(QMainWindow):
         self.connect_button.setText("Disconnect" if connected else "Connect")
         self.connect_button.setEnabled(True)
         self.port_box.setEnabled(not connected)
-        # Offering these while there is nothing to talk to only ever produced an
-        # error dialog a moment later.
-        for button in self.device_buttons:
-            button.setEnabled(connected)
 
     def _autoconnect(self) -> None:
         """Opens the obvious device on startup.
@@ -993,9 +988,6 @@ class MainWindow(QMainWindow):
         self.port_box.setCurrentText(current)
         self.port_box.blockSignals(False)
 
-    def _save(self) -> None:
-        self.app.save()
-
     def _push(self) -> None:
         """Writes the profile to the device, in the background.
 
@@ -1023,33 +1015,6 @@ class MainWindow(QMainWindow):
 
     def _on_push_finished(self) -> None:
         self._end_preview()
-
-    def _pull(self) -> None:
-        def worker() -> None:
-            try:
-                profile = self.app.pull_profile()
-            except (DeviceError, ValueError) as exc:
-                self.failed.emit("Read failed", str(exc))
-                return
-            self.pulled.emit(profile)
-
-        self._in_background(worker)
-
-    def _adopt(self, profile: Profile) -> None:
-        # Host actions live only on the host, so a device read must not wipe
-        # them: the device stores tokens, not the work behind them.
-        profile.host_actions = self.app.profile.host_actions
-        answer = QMessageBox.question(
-            self,
-            "Replace local profile?",
-            "The device profile will replace the one in this window. Continue?",
-        )
-        if answer is not QMessageBox.Yes:
-            return
-        self.app.profile = profile
-        self.app.actions.set_profile(profile)
-        self.brightness.setValue(profile.brightness)
-        self._refresh_all()
 
     def _show_error(self, title: str, message: str) -> None:
         QMessageBox.critical(self, title, message)

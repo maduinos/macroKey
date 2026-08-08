@@ -53,6 +53,12 @@ class DeviceClient:
         self._responses: queue.Queue[Message] = queue.Queue()
         self._write_lock = threading.Lock()
         self._request_lock = threading.Lock()
+        # A profile transfer is begin, twenty data chunks and commit. The request
+        # lock only makes each line atomic, so two transfers could interleave and
+        # each would abort the other's staging -- which surfaced as the device
+        # rejecting a chunk with "range". Edits apply themselves, connecting
+        # reconciles, and recordings save, so overlapping transfers are ordinary.
+        self._profile_lock = threading.Lock()
         self._stop = threading.Event()
         self.hello: Hello | None = None
         self.port: str = ""
@@ -232,6 +238,10 @@ class DeviceClient:
 
     def read_profile(self) -> bytes:
         """Pulls the device's stored profile blob."""
+        with self._profile_lock:
+            return self._read_profile_locked()
+
+    def _read_profile_locked(self) -> bytes:
         with self._request_lock:
             self._flush_responses()
             self.send(protocol.encode("PROF", "read"))
@@ -271,7 +281,10 @@ class DeviceClient:
         """Stages the blob and commits it only if the device agrees on the CRC."""
         if len(blob) != binary.PROFILE_SIZE:
             raise DeviceError(f"profile must be {binary.PROFILE_SIZE} bytes")
+        with self._profile_lock:
+            self._write_profile_locked(blob)
 
+    def _write_profile_locked(self, blob: bytes) -> None:
         crc = binary.blob_crc(blob)
         self.request(protocol.encode("PROF", "begin", bytes=len(blob), crc=f"{crc:04X}"))
         for sequence, offset in enumerate(range(0, len(blob), binary.CHUNK_BYTES)):
