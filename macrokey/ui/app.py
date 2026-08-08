@@ -144,10 +144,29 @@ class ShortcutEdit(QLineEdit):
 
     def __init__(self) -> None:
         super().__init__()
-        self.setReadOnly(True)
-        self.setPlaceholderText("Click here, then press the shortcut")
+        self.capturing = False
+        self.setPlaceholderText("ctrl+alt+shift+1")
+
+    def start_capture(self) -> None:
+        """Next combination pressed fills the field."""
+        self.capturing = True
+        self.clear()
+        self.setPlaceholderText("Press the shortcut...")
+        self.setFocus()
+
+    def stop_capture(self) -> None:
+        self.capturing = False
+        self.setPlaceholderText("ctrl+alt+shift+1")
 
     def keyPressEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        # Typed editing stays available. Capture is a convenience for the common
+        # case, not the only way in: some shortcuts are awkward or impossible to
+        # press here -- anything the compositor swallows first, or a key this
+        # keyboard does not have -- and those still have to be settable.
+        if not self.capturing:
+            super().keyPressEvent(event)
+            return
+
         key = event.key()
         if key in self.BARE_MODIFIERS:
             # Held on its own it is not a shortcut yet; show it building up.
@@ -159,20 +178,26 @@ class ShortcutEdit(QLineEdit):
         if name is None:
             if Qt.Key_F1 <= key <= Qt.Key_F24:
                 name = f"f{key - Qt.Key_F1 + 1}"
+            elif 32 < key < 127:
+                # event.key() is the key before shift is applied, which is what
+                # a shortcut is made of. event.text() is the glyph it produced,
+                # so with shift held ctrl+alt+shift+1 arrives as "!" -- a
+                # character the keypad has no key for, and one this app cannot
+                # parse. The keypad sends the modifiers and the key; the shifted
+                # glyph is what the receiving application makes of that.
+                name = chr(key).lower()
             else:
                 text = event.text()
-                # The unshifted character: a macro binds the key, not the glyph
-                # shift happens to produce, or ctrl+shift+2 would come out as
-                # ctrl+shift+@ and fail to parse.
-                name = (text or "").lower()
-                if not name or not name.isprintable() or len(name) != 1:
-                    name = chr(key).lower() if 32 < key < 127 else ""
+                name = text.lower() if text and text.isprintable() and len(text) == 1 else ""
         if not name:
             return
 
         parts.append(name)
         value = "+".join(parts)
         self.setText(value)
+        # One combination per press of the button: staying in capture mode would
+        # eat the typing of anyone who then wanted to adjust it by hand.
+        self.stop_capture()
         self.changed.emit(value)
 
     def keyReleaseEvent(self, event) -> None:  # noqa: N802 - Qt naming
@@ -223,10 +248,18 @@ class SlotDialog(QDialog):
         self.shortcut = ShortcutEdit()
         if current.kind == "key":
             self.shortcut.setText(current.hotkey)
+        self.shortcut.changed.connect(lambda _v: self.shortcut.stop_capture())
+        press_keys = QPushButton("Press keys")
+        press_keys.setToolTip(
+            "Fills the field from the next combination pressed. The field can "
+            "also just be typed into."
+        )
+        press_keys.clicked.connect(self.shortcut.start_capture)
         set_shortcut = QPushButton("Set")
         set_shortcut.clicked.connect(self._use_shortcut)
         shortcut_row = QHBoxLayout()
         shortcut_row.addWidget(self.shortcut, 1)
+        shortcut_row.addWidget(press_keys)
         shortcut_row.addWidget(set_shortcut)
 
         # ---- recording --------------------------------------------------------
