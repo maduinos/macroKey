@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QListWidget,
     QMainWindow,
     QMessageBox,
@@ -59,7 +60,7 @@ def _nothing_captured_hint() -> str:
             "windows, so typing into most applications is invisible to it. "
             "Recording into a terminal started under XWayland does work."
         )
-    return "Nothing was captured. Press Start, then type, then press Esc."
+    return "Nothing was captured. Press Start recording, do the thing, then Stop."
 
 
 def describe_binding(profile: Profile, action: Action) -> str:
@@ -90,37 +91,73 @@ def describe_binding(profile: Profile, action: Action) -> str:
 
 
 class SlotDialog(QDialog):
-    """Asks what a key should do, in the two terms that actually exist.
+    """Everything one key can be, in one window.
 
-    This used to open with a dropdown of action kinds -- key, consumer,
-    mouse_button, layer_momentary, layer_toggle, host -- and a free-text value
-    whose format depended on which was picked. That is the wire format leaking
-    into the window: nobody binding a key is thinking about HID usage pages.
+    Binding used to be two nested dialogs: pick an action kind and a value in
+    one, and if you chose to record, a second window on top of it. The kinds
+    were the serial wire format showing through -- key, consumer, mouse_button,
+    host -- which is not how anyone thinks about what a key should do.
 
-    A recording covers keystrokes, timing and mouse, and is authored by doing
-    the thing rather than by spelling it. Layer switching is the one binding a
-    recording cannot express, because it is a state change on the device rather
-    than input to replay -- so it stays, and nothing else does.
+    There are three answers. Send a shortcut, which is the common one and has to
+    be typeable: recording ctrl+alt+shift+5 means pressing it, which fires
+    whatever is already bound to it. Replay something, which is authored by
+    doing it. Or change layer, the one binding a recording cannot express,
+    because it is a state change on the device rather than input to replay.
     """
+
+    captured = Signal(list)
+    liveEvent = Signal(str)
 
     def __init__(self, parent: QWidget, app: MacroKeyApp, layer: int, key: int, gesture: str):
         super().__init__(parent)
         self.app = app
         self.layer, self.key, self.gesture = layer, key, gesture
         self.result_action: Action | None = None
-        self.record_requested = False
+        self.recorded_steps: list[dict] | None = None
+        self._recording = False
 
         self.setWindowTitle(f"Layer {layer} · Key {key + 1} · {gesture}")
         self.setModal(True)
+        self.resize(520, 470)
 
         current = app.profile.action(layer, key, gesture)
-        now = QLabel(f"Now: {describe_binding(app.profile, current)}")
-        now.setWordWrap(True)
+        self.now = QLabel(f"Now: {describe_binding(app.profile, current)}")
+        self.now.setWordWrap(True)
+        self.now.setStyleSheet("font-weight: 600;")
 
-        record = QPushButton("Record what it should do")
-        record.setDefault(True)
-        record.clicked.connect(self._record)
+        # ---- shortcut ---------------------------------------------------------
+        self.shortcut = QLineEdit()
+        self.shortcut.setPlaceholderText("ctrl+alt+shift+1")
+        if current.kind == "key":
+            self.shortcut.setText(current.hotkey)
+        self.shortcut.returnPressed.connect(self._use_shortcut)
+        set_shortcut = QPushButton("Set")
+        set_shortcut.clicked.connect(self._use_shortcut)
+        shortcut_row = QHBoxLayout()
+        shortcut_row.addWidget(self.shortcut, 1)
+        shortcut_row.addWidget(set_shortcut)
 
+        # ---- recording --------------------------------------------------------
+        self.record_button = QPushButton("Start recording")
+        self.record_button.clicked.connect(self._toggle_recording)
+
+        self.log = QListWidget()
+        self.log.setAlternatingRowColors(True)
+
+        self.where = QLabel()
+        self.where.setWordWrap(True)
+        self.where.setStyleSheet("color: palette(mid);")
+
+        self.use_recording = QPushButton("Use this recording")
+        self.use_recording.setEnabled(False)
+        self.use_recording.clicked.connect(self._use_recording)
+
+        record_row = QHBoxLayout()
+        record_row.addWidget(self.record_button)
+        record_row.addStretch(1)
+        record_row.addWidget(self.use_recording)
+
+        # ---- layer ------------------------------------------------------------
         self.layer_choice = QComboBox()
         for target in range(LAYER_COUNT):
             if target == layer:
@@ -132,13 +169,13 @@ class SlotDialog(QDialog):
             index = self.layer_choice.findData((current.layer, current.kind))
             if index >= 0:
                 self.layer_choice.setCurrentIndex(index)
-
-        use_layer = QPushButton("Use this")
+        use_layer = QPushButton("Set")
         use_layer.clicked.connect(self._use_layer)
         layer_row = QHBoxLayout()
         layer_row.addWidget(self.layer_choice, 1)
         layer_row.addWidget(use_layer)
 
+        # ---- bottom -----------------------------------------------------------
         clear = QPushButton("Clear this key")
         clear.clicked.connect(self._clear)
         cancel = QPushButton("Cancel")
@@ -148,27 +185,112 @@ class SlotDialog(QDialog):
         bottom.addStretch(1)
         bottom.addWidget(cancel)
 
-        hint = QLabel(
-            "A recording that the keypad can replay on its own is stored on the "
-            "keypad, so it keeps working with nothing running on this computer."
-        )
-        hint.setWordWrap(True)
-        hint.setStyleSheet("color: palette(mid);")
-
         layout = QVBoxLayout(self)
-        layout.addWidget(now)
-        layout.addSpacing(6)
-        layout.addWidget(record)
-        layout.addWidget(hint)
+        layout.addWidget(self.now)
+        layout.addSpacing(8)
+        layout.addWidget(_heading("Send a shortcut"))
+        layout.addLayout(shortcut_row)
         layout.addSpacing(10)
-        layout.addWidget(QLabel("Or switch layer while this key is used:"))
+        layout.addWidget(_heading("Or replay something you do"))
+        layout.addLayout(record_row)
+        layout.addWidget(self.log, 1)
+        layout.addWidget(self.where)
+        layout.addSpacing(10)
+        layout.addWidget(_heading("Or change layer while this key is used"))
         layout.addLayout(layer_row)
         layout.addSpacing(10)
         layout.addLayout(bottom)
 
-    def _record(self) -> None:
-        self.record_requested = True
-        self.reject()
+        self.captured.connect(self._show_result)
+        self.liveEvent.connect(self._append_live)
+        self._show_idle()
+
+    # ------------------------------------------------------------- recording --
+
+    def _show_idle(self) -> None:
+        self.log.clear()
+        self.log.addItem("Press Start recording, do the thing, then press Stop.")
+        self.where.setText(
+            "Anything the keypad can replay by itself is stored on the keypad and "
+            "keeps working with nothing running on this computer."
+        )
+
+    def _toggle_recording(self) -> None:
+        if self._recording:
+            # Stopping from a button rather than a key: a key would have to be
+            # one the macro can never contain, and Esc -- the obvious choice, and
+            # what this used to use -- rules out closing a dialog or leaving vim
+            # insert mode, which are exactly the things people record.
+            self._recording = False
+            self.record_button.setText("Start recording")
+            self.captured.emit(self.app.stop_recording())
+            return
+
+        try:
+            self.app.start_recording(on_event=self._on_live_event)
+        except Exception as exc:  # noqa: BLE001 - pynput failures are environmental
+            QMessageBox.critical(self, "Cannot record", str(exc))
+            return
+        self._recording = True
+        self.recorded_steps = None
+        self.use_recording.setEnabled(False)
+        self.record_button.setText("Stop")
+        self.log.clear()
+        self.where.setText("Recording. Everything captured appears here as it happens.")
+
+    def _on_live_event(self, event) -> None:
+        """Called on the listener thread; hop to the GUI thread to touch widgets."""
+        char = f" {event.char!r}" if getattr(event, "char", "") else ""
+        self.liveEvent.emit(f"{event.kind}  {event.token}{char}")
+
+    def _append_live(self, line: str) -> None:
+        self.log.addItem(line)
+        self.log.scrollToBottom()
+
+    def _show_result(self, steps: list[dict]) -> None:
+        self.recorded_steps = steps
+        self.log.clear()
+        for line in self.app.recorder.summary(steps):
+            self.log.addItem(line)
+        self.use_recording.setEnabled(bool(steps))
+
+        if not steps:
+            self.log.addItem("(nothing captured)")
+            self.where.setText(_nothing_captured_hint())
+            return
+        if self.app.recorder.device_action(steps) is not None:
+            self.where.setText("Will be stored on the keypad. Works with nothing running here.")
+        elif self.app.recorder.device_macro(steps) is not None:
+            self.where.setText(
+                f"Will be stored on the keypad as a {len(steps)} step macro. "
+                "Works with nothing running here."
+            )
+        else:
+            self.where.setText(
+                "Has steps the keypad cannot replay by itself, such as mouse "
+                "movement or typed text, so this one needs the macroKey daemon "
+                "running to work."
+            )
+
+    # --------------------------------------------------------------- choices --
+
+    def _use_shortcut(self) -> None:
+        text = self.shortcut.text().strip()
+        if not text:
+            return
+        try:
+            action = Action(kind="key", hotkey=text)
+            action.encode()  # rejects here rather than at write time
+        except Exception as exc:  # noqa: BLE001 - report any validation problem
+            QMessageBox.critical(self, "That is not a shortcut this keypad can send", str(exc))
+            return
+        self.result_action = action
+        self.accept()
+
+    def _use_recording(self) -> None:
+        if not self.recorded_steps:
+            return
+        self.accept()
 
     def _use_layer(self) -> None:
         target, kind = self.layer_choice.currentData()
@@ -179,104 +301,17 @@ class SlotDialog(QDialog):
         self.result_action = Action()
         self.accept()
 
+    def reject(self) -> None:
+        if self._recording:
+            self._recording = False
+            self.app.stop_recording()
+        super().reject()
 
-class RecordDialog(QDialog):
-    """Captures input, shows what it understood, then binds it on confirmation."""
 
-    captured = Signal(list)
-
-    def __init__(self, parent: QWidget, app: MacroKeyApp, layer: int, key: int, gesture: str):
-        super().__init__(parent)
-        self.app = app
-        self.layer, self.key, self.gesture = layer, key, gesture
-        self.steps: list[dict] = []
-
-        self.setWindowTitle("Record a macro")
-        self.setModal(True)
-        self.resize(440, 340)
-
-        intro = QLabel(
-            "Press Start, do the thing, then press Esc to stop.\n"
-            "The LED turns red while recording."
-        )
-
-        self.listbox = QListWidget()
-
-        self.where = QLabel()
-        self.where.setWordWrap(True)
-        self.where.setStyleSheet("color: palette(mid);")
-
-        self.start_button = QPushButton("Start")
-        self.start_button.clicked.connect(self._start)
-        self.save_button = QPushButton("Bind")
-        self.save_button.setEnabled(False)
-        self.save_button.clicked.connect(self._save)
-        close_button = QPushButton("Close")
-        close_button.clicked.connect(self.reject)
-
-        row = QHBoxLayout()
-        row.addWidget(self.start_button)
-        row.addStretch(1)
-        row.addWidget(close_button)
-        row.addWidget(self.save_button)
-
-        layout = QVBoxLayout(self)
-        layout.addWidget(intro)
-        layout.addWidget(self.listbox, 1)
-        layout.addWidget(self.where)
-        layout.addLayout(row)
-
-        self.captured.connect(self._show)
-
-    def _start(self) -> None:
-        try:
-            self.app.start_recording()
-        except Exception as exc:  # noqa: BLE001 - pynput failures are environmental
-            QMessageBox.critical(self, "Cannot record", str(exc))
-            return
-        self.start_button.setEnabled(False)
-        self.listbox.clear()
-        self.listbox.addItem("recording...")
-        threading.Thread(target=self._wait_for_stop, daemon=True).start()
-
-    def _wait_for_stop(self) -> None:
-        while self.app.recorder.recording:
-            threading.Event().wait(0.1)
-        self.captured.emit(self.app.stop_recording())
-
-    def _show(self, steps: list[dict]) -> None:
-        self.steps = steps
-        self.listbox.clear()
-        for line in self.app.recorder.summary(steps):
-            self.listbox.addItem(line)
-        self.start_button.setEnabled(True)
-        self.save_button.setEnabled(bool(steps))
-
-        if not steps:
-            self.listbox.addItem("(nothing captured)")
-            self.where.setText(_nothing_captured_hint())
-            return
-        # Say up front where this will end up. It is the difference between a
-        # binding that survives being plugged into another machine and one that
-        # silently stops working the moment this app is closed.
-        if self.app.recorder.device_action(steps) is not None:
-            self.where.setText("Will be stored on the keypad. Works with nothing running here.")
-        elif self.app.recorder.device_macro(steps) is not None:
-            self.where.setText(
-                f"Will be stored on the keypad as a {len(steps)} step macro. "
-                "Works with nothing running here."
-            )
-        else:
-            self.where.setText(
-                "Has steps the keypad cannot replay by itself (mouse movement or "
-                "typed text), so it needs the macroKey daemon running to work."
-            )
-
-    def _save(self) -> None:
-        where = self.app.assign_recording(self.steps, self.layer, self.key, self.gesture)
-        self.app.save()
-        QMessageBox.information(self, "Bound", f"Stored as {where}")
-        self.accept()
+def _heading(text: str) -> QLabel:
+    label = QLabel(text)
+    label.setStyleSheet("font-weight: 600; color: palette(mid);")
+    return label
 
 
 class _RescanningComboBox(QComboBox):
@@ -557,16 +592,16 @@ class MainWindow(QMainWindow):
 
     def _edit(self, layer: int, key: int, gesture: str) -> None:
         dialog = SlotDialog(self, self.app, layer, key, gesture)
-        dialog.exec()
-        changed = False
-        if dialog.record_requested:
-            recorder = RecordDialog(self, self.app, layer, key, gesture)
-            changed = recorder.exec() == QDialog.Accepted
-        elif dialog.result_action is not None:
+        if dialog.exec() != QDialog.Accepted:
+            return
+        if dialog.recorded_steps:
+            where = self.app.assign_recording(dialog.recorded_steps, layer, key, gesture)
+            self._refresh_all()
+            self._apply(f"Key {key + 1} {gesture} on layer {layer} ({where})")
+            return
+        if dialog.result_action is not None:
             self.app.profile.set_action(layer, key, gesture, dialog.result_action)
-            changed = True
-        self._refresh_all()
-        if changed:
+            self._refresh_all()
             self._apply(f"Key {key + 1} {gesture} on layer {layer}")
 
     def _apply(self, what: str) -> None:

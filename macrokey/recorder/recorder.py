@@ -27,8 +27,12 @@ except Exception:  # pragma: no cover - pynput needs an input backend
 # arriving back at us. Without this the recorder eats its own tail.
 SELF_INPUT_WINDOW = 0.15
 
-#: Stops the recording without ending up in it.
-STOP_KEY = "esc"
+#: A key that ends the recording instead of being recorded. There is no good
+#: default: Esc was one, and it meant a macro could never contain Esc -- which
+#: rules out closing a dialog, leaving vim insert mode, and dismissing a
+#: completion popup. Callers that have a button to press should pass None and
+#: stop the recording that way; the CLI has nowhere to click, so it opts in.
+DEFAULT_STOP_KEY = "esc"
 
 _SPECIAL_NAMES = {
     "alt_l": "alt",
@@ -66,10 +70,12 @@ class Recorder:
         on_event: Callable[[RawEvent], None] | None = None,
         capture_mouse: bool = False,
         min_gap_ms: int = DEFAULT_MIN_GAP_MS,
+        stop_key: str | None = None,
     ) -> None:
         self._on_event = on_event
         self._capture_mouse = capture_mouse
         self._min_gap_ms = min_gap_ms
+        self.stop_key = stop_key
         self._events: list[RawEvent] = []
         self._lock = threading.Lock()
         self._keyboard_listener = None
@@ -152,14 +158,14 @@ class Recorder:
         token, char = _describe_key(key)
         if token is None:
             return
-        if token == STOP_KEY:
+        if self.stop_key is not None and token == self.stop_key:
             self.stop()
             return
         self._record(RawEvent(kind=KEY_DOWN, token=token, char=char, at=time.monotonic()))
 
     def _on_release(self, key) -> None:
         token, char = _describe_key(key)
-        if token is None or token == STOP_KEY:
+        if token is None or (self.stop_key is not None and token == self.stop_key):
             return
         self._record(RawEvent(kind=KEY_UP, token=token, char=char, at=time.monotonic()))
 
