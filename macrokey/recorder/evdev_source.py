@@ -106,7 +106,10 @@ def available() -> tuple[bool, str]:
 def _token_for(code: int) -> str | None:
     """evdev key code -> macroKey token, or None when it is not a key we bind."""
     name = ecodes.KEY.get(code) or ecodes.BTN.get(code)
-    if isinstance(name, list):  # a code can carry several aliases
+    # A code with several aliases comes back as a tuple or a list depending on
+    # the table; BTN_LEFT is ("BTN_LEFT", "BTN_MOUSE"). Checking only for list
+    # meant every mouse button fell through and no click was ever recorded.
+    if isinstance(name, (list, tuple)):
         name = name[0]
     if not isinstance(name, str):
         return None
@@ -203,8 +206,8 @@ class EvdevRecorder:
 
         if event.type == ecodes.EV_KEY:
             name = ecodes.BTN.get(event.code)
-            if isinstance(name, list):
-                name = next((n for n in name if n in _BUTTONS), name[0])
+            if isinstance(name, (list, tuple)):
+                name = next((alias for alias in name if alias in _BUTTONS), name[0])
             if isinstance(name, str) and name in _BUTTONS:
                 if event.value == 1:  # press only; a release is not a second click
                     self._emit(RawEvent(kind=MOUSE_CLICK, token=_BUTTONS[name], at=now))

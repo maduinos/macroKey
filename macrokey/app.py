@@ -26,6 +26,10 @@ EventCallback = Callable[[object], None]
 
 APP_LAYER_POLL_SECONDS = 1.0
 
+#: How long the pad acknowledges a write for. Long enough to catch the eye
+#: while looking at the keypad, short enough not to sit there.
+CONFIRM_FLASH_MS = 600
+
 
 class MacroKeyApp:
     def __init__(self, status: StatusCallback | None = None) -> None:
@@ -109,9 +113,25 @@ class MacroKeyApp:
         self.status("Profile saved")
 
     def push_profile(self) -> None:
-        """Writes the host profile to the device."""
+        """Writes the host profile to the device, then says so on the pad."""
         blob = binary.encode_profile(self.profile)
         self.device.write_profile(blob)
+        self.confirm_on_device()
+
+    def confirm_on_device(self, color: tuple[int, int, int] = (0, 255, 60)) -> None:
+        """Flashes the pixel to acknowledge a write.
+
+        A message in a status bar is in the wrong place: the thing that changed
+        is the keypad, and that is where the person is looking after pressing
+        Write. Failing to flash is not a failure of the write, so it is swallowed.
+        """
+        try:
+            # A short window, so a crash between here and the release cannot
+            # leave the pad stuck on the confirmation colour.
+            self.device.set_led_mode(True, timeout_ms=CONFIRM_FLASH_MS)
+            self.device.set_all(color, effect="flash", period=CONFIRM_FLASH_MS)
+        except DeviceError:
+            pass
 
     def pull_profile(self) -> Profile:
         """Reads the device profile without adopting it."""
