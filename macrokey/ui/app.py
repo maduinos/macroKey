@@ -20,6 +20,7 @@ from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QApplication,
+    QCheckBox,
     QColorDialog,
     QComboBox,
     QDialog,
@@ -141,6 +142,13 @@ class SlotDialog(QDialog):
         self.record_button = QPushButton("Start recording")
         self.record_button.clicked.connect(self._toggle_recording)
 
+        self.capture_mouse = QCheckBox("Include mouse")
+        self.capture_mouse.setChecked(True)
+        self.capture_mouse.setToolTip(
+            "Records button clicks and the wheel, not pointer positions: a "
+            "replayed click lands wherever the pointer is at the time."
+        )
+
         self.log = QListWidget()
         self.log.setAlternatingRowColors(True)
 
@@ -154,6 +162,7 @@ class SlotDialog(QDialog):
 
         record_row = QHBoxLayout()
         record_row.addWidget(self.record_button)
+        record_row.addWidget(self.capture_mouse)
         record_row.addStretch(1)
         record_row.addWidget(self.use_recording)
 
@@ -226,6 +235,11 @@ class SlotDialog(QDialog):
             self.captured.emit(self.app.stop_recording())
             return
 
+        self.app.recorder.capture_mouse = self.capture_mouse.isChecked()
+        # Stopping is a button, so without this the click that ends the
+        # recording is its last step, and every replay would finish by
+        # clicking wherever that button happened to be.
+        self._sync_ignored_region()
         try:
             self.app.start_recording(on_event=self._on_live_event)
         except Exception as exc:  # noqa: BLE001 - pynput failures are environmental
@@ -237,6 +251,23 @@ class SlotDialog(QDialog):
         self.record_button.setText("Stop")
         self.log.clear()
         self.where.setText("Recording. Everything captured appears here as it happens.")
+
+    def _sync_ignored_region(self) -> None:
+        frame = self.frameGeometry()
+        self.app.recorder.ignore_click_region = (
+            frame.x(),
+            frame.y(),
+            frame.width(),
+            frame.height(),
+        )
+
+    def moveEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        # The region is where the Stop button is *now*. Dragging the window
+        # mid-recording would otherwise leave it pointing at empty desk, and
+        # the click that stops the recording would land in the macro.
+        if self._recording:
+            self._sync_ignored_region()
+        super().moveEvent(event)
 
     def _on_live_event(self, event) -> None:
         """Called on the listener thread; hop to the GUI thread to touch widgets."""
