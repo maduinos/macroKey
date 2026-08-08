@@ -75,9 +75,28 @@ static const uint8_t MK_KEY_PINS[MK_KEY_COUNT] = {3, 4, 5, 6, 7, 8, 9, 10};
 // a hard white punch that overrides the ambient colour completely; lower values
 // read as the current colour brightening, so feedback and status coexist.
 #define MK_LED_PRESS_FLASH_AMOUNT 150
+
+// Crossing the hold threshold gets its own cue, brighter and longer than a tap.
+// MK_HOLD_MS is 400 ms of nothing happening otherwise: the press flash has long
+// faded and the action has not fired yet, so there is no way to tell a hold that
+// registered from one that did not until after letting go. This says "let go now
+// and it counts" while the finger is still down.
+#define MK_LED_HOLD_FLASH_MS 220
+#define MK_LED_HOLD_FLASH_AMOUNT 255
+
+// A key with nothing bound on this layer does nothing at all, which looks the
+// same as a dead board or a missed press. A dim red says the press was received
+// and there was simply nothing to run.
+#define MK_LED_UNBOUND_FLASH_MS 180
+#define MK_LED_UNBOUND_FLASH_AMOUNT 255
 // Host ambient control lapses back to the local scene after this much silence,
-// so closing the desktop app never freezes the strip on its last colour.
+// so closing the desktop app never freezes the strip on its last colour. A host
+// that knows it will be quiet for longer -- one sitting on a colour picker, or
+// writing a profile, which takes several seconds -- can raise its own deadline
+// with `LED mode=host ms=<n>` instead of sending keepalives it has no reason to
+// send. The ceiling keeps a crashed host from parking the pixel indefinitely.
 #define MK_LED_HOST_TIMEOUT_MS 3000
+#define MK_LED_HOST_TIMEOUT_MAX_MS 60000
 
 // The board's own RX/TX LEDs are not part of the status display: the USB core
 // pulses them on every CDC transfer, so an idle pad still blinks whenever the

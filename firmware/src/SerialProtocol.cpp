@@ -201,7 +201,18 @@ void SerialProtocol::cmdLed(uint32_t now) {
   const char *mode = arg("mode");
   if (mode != NULL) {
     if (strcmp(mode, "host") == 0) {
-      leds_->setHostMode(true, now);
+      // Optional `ms=`: how long this host will go quiet before it should be
+      // presumed gone. A host that keeps a frame on screen while someone reads
+      // a colour picker knows it will be silent for far longer than the default
+      // and can say so, instead of sending keepalives with nothing to report.
+      uint32_t timeout = 0;
+      if (argUInt("ms", &timeout)) {
+        if (timeout > MK_LED_HOST_TIMEOUT_MAX_MS) {
+          sendErr("range");
+          return;
+        }
+      }
+      leds_->setHostMode(true, now, (uint16_t)timeout);
     } else if (strcmp(mode, "local") == 0) {
       leds_->setHostMode(false, now);
     } else {

@@ -5,11 +5,11 @@ from __future__ import annotations
 import json
 import os
 import sys
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
-from .model import Action, HostAction, Profile, SCHEMA_VERSION, default_profile
+from .model import SCHEMA_VERSION, Action, HostAction, Profile, default_profile
 
 APP_NAME = "MaduinosMacroKey"
 

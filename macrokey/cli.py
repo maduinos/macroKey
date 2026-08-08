@@ -219,10 +219,10 @@ def cmd_state(args: argparse.Namespace) -> int:
     if args.title:
         payload["title"] = args.title
 
-    path = default_socket_path()
     if not hasattr(socket, "AF_UNIX"):
         print("state events need a Unix socket; not supported on this platform", file=sys.stderr)
         return 2
+    path = default_socket_path()
     if not path.exists():
         print(f"no listener at {path}. Start the app first.", file=sys.stderr)
         return 1

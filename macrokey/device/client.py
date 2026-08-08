@@ -136,7 +136,13 @@ class DeviceClient:
         buffer = b""
         while not self._stop.is_set():
             try:
-                chunk = self._serial.read(128)
+                # Block for one byte, then take whatever else has already
+                # arrived. Asking for a fixed 128 instead makes pyserial wait for
+                # either 128 bytes or the full read timeout, and replies here are
+                # four bytes long -- so every single request paid the timeout in
+                # full. That put a 200 ms floor under every exchange and turned a
+                # profile write into 20 round trips of nothing happening.
+                chunk = self._serial.read(max(1, self._serial.in_waiting))
             except Exception:
                 if not self._stop.is_set():
                     self._on_status("Serial link lost")
@@ -267,8 +273,21 @@ class DeviceClient:
 
     # ------------------------------------------------------------------ leds --
 
-    def set_led_mode(self, host: bool) -> None:
-        self.request(protocol.encode("LED", mode="host" if host else "local"))
+    def set_led_mode(self, host: bool, timeout_ms: int | None = None) -> None:
+        """Takes or releases the ambient layer.
+
+        `timeout_ms` declares how long this host may be silent before the device
+        should assume it is gone and fall back to its own scene. Callers that
+        hold a colour still while a person looks at it should say so here rather
+        than send keepalives; the device default is deliberately short.
+        """
+        if not host:
+            self.request(protocol.encode("LED", mode="local"))
+            return
+        fields: dict[str, object] = {"mode": "host"}
+        if timeout_ms is not None:
+            fields["ms"] = max(0, min(60000, int(timeout_ms)))
+        self.request(protocol.encode("LED", **fields))
 
     def set_brightness(self, value: int) -> None:
         self.request(protocol.encode("LED", bright=max(0, min(255, value))))
@@ -293,7 +312,11 @@ class DeviceClient:
         self.request(protocol.encode("LED", frame=protocol.frame_arg(colors)))
 
     def set_bar(self, percent: int, color: tuple[int, int, int]) -> None:
-        self.request(protocol.encode("LED", bar=max(0, min(100, percent)), rgb=protocol.rgb_hex(color)))
+        self.request(
+            protocol.encode(
+                "LED", bar=max(0, min(100, percent)), rgb=protocol.rgb_hex(color)
+            )
+        )
 
     # ----------------------------------------------------------------- misc --
 

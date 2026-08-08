@@ -19,10 +19,25 @@ class LedController {
   void setActiveLayer(uint8_t layer) { activeLayer_ = layer; }
   void setBrightness(uint8_t value) { brightness_ = value; }
   uint8_t brightness() const { return brightness_; }
+
+  // ---- keypress cues --------------------------------------------------------
+  // Three answers to one question -- what did that press just do -- so they
+  // share a slot and the newest wins. A hold that lands replaces the tap cue
+  // that started it, which is exactly the reading you want.
   void notePress(uint8_t key, uint32_t now);
+  //: The hold threshold was crossed while the key is still down.
+  void noteHold(uint8_t key, uint32_t now);
+  //: The key was received but this layer has nothing bound to it.
+  void noteUnbound(uint8_t key, uint32_t now);
 
   // ---- host controlled ambient layer --------------------------------------
-  void setHostMode(bool enabled, uint32_t now);
+  // `timeoutMs` is how long the host promises to be worth waiting for. The
+  // watchdog exists so a host that dies cannot freeze the pixel on its last
+  // colour, but a host that is sitting on a colour picker is silent for far
+  // longer than the default while being entirely alive -- so let it say so
+  // rather than make it send traffic it has no reason to send. Zero keeps the
+  // built-in default.
+  void setHostMode(bool enabled, uint32_t now, uint16_t timeoutMs = 0);
   bool hostMode() const { return hostMode_; }
   void noteHostAlive(uint32_t now) { lastHostAt_ = now; }
 
@@ -47,8 +62,19 @@ class LedController {
   Adafruit_NeoPixel strip_{MK_LED_COUNT, MK_LED_PIN, NEO_GRB + NEO_KHZ800};
   Profile *profile_ = NULL;
 
+  // A transient overlay above the scene: colour to blend toward, how far, and
+  // for how long. Zero `startedAt` means no cue is showing.
+  struct Cue {
+    Rgb color;
+    uint32_t startedAt;
+    uint16_t durationMs;
+    uint8_t amount;
+  };
+
+  void startCue(uint8_t key, Rgb color, uint16_t durationMs, uint8_t amount, uint32_t now);
+
   AmbientPixel ambient_[MK_LED_COUNT];
-  uint32_t pressedAt_[MK_LED_COUNT];
+  Cue cue_[MK_LED_COUNT];
   Rgb lastShown_[MK_LED_COUNT];
 
   // Cross-fade state. `lastScene_`/`lastEffect_` are what the fade is compared
@@ -64,6 +90,7 @@ class LedController {
 
   uint32_t lastRenderAt_ = 0;
   uint32_t lastHostAt_ = 0;
+  uint16_t hostTimeoutMs_ = MK_LED_HOST_TIMEOUT_MS;
   uint8_t activeLayer_ = 0;
   uint8_t brightness_ = MK_LED_DEFAULT_BRIGHTNESS;
   bool hostMode_ = false;
