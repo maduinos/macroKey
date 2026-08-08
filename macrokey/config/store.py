@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sys
 from dataclasses import asdict, dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from .model import SCHEMA_VERSION, Action, HostAction, Profile, default_profile
+
+log = logging.getLogger(__name__)
 
 APP_NAME = "MaduinosMacroKey"
 
@@ -83,15 +87,32 @@ class Settings:
         path.write_text(json.dumps(asdict(self), indent=2), encoding="utf-8")
 
 
+def _quarantine(path: Path, exc: Exception) -> Profile:
+    """Puts an unreadable profile out of harm's way and returns the defaults."""
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    spoiled = path.with_name(f"{path.name}.unreadable-{stamp}")
+    try:
+        path.rename(spoiled)
+        log.error("could not read %s (%s); kept a copy at %s", path, exc, spoiled)
+    except OSError:
+        log.error("could not read %s (%s), and could not set it aside", path, exc)
+    return default_profile()
+
+
 def load_profile() -> Profile:
     """Loads the stored profile, migrating older formats on the way in."""
     path = profile_path()
     if path.exists():
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            return default_profile()
-        return Profile.from_dict(migrate(data))
+            return Profile.from_dict(migrate(data))
+        except (OSError, json.JSONDecodeError, ValueError, KeyError, TypeError) as exc:
+            # Falling straight back to defaults loses the file on the next save:
+            # the app starts up looking factory fresh, writes that over the
+            # profile it could not read, and the bindings are gone with nothing
+            # having reported a problem. Move it aside first so it is
+            # recoverable, and say where it went.
+            return _quarantine(path, exc)
 
     legacy = legacy_bindings_path()
     if legacy.exists():

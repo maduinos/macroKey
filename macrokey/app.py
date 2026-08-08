@@ -175,6 +175,29 @@ class MacroKeyApp:
         self.status(f"Recorded {len(steps)} step(s)")
         return steps
 
+    def _claim_macro_slot(self, macro: list) -> int | None:
+        """Finds room for a device macro, or None when the profile is full.
+
+        Storage is shared across all sixteen slots, so a slot being free is not
+        enough -- the steps have to fit the remaining bytes too. Returning None
+        rather than raising lets the caller fall back to a host action, which is
+        slower but unbounded.
+        """
+        from .config.model import MACRO_SLOTS, MACRO_STEP_CAPACITY
+
+        macros = self.profile.device_macros
+        while len(macros) < MACRO_SLOTS:
+            macros.append([])
+
+        used = sum(len(existing) for existing in macros)
+        if used + len(macro) > MACRO_STEP_CAPACITY:
+            return None
+        for index, existing in enumerate(macros):
+            if not existing:
+                macros[index] = macro
+                return index
+        return None
+
     def assign_recording(
         self, steps: list[dict], layer: int, key: int, gesture: str, name: str = ""
     ) -> str:
@@ -187,7 +210,18 @@ class MacroKeyApp:
         device_action = self.recorder.device_action(steps)
         if device_action is not None:
             self.profile.set_action(layer, key, gesture, device_action)
-            return f"device action: {device_action.describe()}"
+            return f"on the keypad: {device_action.describe()}"
+
+        # A sequence the firmware can replay itself keeps the pad working with
+        # nothing installed, which is the whole point of the device-first split.
+        # This is tried before falling back to the host because the firmware has
+        # always had the sequence player -- nothing ever filled its slots.
+        macro = self.recorder.device_macro(steps)
+        if macro is not None:
+            slot = self._claim_macro_slot(macro)
+            if slot is not None:
+                self.profile.set_action(layer, key, gesture, Action(kind="sequence", slot=slot))
+                return f"on the keypad: {len(macro)} step macro"
 
         token = self.profile.next_host_token()
         spec = HostAction(

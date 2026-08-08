@@ -12,6 +12,7 @@ touch widgets from the slot.
 
 from __future__ import annotations
 
+import os
 import sys
 import threading
 
@@ -22,12 +23,9 @@ from PySide6.QtWidgets import (
     QColorDialog,
     QComboBox,
     QDialog,
-    QDialogButtonBox,
-    QFormLayout,
     QGridLayout,
     QHBoxLayout,
     QLabel,
-    QLineEdit,
     QListWidget,
     QMainWindow,
     QMessageBox,
@@ -40,7 +38,7 @@ from PySide6.QtWidgets import (
 
 from .. import __version__
 from ..app import MacroKeyApp
-from ..config import GESTURES, KEY_COUNT, LAYER_COUNT, Action, Profile, keycodes
+from ..config import GESTURES, KEY_COUNT, LAYER_COUNT, Action, Profile
 from ..device import DeviceError, candidates
 
 #: How long the device holds a previewed colour without hearing from us. Covers
@@ -48,26 +46,62 @@ from ..device import DeviceError, candidates
 #: follows, and is bounded so a crash cannot park the pixel for good.
 PREVIEW_HOLD_MS = 45000
 
-# Action kinds offered in the slot editor, with the field each one needs.
-EDITABLE_KINDS: dict[str, tuple[str, str]] = {
-    "none": ("", "Nothing"),
-    "key": ("hotkey", "Shortcut, e.g. ctrl+shift+p"),
-    "consumer": ("usage", "Media key"),
-    "mouse_button": ("button", "Mouse button"),
-    "layer_momentary": ("layer", "Layer while held"),
-    "layer_toggle": ("layer", "Layer to toggle"),
-    "host": ("token", "Host action token"),
-}
+def _nothing_captured_hint() -> str:
+    """Why a recording can come back empty, when that has a known cause.
+
+    pynput falls back to its X11 backend under Wayland, where it only sees
+    input going to XWayland clients. Typing into a native Wayland window is
+    invisible to it, and the recording ends up empty with no explanation.
+    """
+    if os.environ.get("XDG_SESSION_TYPE", "").lower() == "wayland":
+        return (
+            "Nothing was captured. On Wayland, input capture only sees X11 "
+            "windows, so typing into most applications is invisible to it. "
+            "Recording into a terminal started under XWayland does work."
+        )
+    return "Nothing was captured. Press Start, then type, then press Esc."
 
 
-def _value_of(action: Action) -> str:
-    """The single editable field for this action kind, as text."""
-    field, _ = EDITABLE_KINDS.get(action.kind, ("", ""))
-    return str(getattr(action, field)) if field else ""
+def describe_binding(profile: Profile, action: Action) -> str:
+    """What this key does, said the way someone using the pad would say it.
+
+    The grid used to show `action.describe()`, which speaks in the wire format's
+    terms -- "host 3", "sequence 1" -- and told you nothing about what pressing
+    the key would produce.
+    """
+    if action.kind == "none":
+        return "nothing"
+    if action.kind == "layer_momentary":
+        name = profile.layers[action.layer].name or f"layer {action.layer}"
+        return f"hold for {name}"
+    if action.kind == "layer_toggle":
+        name = profile.layers[action.layer].name or f"layer {action.layer}"
+        return f"toggle {name}"
+    if action.kind == "sequence":
+        macros = profile.device_macros
+        steps = macros[action.slot] if action.slot < len(macros) else []
+        return f"recording, {len(steps)} steps (on the keypad)"
+    if action.kind == "host":
+        spec = profile.host_actions.get(action.token)
+        if spec is None:
+            return f"missing host action {action.token}"
+        return f"recording: {spec.describe()} (needs this computer)"
+    return action.describe()
 
 
 class SlotDialog(QDialog):
-    """Edits one (layer, key, gesture) slot."""
+    """Asks what a key should do, in the two terms that actually exist.
+
+    This used to open with a dropdown of action kinds -- key, consumer,
+    mouse_button, layer_momentary, layer_toggle, host -- and a free-text value
+    whose format depended on which was picked. That is the wire format leaking
+    into the window: nobody binding a key is thinking about HID usage pages.
+
+    A recording covers keystrokes, timing and mouse, and is authored by doing
+    the thing rather than by spelling it. Layer switching is the one binding a
+    recording cannot express, because it is a state change on the device rather
+    than input to replay -- so it stays, and nothing else does.
+    """
 
     def __init__(self, parent: QWidget, app: MacroKeyApp, layer: int, key: int, gesture: str):
         super().__init__(parent)
@@ -76,67 +110,74 @@ class SlotDialog(QDialog):
         self.result_action: Action | None = None
         self.record_requested = False
 
-        self.setWindowTitle(f"Layer {layer} - Key {key + 1} - {gesture}")
+        self.setWindowTitle(f"Layer {layer} · Key {key + 1} · {gesture}")
         self.setModal(True)
 
         current = app.profile.action(layer, key, gesture)
+        now = QLabel(f"Now: {describe_binding(app.profile, current)}")
+        now.setWordWrap(True)
 
-        self.kind = QComboBox()
-        self.kind.addItems(list(EDITABLE_KINDS))
-        self.kind.setCurrentText(current.kind if current.kind in EDITABLE_KINDS else "none")
-        self.kind.currentTextChanged.connect(self._refresh_hint)
-
-        self.value = QLineEdit(_value_of(current))
-        self.value.setMinimumWidth(240)
-
-        self.hint = QLabel()
-        self.hint.setWordWrap(True)
-        self.hint.setStyleSheet("color: palette(mid);")
-
-        form = QFormLayout()
-        form.addRow("Action", self.kind)
-        form.addRow("Value", self.value)
-
-        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        buttons.accepted.connect(self._accept)
-        buttons.rejected.connect(self.reject)
-        record = buttons.addButton("Record...", QDialogButtonBox.ActionRole)
+        record = QPushButton("Record what it should do")
+        record.setDefault(True)
         record.clicked.connect(self._record)
 
+        self.layer_choice = QComboBox()
+        for target in range(LAYER_COUNT):
+            if target == layer:
+                continue
+            name = app.profile.layers[target].name or f"Layer {target}"
+            self.layer_choice.addItem(f"Hold for {name}", (target, "layer_momentary"))
+            self.layer_choice.addItem(f"Toggle {name}", (target, "layer_toggle"))
+        if current.kind in ("layer_momentary", "layer_toggle"):
+            index = self.layer_choice.findData((current.layer, current.kind))
+            if index >= 0:
+                self.layer_choice.setCurrentIndex(index)
+
+        use_layer = QPushButton("Use this")
+        use_layer.clicked.connect(self._use_layer)
+        layer_row = QHBoxLayout()
+        layer_row.addWidget(self.layer_choice, 1)
+        layer_row.addWidget(use_layer)
+
+        clear = QPushButton("Clear this key")
+        clear.clicked.connect(self._clear)
+        cancel = QPushButton("Cancel")
+        cancel.clicked.connect(self.reject)
+        bottom = QHBoxLayout()
+        bottom.addWidget(clear)
+        bottom.addStretch(1)
+        bottom.addWidget(cancel)
+
+        hint = QLabel(
+            "A recording that the keypad can replay on its own is stored on the "
+            "keypad, so it keeps working with nothing running on this computer."
+        )
+        hint.setWordWrap(True)
+        hint.setStyleSheet("color: palette(mid);")
+
         layout = QVBoxLayout(self)
-        layout.addLayout(form)
-        layout.addWidget(self.hint)
-        layout.addWidget(buttons)
-
-        self._refresh_hint()
-
-    def _refresh_hint(self) -> None:
-        _, description = EDITABLE_KINDS[self.kind.currentText()]
-        extra = ""
-        if self.kind.currentText() == "consumer":
-            extra = "  (" + ", ".join(sorted(keycodes.CONSUMER_USAGES)) + ")"
-        self.hint.setText(description + extra)
-
-    def _accept(self) -> None:
-        field, _ = EDITABLE_KINDS[self.kind.currentText()]
-        raw = self.value.text().strip()
-        try:
-            if not field:
-                action = Action()
-            elif field in ("layer", "token"):
-                action = Action(kind=self.kind.currentText(), **{field: int(raw or 0)})
-            else:
-                action = Action(kind=self.kind.currentText(), **{field: raw})
-            action.encode()  # fails now rather than at push time
-        except Exception as exc:  # noqa: BLE001 - report any validation problem
-            QMessageBox.critical(self, "Invalid action", str(exc))
-            return
-        self.result_action = action
-        self.accept()
+        layout.addWidget(now)
+        layout.addSpacing(6)
+        layout.addWidget(record)
+        layout.addWidget(hint)
+        layout.addSpacing(10)
+        layout.addWidget(QLabel("Or switch layer while this key is used:"))
+        layout.addLayout(layer_row)
+        layout.addSpacing(10)
+        layout.addLayout(bottom)
 
     def _record(self) -> None:
         self.record_requested = True
         self.reject()
+
+    def _use_layer(self) -> None:
+        target, kind = self.layer_choice.currentData()
+        self.result_action = Action(kind=kind, layer=target)
+        self.accept()
+
+    def _clear(self) -> None:
+        self.result_action = Action()
+        self.accept()
 
 
 class RecordDialog(QDialog):
@@ -161,6 +202,10 @@ class RecordDialog(QDialog):
 
         self.listbox = QListWidget()
 
+        self.where = QLabel()
+        self.where.setWordWrap(True)
+        self.where.setStyleSheet("color: palette(mid);")
+
         self.start_button = QPushButton("Start")
         self.start_button.clicked.connect(self._start)
         self.save_button = QPushButton("Bind")
@@ -178,6 +223,7 @@ class RecordDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.addWidget(intro)
         layout.addWidget(self.listbox, 1)
+        layout.addWidget(self.where)
         layout.addLayout(row)
 
         self.captured.connect(self._show)
@@ -203,10 +249,28 @@ class RecordDialog(QDialog):
         self.listbox.clear()
         for line in self.app.recorder.summary(steps):
             self.listbox.addItem(line)
-        if not steps:
-            self.listbox.addItem("(nothing captured)")
         self.start_button.setEnabled(True)
         self.save_button.setEnabled(bool(steps))
+
+        if not steps:
+            self.listbox.addItem("(nothing captured)")
+            self.where.setText(_nothing_captured_hint())
+            return
+        # Say up front where this will end up. It is the difference between a
+        # binding that survives being plugged into another machine and one that
+        # silently stops working the moment this app is closed.
+        if self.app.recorder.device_action(steps) is not None:
+            self.where.setText("Will be stored on the keypad. Works with nothing running here.")
+        elif self.app.recorder.device_macro(steps) is not None:
+            self.where.setText(
+                f"Will be stored on the keypad as a {len(steps)} step macro. "
+                "Works with nothing running here."
+            )
+        else:
+            self.where.setText(
+                "Has steps the keypad cannot replay by itself (mouse movement or "
+                "typed text), so it needs the macroKey daemon running to work."
+            )
 
     def _save(self) -> None:
         where = self.app.assign_recording(self.steps, self.layer, self.key, self.gesture)
@@ -481,12 +545,15 @@ class MainWindow(QMainWindow):
         self._refresh_swatches()
         for (layer, key, gesture), button in self.buttons.items():
             action = self.app.profile.action(layer, key, gesture)
-            label = action.describe()
-            if action.kind == "host":
-                spec = self.app.profile.host_actions.get(action.token)
-                if spec is not None:
-                    label = f"host: {spec.describe()}"
-            button.setText(label)
+            button.setText(describe_binding(self.app.profile, action))
+            # Anything that needs this computer running is worth flagging on the
+            # grid, not just in the dialog: it is the difference between a pad
+            # that works when unplugged from this machine and one that does not.
+            needs_host = action.kind == "host"
+            button.setStyleSheet(
+                "text-align: left; padding: 4px 8px;"
+                + ("color: palette(link);" if needs_host else "")
+            )
 
     def _edit(self, layer: int, key: int, gesture: str) -> None:
         dialog = SlotDialog(self, self.app, layer, key, gesture)
