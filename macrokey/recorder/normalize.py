@@ -149,3 +149,69 @@ def reduce_to_device_action(steps: list[dict[str, Any]]) -> Action | None:
     except keycodes.KeyParseError:
         return None
     return Action(kind="key", hotkey=hotkey)
+
+
+#: A device macro step holds its delay in units of 10 ms in a single byte.
+MAX_DEVICE_DELAY_MS = 255 * 10
+
+
+def reduce_to_device_macro(
+    steps: list[dict[str, Any]],
+    *,
+    max_steps: int = 32,
+) -> list[Action] | None:
+    """Compiles a whole recording into steps the firmware can replay itself.
+
+    The firmware has always been able to run a stored sequence -- sixteen slots
+    of up to thirty-two steps, with its own delay step -- but nothing ever built
+    one, so every recording longer than a single shortcut became a host action
+    and stopped working the moment the desktop app was not running. A keyboard
+    macro with pauses is exactly what the sequence format is for.
+
+    Returns None when a step has no on-device equivalent, which is the honest
+    answer for mouse movement, long text and anything the host has to interpret.
+    `max_steps` mirrors MK_MACRO_MAX_STEPS: the firmware stops replaying past it,
+    so a macro that would be silently truncated is not a device macro at all.
+    """
+    if not steps:
+        return None
+
+    compiled: list[Action] = []
+    for step in steps:
+        kind = step.get("type")
+        params = step.get("params", {})
+
+        if kind == "delay":
+            milliseconds = int(params.get("ms", 0))
+            if milliseconds <= 0:
+                continue
+            # Longer pauses become several steps rather than being clipped: the
+            # timing is the point of recording it in the first place.
+            while milliseconds > 0:
+                slice_ms = min(milliseconds, MAX_DEVICE_DELAY_MS)
+                compiled.append(Action(kind="delay", delay_ms=slice_ms))
+                milliseconds -= slice_ms
+            continue
+
+        if kind == "hotkey":
+            hotkey = params.get("hotkey", "")
+            try:
+                keycodes.parse_hotkey(hotkey)
+            except keycodes.KeyParseError:
+                return None
+            compiled.append(Action(kind="key", hotkey=hotkey))
+            continue
+
+        if kind == "consumer":
+            usage = params.get("usage", "")
+            if usage not in keycodes.CONSUMER_USAGES:
+                return None
+            compiled.append(Action(kind="consumer", usage=usage))
+            continue
+
+        # text, mouse movement, scroll, clipboard, shell: host territory.
+        return None
+
+    if not compiled or len(compiled) > max_steps:
+        return None
+    return compiled

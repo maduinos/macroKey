@@ -8,7 +8,13 @@ from collections.abc import Callable
 from typing import Any
 
 from .events import KEY_DOWN, KEY_UP, MOUSE_CLICK, SCROLL, RawEvent
-from .normalize import DEFAULT_MIN_GAP_MS, normalize, reduce_to_device_action, summarize
+from .normalize import (
+    DEFAULT_MIN_GAP_MS,
+    normalize,
+    reduce_to_device_action,
+    reduce_to_device_macro,
+    summarize,
+)
 
 try:
     from pynput import keyboard as pynput_keyboard
@@ -126,6 +132,11 @@ class Recorder:
     @staticmethod
     def device_action(steps: list[dict[str, Any]]):
         return reduce_to_device_action(steps)
+
+    @staticmethod
+    def device_macro(steps: list[dict[str, Any]]):
+        """The whole recording as firmware sequence steps, or None."""
+        return reduce_to_device_macro(steps)
 
     # -------------------------------------------------------------- listeners --
 
