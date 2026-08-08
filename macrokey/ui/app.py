@@ -65,6 +65,23 @@ def _nothing_captured_hint() -> str:
     return "Nothing was captured. Press Start recording, do the thing, then Stop."
 
 
+#: A typed run at least this long is worth pointing at before it is stored.
+#: Real macros type short things -- a command, a name, a snippet; passwords and
+#: pasted tokens are what long unbroken runs usually are.
+SECRET_TEXT_LENGTH = 12
+
+
+def _longest_typed_run(steps) -> int:
+    return max(
+        (
+            len(step.get("params", {}).get("text", ""))
+            for step in steps
+            if step.get("type") == "text"
+        ),
+        default=0,
+    )
+
+
 def describe_binding(profile: Profile, action: Action) -> str:
     """What this key does, said the way someone using the pad would say it.
 
@@ -412,6 +429,19 @@ class SlotDialog(QDialog):
         if not steps:
             self.log.addItem("(nothing captured)")
             self.where.setText(_nothing_captured_hint())
+            return
+
+        typed = _longest_typed_run(steps)
+        if typed >= SECRET_TEXT_LENGTH:
+            # Capture is global: it sees whatever was typed while it ran, into
+            # any window. A long unbroken run of characters is what a password
+            # looks like, and it would be stored verbatim in the profile.
+            self.log.addItem(f"!  {typed} characters of typed text captured")
+            self.where.setText(
+                f"This recording contains {typed} characters typed in one run. If any "
+                "of that was a password, discard it: recordings are stored as plain "
+                "text in the profile."
+            )
             return
         if self.app.recorder.device_action(steps) is not None:
             self.where.setText("Will be stored on the keypad. Works with nothing running here.")
