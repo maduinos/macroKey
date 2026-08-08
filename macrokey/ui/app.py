@@ -497,7 +497,6 @@ class MainWindow(QMainWindow):
         # Live colour preview state. No timer: the device is told up front how
         # long to hold the colour, so there is nothing to keep alive.
         self._preview_rgb: tuple[int, int, int] | None = None
-        self._after_push = None
         self._connecting = False
 
         self.setWindowTitle(f"Maduinos macroKey v{__version__}")
@@ -867,13 +866,15 @@ class MainWindow(QMainWindow):
     def _save(self) -> None:
         self.app.save()
 
-    def _push(self, then=None) -> None:
-        """Writes the profile to the device, optionally running `then` after.
+    def _push(self) -> None:
+        """Writes the profile to the device, in the background.
 
-        `then` runs on the GUI thread whether the write succeeded or not, which
-        is what the colour preview needs: the preview has to be released either
-        way, or a failed write leaves the pixel stuck on a colour the device
-        never received.
+        Takes no arguments, and that is load-bearing: Qt's clicked signal
+        carries a `checked` boolean, and while this had an optional callback
+        parameter the toolbar button passed False into it. Every write started
+        from the toolbar then ended in "'bool' object is not callable" once the
+        worker finished. A slot wired to a button either takes nothing or takes
+        the checked flag on purpose.
         """
 
         def worker() -> None:
@@ -885,15 +886,10 @@ class MainWindow(QMainWindow):
             finally:
                 self.pushFinished.emit()
 
-        if then is not None:
-            self._after_push = then
         self._in_background(worker)
 
     def _on_push_finished(self) -> None:
         self._end_preview()
-        then, self._after_push = self._after_push, None
-        if then is not None:
-            then()
 
     def _pull(self) -> None:
         def worker() -> None:
