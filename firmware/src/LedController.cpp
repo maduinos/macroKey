@@ -28,6 +28,11 @@ void LedController::begin(Profile *profile) {
     ambient_[i] = AmbientPixel{{0, 0, 0}, 0, 0, FX_SOLID};
     pressedAt_[i] = 0;
     lastShown_[i] = Rgb{0, 0, 0};
+    fadeFrom_[i] = Rgb{0, 0, 0};
+    lastBase_[i] = Rgb{0, 0, 0};
+    lastScene_[i] = Rgb{0, 0, 0};
+    fadeStartedAt_[i] = 0;
+    lastEffect_[i] = FX_SOLID;
   }
 }
 
@@ -113,21 +118,47 @@ void LedController::render(uint32_t now) {
   const Rgb white = {255, 255, 255};
 
   for (uint8_t i = 0; i < MK_LED_COUNT; i++) {
-    Rgb color;
+    Rgb scene;
+    uint8_t effect = FX_SOLID;
     if (hostMode_) {
-      color = ambient_[i].color;
-      uint8_t effect = ambient_[i].effect;
-      if (effect < FX_COUNT) {
-        MK_LED_EFFECTS[effect].fn(&color, now - ambient_[i].startedAt, ambient_[i].period, i);
-      }
+      scene = ambient_[i].color;
+      effect = ambient_[i].effect;
     } else {
-      color = profile_->paletteColor(activeLayer_, i);
+      scene = profile_->paletteColor(activeLayer_, i);
     }
+
+    // The fade triggers on the scene, not on the rendered colour. An animated
+    // effect produces a different colour every frame, so comparing output would
+    // restart the fade continuously and freeze the animation on its first step.
+    // This also covers a layer switch and a host/local handover, because both
+    // change which scene the pixel is reading from.
+    if (scene.r != lastScene_[i].r || scene.g != lastScene_[i].g ||
+        scene.b != lastScene_[i].b || effect != lastEffect_[i] ||
+        hostMode_ != lastHostMode_) {
+      fadeFrom_[i] = lastBase_[i];
+      fadeStartedAt_[i] = now;
+      lastScene_[i] = scene;
+      lastEffect_[i] = effect;
+    }
+
+    Rgb color = scene;
+    if (effect < FX_COUNT) {
+      MK_LED_EFFECTS[effect].fn(&color, now - ambient_[i].startedAt, ambient_[i].period, i);
+    }
+
+    uint32_t sinceFade = now - fadeStartedAt_[i];
+    if (MK_LED_FADE_MS > 0 && sinceFade < MK_LED_FADE_MS) {
+      color = blendToward(fadeFrom_[i], color, (uint8_t)(sinceFade * 255 / MK_LED_FADE_MS));
+    }
+    // Recorded before the press flash: the flash is transient feedback, not the
+    // scene, so a fade starting mid-flash must not inherit the white.
+    lastBase_[i] = color;
 
     uint32_t sincePress = now - pressedAt_[i];
     if (pressedAt_[i] != 0 && sincePress < MK_LED_PRESS_FLASH_MS) {
-      uint8_t amount = (uint8_t)(255 - sincePress * 255 / MK_LED_PRESS_FLASH_MS);
-      color = blendToward(color, white, amount);
+      uint16_t amount = (uint16_t)(255 - sincePress * 255 / MK_LED_PRESS_FLASH_MS);
+      amount = amount * MK_LED_PRESS_FLASH_AMOUNT / 255;
+      color = blendToward(color, white, (uint8_t)amount);
     }
 
     color.r = (uint8_t)(((uint16_t)color.r * brightness_) >> 8);
@@ -136,6 +167,7 @@ void LedController::render(uint32_t now) {
     frame[i] = color;
   }
 
+  lastHostMode_ = hostMode_;
   applyPowerLimit(frame);
 
   bool changed = false;

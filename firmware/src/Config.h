@@ -64,9 +64,27 @@ static const uint8_t MK_KEY_PINS[MK_KEY_COUNT] = {3, 4, 5, 6, 7, 8, 9, 10};
 #define MK_LED_MAX_MILLIAMPS 100
 #define MK_LED_DEFAULT_BRIGHTNESS 64
 #define MK_LED_PRESS_FLASH_MS 120
+
+// A scene change cross-fades over this long instead of snapping. The pad lives
+// in peripheral vision, where it is the instant jump that catches the eye, not
+// the colour itself: fading in over half a second reads as "something changed"
+// without pulling a look away from the screen. Set to 0 for instant switching.
+#define MK_LED_FADE_MS 500
+
+// How far a key press lifts the pixel toward white, 0-255. At 255 the press is
+// a hard white punch that overrides the ambient colour completely; lower values
+// read as the current colour brightening, so feedback and status coexist.
+#define MK_LED_PRESS_FLASH_AMOUNT 150
 // Host ambient control lapses back to the local scene after this much silence,
 // so closing the desktop app never freezes the strip on its last colour.
 #define MK_LED_HOST_TIMEOUT_MS 3000
+
+// The board's own RX/TX LEDs are not part of the status display: the USB core
+// pulses them on every CDC transfer, so an idle pad still blinks whenever the
+// desktop probes the port. Holding them off makes the WS2812 the only light on
+// the pad. Set to 0 to get the stock blink back while debugging serial traffic.
+// The power LED is tied straight to VCC and cannot be reached from firmware.
+#define MK_QUIET_BOARD_LEDS 1
 
 // ------------------------------------------------------------------ serial --
 

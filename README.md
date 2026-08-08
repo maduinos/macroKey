@@ -53,12 +53,16 @@ arduino-cli config add board_manager.additional_urls \
 arduino-cli core update-index
 arduino-cli core install SparkFun:avr
 arduino-cli lib install "Adafruit NeoPixel"
+arduino-cli lib install "Keyboard"
+arduino-cli lib install "Mouse"
 
 arduino-cli compile --fqbn SparkFun:avr:promicro:cpu=16MHzatmega32U4 firmware
 arduino-cli upload  --fqbn SparkFun:avr:promicro:cpu=16MHzatmega32U4 -p /dev/ttyACM0 firmware
 ```
 
-`Keyboard`와 `Mouse`는 AVR 코어에 포함돼 있어 따로 설치하지 않습니다. Pro Micro는 리셋 버튼이
+`Keyboard`와 `Mouse`는 AVR 코어에 **들어 있지 않습니다.** 예전에는 번들이었지만 지금은 별도
+라이브러리로 분리돼 있어서, 설치하지 않으면 `HidBackend.h`가 `Mouse.h`를 찾지 못해 빌드가
+멈춥니다. Pro Micro는 리셋 버튼이
 없으므로 업로드 전에 `RST`–`GND`를 빠르게 두 번 단락시켜 부트로더(8초)를 띄워야 합니다.
 
 ## 입력 모델
