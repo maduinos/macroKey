@@ -52,9 +52,9 @@ class FakeApp:
     def status(self, message: str) -> None:
         self.messages.append(message)
 
-    def request_record(self, key: int) -> None:
+    def request_record(self, key: int, gesture: str = "tap") -> None:
         """The real one hands this to the record worker."""
-        self.requested.append(key)
+        self.requested.append((key, gesture))
 
     def start_recording(self, on_event=None) -> None:
         if self._start_raises:
@@ -263,7 +263,7 @@ def test_a_recording_that_runs_too_long_is_stored_rather_than_left_open(
     for _ in _run_watchdog(monkeypatch, session):
         if app.requested:
             break
-    assert app.requested == [0]
+    assert app.requested == [(0, "tap")]
 
 
 @pytest.mark.parametrize("key", range(8))
@@ -298,7 +298,7 @@ def test_a_record_request_is_not_handled_on_the_serial_reader_thread() -> None:
     seen: list[tuple[int, str]] = []
 
     class Session:
-        def handle_request(self, key: int) -> None:
+        def handle_request(self, key: int, gesture: str = "tap") -> None:
             seen.append((key, threading.current_thread().name))
 
     app.session = Session()
@@ -336,7 +336,7 @@ def test_requests_are_handled_in_order_by_a_single_worker() -> None:
     threads: set[str] = set()
 
     class Session:
-        def handle_request(self, key: int) -> None:
+        def handle_request(self, key: int, gesture: str = "tap") -> None:
             threads.add(threading.current_thread().name)
             time.sleep(0.02)  # a real one writes the whole profile
             seen.append(key)

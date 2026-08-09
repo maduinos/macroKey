@@ -20,7 +20,9 @@ typedef void (*MkKeyReportFn)(uint8_t key, uint8_t gesture, uint8_t layer, bool 
 typedef void (*MkHostActionFn)(uint8_t token, uint8_t key, uint8_t layer);
 
 //: The pad asking the host to start or finish recording into this key.
-typedef void (*MkRecordRequestFn)(uint8_t key);
+//: `gesture` is which slot: GESTURE_TAP for a plain hold, GESTURE_DOUBLE when
+//: the held press was the second of a quick pair.
+typedef void (*MkRecordRequestFn)(uint8_t key, uint8_t gesture);
 
 // Called while a macro is replaying, roughly every few milliseconds. A macro
 // runs inside loop(), so without this the pixel freezes on whatever it was

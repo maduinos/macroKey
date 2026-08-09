@@ -26,6 +26,10 @@ log = logging.getLogger(__name__)
 #: While recording. Red, because this is the one signal that must not be missed:
 #: everything typed anywhere is being captured.
 RECORDING_COLOR = (255, 0, 0)
+#: While recording into the double slot. Still unmistakably hot, but a different
+#: hue: the pad has one pixel and no screen, so which of a key's two slots is
+#: being programmed has nowhere else to be said while it is happening.
+RECORDING_DOUBLE_COLOR = (255, 0, 150)
 #: Stored, and the pad can replay it on its own.
 SAVED_ON_DEVICE_COLOR = (0, 255, 60)
 #: Stored, but it needs this computer running to work.
@@ -71,6 +75,10 @@ class RecordingSession:
         self.app = app
         self._on_change = on_change or (lambda: None)
         self.active_key: int | None = None
+        #: Which slot the running recording is for. Decided when it starts, not
+        #: when it finishes: the finish only has to say "this key again", so
+        #: ending a tap recording with a tap-tap-hold must not silently move it.
+        self.active_gesture: str = "tap"
         self.last_outcome: RecordOutcome | None = None
         self._started_at = 0.0
         self._watch_stop = threading.Event()
@@ -81,10 +89,10 @@ class RecordingSession:
 
     # ------------------------------------------------------------- entry point --
 
-    def handle_request(self, key: int) -> None:
+    def handle_request(self, key: int, gesture: str = "tap") -> None:
         """A key was held alone. Start recording into it, or finish."""
         if self.active_key is None:
-            self._start(key)
+            self._start(key, gesture)
         elif key == self.active_key:
             self._finish()
         else:
@@ -111,7 +119,7 @@ class RecordingSession:
 
     # ---------------------------------------------------------------- internals --
 
-    def _start(self, key: int) -> None:
+    def _start(self, key: int, gesture: str = "tap") -> None:
         try:
             self.app.start_recording()
         except Exception as exc:  # noqa: BLE001 - capture backends fail environmentally
@@ -119,10 +127,13 @@ class RecordingSession:
             self._flash(REJECTED_COLOR)
             return
         self.active_key = key
+        self.active_gesture = gesture
         self._started_at = time.monotonic()
         self._show_recording()
         self._start_watchdog()
-        self.app.status(f"Recording into key {key + 1}. Hold it again to finish.")
+        self.app.status(
+            f"Recording into key {key + 1} ({gesture}). Hold it again to finish."
+        )
         self._on_change()
 
     # ---------------------------------------------------------------- watchdog --
@@ -156,7 +167,7 @@ class RecordingSession:
                 # Through the record worker, not inline: finishing writes the
                 # whole profile, and that belongs on the one thread that owns
                 # starting and finishing so the two cannot interleave.
-                self.app.request_record(key)
+                self.app.request_record(key, self.active_gesture)
                 return
 
             self._show_recording()
@@ -170,13 +181,15 @@ class RecordingSession:
 
         if not steps:
             self.last_outcome = RecordOutcome(key, 0, "", False, error="nothing was captured")
-            self.app.status(f"Nothing was captured, so key {key + 1} is unchanged")
+            self.app.status(
+                f"Nothing was captured, so key {key + 1} ({self.active_gesture}) is unchanged"
+            )
             self._flash(REJECTED_COLOR)
             self._on_change()
             return
 
         try:
-            where = self.app.assign_recording(steps, 0, key, "tap")
+            where = self.app.assign_recording(steps, 0, key, self.active_gesture)
         except Exception as exc:  # noqa: BLE001 - a full profile must not crash the pad
             self.last_outcome = RecordOutcome(key, len(steps), "", False, error=str(exc))
             self.app.status(f"Could not store the recording: {exc}")
@@ -203,7 +216,7 @@ class RecordingSession:
             self._on_change()
             return
 
-        self.app.status(f"Key {key + 1}: {where}")
+        self.app.status(f"Key {key + 1} ({self.active_gesture}): {where}")
         # push_profile already flashes its own acknowledgement; this replaces it
         # with one that says *where* the macro ended up, which is the part that
         # decides whether the pad works with this app closed.
@@ -214,8 +227,11 @@ class RecordingSession:
 
     def _show_recording(self) -> None:
         try:
+            color = (
+                RECORDING_DOUBLE_COLOR if self.active_gesture == "double" else RECORDING_COLOR
+            )
             self.app.device.set_led_mode(True, timeout_ms=LED_HOLD_MS)
-            self.app.device.set_all(RECORDING_COLOR, effect="pulse", period=700)
+            self.app.device.set_all(color, effect="pulse", period=700)
         except DeviceError:
             log.debug("could not show the recording colour", exc_info=True)
 

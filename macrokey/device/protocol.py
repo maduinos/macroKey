@@ -9,6 +9,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from ..config.model import EDITABLE_GESTURES
+
 PROTOCOL_VERSION = 1
 LINE_MAX = 96
 
@@ -145,9 +147,15 @@ class RecordRequest:
     The device holds no recording state of its own. It reports the request and
     the host decides whether that starts or finishes a recording, which keeps
     the two from disagreeing about which mode they are in after a reconnect.
+
+    `gesture` is which slot the pad is asking to program: a plain hold means
+    tap, and tap-tap-hold means double. Without it the pad could only ever
+    record into tap -- and a double-tap-and-hold, which already reached the
+    firmware's record path, quietly stored the macro on the tap slot.
     """
 
     key: int
+    gesture: str = "tap"
     uptime_ms: int = 0
 
 
@@ -182,8 +190,11 @@ def parse_event(message: Message) -> KeyEvent | HostEvent | RecordRequest | None
             layer=_field(message, "l", 0),
         )
     if kind == "record":
+        # Older firmware sends no `g`; tap is what it always meant.
+        gesture = message.get("g", "tap") or "tap"
         return RecordRequest(
             key=_field(message, "k", -1),
+            gesture=gesture if gesture in EDITABLE_GESTURES else "tap",
             uptime_ms=_field(message, "ms", 0),
         )
     return None
