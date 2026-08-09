@@ -131,8 +131,12 @@ class Recorder:
             self._evdev = evdev_source.EvdevRecorder(
                 self._record, capture_mouse=self.capture_mouse
             )
-            self._evdev.start()
+            # Named before it is started, not after: `start` spawns the reading
+            # thread, and `_record` asks which backend it is on to decide
+            # whether the self-echo blanket applies. Set afterwards, the first
+            # events of every recording were judged by the wrong rule.
             self.backend = "evdev"
+            self._evdev.start()
             self.recording = True
             return
 
@@ -192,7 +196,16 @@ class Recorder:
     # -------------------------------------------------------------- listeners --
 
     def _record(self, event: RawEvent) -> None:
-        if event.at - self._last_device_key_at < SELF_INPUT_WINDOW:
+        # Only pynput needs this. It reports keystrokes with no idea which
+        # device produced them, so the keypad's own HID output comes back as
+        # input and the recorder eats its own tail; blanking a window after a
+        # pad event is the only defence available there.
+        #
+        # evdev knows. It skips the pad's input nodes outright, so nothing of
+        # the pad's can arrive -- and leaving the blanket on meant every pad
+        # event still threw away 150 ms of what was really being typed, which
+        # is the recording losing exactly the keystrokes it was asked for.
+        if self.backend != "evdev" and event.at - self._last_device_key_at < SELF_INPUT_WINDOW:
             return
         with self._lock:
             self._events.append(event)
