@@ -2,11 +2,10 @@
 
 from .client import DeviceClient, DeviceError
 from .discovery import PortCandidate, candidates, pyserial_available
-from .protocol import ChordEvent, Hello, HostEvent, KeyEvent, RecordRequest
+from .protocol import Hello, HostEvent, KeyEvent, RecordRequest
 
 __all__ = [
     "RecordRequest",
-    "ChordEvent",
     "DeviceClient",
     "DeviceError",
     "Hello",

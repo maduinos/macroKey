@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from macrokey.config.model import MACRO_SLOTS, MACRO_STEP_CAPACITY
+from macrokey.config.model import MACRO_RECORD_CAPACITY, MACRO_SLOTS, Action
 from macrokey.recorder.normalize import (
     MAX_DEVICE_DELAY_MS,
     reduce_to_device_action,
@@ -101,10 +101,10 @@ def test_an_empty_recording_is_not_a_macro() -> None:
     assert reduce_to_device_macro([]) is None
 
 
-def test_a_recording_past_the_firmware_step_limit_stays_on_the_host() -> None:
-    """MK_MACRO_MAX_STEPS stops replay part way, which is worse than not trying."""
+def test_a_recording_past_the_firmware_record_limit_stays_on_the_host() -> None:
+    """MK_MACRO_MAX_RECORDS stops replay part way, worse than not trying."""
     too_long = steps(*(["ctrl+c"] * 40))
-    assert reduce_to_device_macro(too_long, max_steps=32) is None
+    assert reduce_to_device_macro(too_long, max_records=32) is None
 
 
 # ------------------------------------------------------------ slot allocation --
@@ -121,6 +121,11 @@ class FakeApp:
     _claim_macro_slot = None  # bound below
 
 
+def _record() -> Action:
+    """One action, one record -- the unit the capacity check counts in."""
+    return Action(kind="key", hotkey="a")
+
+
 def claim(app, macro):
     from macrokey.app import MacroKeyApp
 
@@ -129,19 +134,19 @@ def claim(app, macro):
 
 def test_slots_are_handed_out_in_order() -> None:
     app = FakeApp()
-    assert claim(app, [object()]) == 0
-    assert claim(app, [object()]) == 1
+    assert claim(app, [_record()]) == 0
+    assert claim(app, [_record()]) == 1
 
 
 def test_storage_is_shared_so_a_free_slot_is_not_enough() -> None:
-    """Sixteen slots share one byte budget; a free slot with no room is no room."""
+    """Sixteen slots share one record budget; a free slot with no room is no room."""
     app = FakeApp()
-    assert claim(app, [object()] * MACRO_STEP_CAPACITY) == 0
-    assert claim(app, [object()]) is None
+    assert claim(app, [_record()] * MACRO_RECORD_CAPACITY) == 0
+    assert claim(app, [_record()]) is None
 
 
 def test_running_out_of_slots_returns_none_rather_than_raising() -> None:
     app = FakeApp()
     for _ in range(MACRO_SLOTS):
-        assert claim(app, [object()]) is not None
-    assert claim(app, [object()]) is None
+        assert claim(app, [_record()]) is not None
+    assert claim(app, [_record()]) is None

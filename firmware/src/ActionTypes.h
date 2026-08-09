@@ -9,7 +9,7 @@ enum ActionType : uint8_t {
   ACT_NONE = 0,
   ACT_KEY,             // a = modifier mask, b = keycode, c = flags
   ACT_CONSUMER,        // a = usage low, b = usage high
-  ACT_MOUSE_BUTTON,    // a = button mask, b = click count
+  ACT_MOUSE_BUTTON,    // a = button mask, b = MouseMode
   ACT_MOUSE_MOVE,      // a = dx (int8), b = dy (int8), c = repeat
   ACT_MOUSE_WHEEL,     // a = delta (int8), c = repeat
   ACT_LAYER_MOMENTARY, // a = layer
@@ -17,8 +17,21 @@ enum ActionType : uint8_t {
   ACT_SEQUENCE,        // a = macro slot
   ACT_HOST,            // a = host token id, executed by the desktop app
   ACT_LED_SCENE,       // a = palette/scene index
-  ACT_DELAY,           // a = delay in 10 ms units (sequence steps only)
+  ACT_DELAY,           // a = delay in 10 ms units (macro records only)
+  // a = character count. The characters follow, packed three to a record, so a
+  // run costs about a byte a letter instead of a whole 3 byte key action each.
+  // Macro records only -- it spans more than one and so cannot sit in a keymap
+  // slot, which is a fixed four bytes.
+  ACT_TEXT,
   ACT_TYPE_COUNT
+};
+
+// ACT_MOUSE_BUTTON's `b`. A press that is never released is what a drag is made
+// of, so it is a separate mode rather than a click with the release implied.
+enum MouseMode : uint8_t {
+  MB_MODE_CLICK = 0,
+  MB_MODE_PRESS = 1,
+  MB_MODE_RELEASE = 2
 };
 
 // Modifier mask for ACT_KEY. Matches the USB HID modifier byte layout.

@@ -33,14 +33,13 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QSlider,
-    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
 
 from .. import __version__
 from ..app import MacroKeyApp
-from ..config import KEY_COUNT, LAYER_COUNT, Action, Profile
+from ..config import KEY_COUNT, Action, Profile
 from ..config.model import EDITABLE_GESTURES
 from ..device import DeviceError, candidates
 from ..session import RecordingSession
@@ -127,7 +126,18 @@ def describe_binding(profile: Profile, action: Action) -> str:
     if action.kind == "sequence":
         macros = profile.device_macros
         steps = macros[action.slot] if action.slot < len(macros) else []
-        return f"recording, {len(steps)} steps (on the keypad)"
+        # Counted the way it reads, not the way it is stored. A typed line is
+        # one text action, so "1 step" would be true and useless; the number
+        # someone wants is how much of the recording there is.
+        typed = sum(len(step.text) for step in steps if step.kind == "text")
+        others = sum(1 for step in steps if step.kind not in ("text", "delay"))
+        parts = []
+        if typed:
+            parts.append(f"{typed} characters")
+        if others:
+            parts.append(f"{others} key{'s' if others != 1 else ''}")
+        detail = " + ".join(parts) or "empty"
+        return f"recording, {detail} (on the keypad)"
     if action.kind == "host":
         spec = profile.host_actions.get(action.token)
         if spec is None:
@@ -279,7 +289,7 @@ class SlotDialog(QDialog):
         self.recorded_steps: list[dict] | None = None
         self._recording = False
 
-        self.setWindowTitle(f"Layer {layer} · Key {key + 1} · {gesture}")
+        self.setWindowTitle(f"Key {key + 1} · {gesture}")
         self.setModal(True)
         self.resize(520, 470)
 
@@ -334,24 +344,6 @@ class SlotDialog(QDialog):
         record_row.addStretch(1)
         record_row.addWidget(self.use_recording)
 
-        # ---- layer ------------------------------------------------------------
-        self.layer_choice = QComboBox()
-        for target in range(LAYER_COUNT):
-            if target == layer:
-                continue
-            name = app.profile.layers[target].name or f"Layer {target}"
-            self.layer_choice.addItem(f"Hold for {name}", (target, "layer_momentary"))
-            self.layer_choice.addItem(f"Toggle {name}", (target, "layer_toggle"))
-        if current.kind in ("layer_momentary", "layer_toggle"):
-            index = self.layer_choice.findData((current.layer, current.kind))
-            if index >= 0:
-                self.layer_choice.setCurrentIndex(index)
-        use_layer = QPushButton("Set")
-        use_layer.clicked.connect(self._use_layer)
-        layer_row = QHBoxLayout()
-        layer_row.addWidget(self.layer_choice, 1)
-        layer_row.addWidget(use_layer)
-
         # ---- bottom -----------------------------------------------------------
         clear = QPushButton("Clear this key")
         clear.clicked.connect(self._clear)
@@ -372,9 +364,6 @@ class SlotDialog(QDialog):
         layout.addLayout(record_row)
         layout.addWidget(self.log, 1)
         layout.addWidget(self.where)
-        layout.addSpacing(10)
-        layout.addWidget(_heading("Or change layer while this key is used"))
-        layout.addLayout(layer_row)
         layout.addSpacing(10)
         layout.addLayout(bottom)
 
@@ -521,11 +510,6 @@ class SlotDialog(QDialog):
             return
         self.accept()
 
-    def _use_layer(self) -> None:
-        target, kind = self.layer_choice.currentData()
-        self.result_action = Action(kind=kind, layer=target)
-        self.accept()
-
     def _clear(self) -> None:
         self.result_action = Action()
         self.accept()
@@ -543,8 +527,17 @@ def _heading(text: str) -> QLabel:
     return label
 
 
+#: Shown in the port box when discovery should choose. A word rather than a
+#: blank entry: an empty combo reads as "it failed to find anything".
+AUTO_PORT = "Auto"
+
+
 class _RescanningComboBox(QComboBox):
-    """A combo box that refreshes itself when it is opened."""
+    """A combo box that refreshes itself when it is opened.
+
+    Built once, it was a snapshot from before the pad was plugged in, and the
+    only way to see a new port was to restart the editor.
+    """
 
     def __init__(self, rescan) -> None:
         super().__init__()
@@ -580,7 +573,17 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(central)
         layout.setContentsMargins(10, 10, 10, 6)
         layout.addWidget(self._build_toolbar(port))
-        layout.addWidget(self._build_layers(), 1)
+        layout.addWidget(self._build_keys(), 1)
+
+        # The pad's main feature is invisible: nothing about eight buttons
+        # suggests that holding one opens a recorder. One line, stated once.
+        hint = QLabel(
+            "Hold any key on its own for 3 seconds to record into it - the pixel "
+            "turns red. Hold the same key again to store what you did."
+        )
+        hint.setWordWrap(True)
+        hint.setStyleSheet("color: palette(mid); padding: 2px 8px;")
+        layout.addWidget(hint)
         self.setCentralWidget(central)
 
         self.record_banner = QLabel("  ● RECORDING - hold the same key again to finish  ")
@@ -604,14 +607,13 @@ class MainWindow(QMainWindow):
         self._connection_timer.timeout.connect(self._refresh_connection)
         self._connection_timer.start()
 
-        # Hold-to-record: the pad drives it, this window just reflects it.
+        # Hold-to-record: the pad drives it, this window just reflects it. The
+        # session keeps the recording pixel lit from its own thread -- doing it
+        # from a QTimer here meant blocking serial calls on the main thread, and
+        # a pad that stopped answering froze the window four seconds in five.
         self.session = RecordingSession(self.app, on_change=self.recordingChanged.emit)
         self.app.session = self.session
         self.recordingChanged.connect(self._refresh_recording)
-        self._record_timer = QTimer(self)
-        self._record_timer.setInterval(5000)
-        self._record_timer.timeout.connect(self.session.refresh_led)
-        self._record_timer.start()
 
         self._refresh_all()
         self._refresh_connection()
@@ -626,21 +628,32 @@ class MainWindow(QMainWindow):
         row = QHBoxLayout(bar)
         row.setContentsMargins(0, 0, 0, 0)
 
-        # Rescans when the list drops down. Built once, it was a snapshot from
-        # before the pad was plugged in, and the only way to see a new port was
-        # to restart the editor.
+        # Auto-connect picks the port; it does not get to be the only thing that
+        # can. Two boards plugged in, a board that answers slowly, a port that
+        # has to be named by hand -- when the guess is wrong there has to be
+        # somewhere to say so, and a window that connects itself and offers no
+        # way to change its mind is worse than one that asks.
+        #
+        # Empty means "let discovery choose", which is the normal state.
         self.port_box = _RescanningComboBox(self._rescan_ports)
         self.port_box.setEditable(True)
-        self.port_box.setCurrentText(port or self.app.settings.port)
-        self.port_box.setMinimumWidth(170)
+        self.port_box.setMinimumWidth(150)
+        self.port_box.setToolTip(
+            "Leave as Auto to use whichever board identifies itself as a keypad."
+        )
         self._rescan_ports()
+        self.port_box.setCurrentText(port or self.app.settings.port or AUTO_PORT)
 
         self.connect_button = QPushButton("Connect")
         self.connect_button.clicked.connect(self._toggle_connection)
 
+        self.link_label = QLabel()
+        self.link_label.setStyleSheet("color: palette(mid);")
+
         row.addWidget(QLabel("Port"))
         row.addWidget(self.port_box)
         row.addWidget(self.connect_button)
+        row.addWidget(self.link_label)
         # No Save, no Write, no Read. Every edit saves and writes itself, and
         # connecting reconciles what is on the pad, so all three buttons could
         # only ever repeat work that had already happened -- or be forgotten,
@@ -674,53 +687,50 @@ class MainWindow(QMainWindow):
         row.addWidget(version)
         return bar
 
-    def _build_layers(self) -> QWidget:
-        self.tabs = QTabWidget()
-        for layer in range(LAYER_COUNT):
-            page = QWidget()
-            grid = QGridLayout(page)
-            grid.setContentsMargins(8, 8, 8, 8)
+    def _build_keys(self) -> QWidget:
+        """The eight keys, and nothing wrapped around them.
 
-            for column, title in enumerate(("Key", *(g.title() for g in EDITABLE_GESTURES))):
-                header = QLabel(title)
-                header.setStyleSheet("font-weight: 600;")
-                grid.addWidget(header, 0, column)
-                if column:
-                    grid.setColumnStretch(column, 1)
+        This used to be a tab per layer. With one layer a QTabWidget is a tab
+        strip with a single tab: chrome that says the same thing on every pass
+        and hides a frame's worth of nothing behind it.
+        """
+        layer = 0
+        page = QWidget()
+        grid = QGridLayout(page)
+        grid.setContentsMargins(8, 8, 8, 8)
 
-            for key in range(KEY_COUNT):
-                grid.addWidget(QLabel(str(key + 1)), key + 1, 0)
-                for index, gesture in enumerate(EDITABLE_GESTURES):
-                    button = QPushButton("-")
-                    button.setStyleSheet("text-align: left; padding: 4px 8px;")
-                    button.clicked.connect(
-                        lambda _checked=False, layer=layer, key=key, gesture=gesture: self._edit(
-                            layer, key, gesture
-                        )
+        for column, title in enumerate(("Key", *(g.title() for g in EDITABLE_GESTURES))):
+            header = QLabel(title)
+            header.setStyleSheet("font-weight: 600;")
+            grid.addWidget(header, 0, column)
+            if column:
+                grid.setColumnStretch(column, 1)
+
+        for key in range(KEY_COUNT):
+            grid.addWidget(QLabel(str(key + 1)), key + 1, 0)
+            for index, gesture in enumerate(EDITABLE_GESTURES):
+                button = QPushButton("-")
+                button.setStyleSheet("text-align: left; padding: 4px 8px;")
+                button.clicked.connect(
+                    lambda _checked=False, key=key, gesture=gesture: self._edit(
+                        layer, key, gesture
                     )
-                    grid.addWidget(button, key + 1, index + 1)
-                    self.buttons[(layer, key, gesture)] = button
+                )
+                grid.addWidget(button, key + 1, index + 1)
+                self.buttons[(layer, key, gesture)] = button
 
-            # The layer colour is what the pixel spends most of its time saying,
-            # and it was the one part of the profile the editor wrote but never
-            # let anyone change. It belongs on the layer, not on a slot: the
-            # firmware reads one colour per layer, so editing it per key would
-            # offer a choice the device cannot honour.
-            grid.addWidget(QLabel("LED"), KEY_COUNT + 1, 0)
-            swatch = QPushButton()
-            swatch.setToolTip(
-                "Colour shown while this layer is active. Layer 0 is normally "
-                "left black so an idle pad stays dark."
-            )
-            swatch.clicked.connect(
-                lambda _checked=False, layer=layer: self._edit_layer_color(layer)
-            )
-            grid.addWidget(swatch, KEY_COUNT + 1, 1, 1, len(EDITABLE_GESTURES))
-            self.swatches[layer] = swatch
+        # The resting colour is what the pixel spends most of its time saying,
+        # and it was the one part of the profile the editor wrote but never let
+        # anyone change.
+        grid.addWidget(QLabel("LED"), KEY_COUNT + 1, 0)
+        swatch = QPushButton()
+        swatch.setToolTip("Colour the pad rests at when nothing is happening.")
+        swatch.clicked.connect(lambda _checked=False: self._edit_layer_color(layer))
+        grid.addWidget(swatch, KEY_COUNT + 1, 1, 1, len(EDITABLE_GESTURES))
+        self.swatches[layer] = swatch
 
-            grid.setRowStretch(KEY_COUNT + 2, 1)
-            self.tabs.addTab(page, self.app.profile.layers[layer].name or f"Layer {layer}")
-        return self.tabs
+        grid.setRowStretch(KEY_COUNT + 2, 1)
+        return page
 
     def _edit_layer_color(self, layer: int) -> None:
         """Picks a layer colour, showing it on the real pixel while choosing.
@@ -908,7 +918,7 @@ class MainWindow(QMainWindow):
         # Read on this thread. Touching a widget from the worker is undefined in
         # Qt and deadlocks here in practice, which made auto-connect hang the
         # window before it had finished opening.
-        port = self.port_box.currentText()
+        port = self._chosen_port()
 
         def worker() -> None:
             try:
@@ -953,6 +963,29 @@ class MainWindow(QMainWindow):
         self.connect_button.setText("Disconnect" if connected else "Connect")
         self.connect_button.setEnabled(True)
         self.port_box.setEnabled(not connected)
+        if connected:
+            hello = self.app.device.hello
+            firmware = f" - firmware {hello.firmware}" if hello is not None else ""
+            self.link_label.setText(f"{self.app.device.port}{firmware}")
+        else:
+            self.link_label.setText("no keypad")
+
+    def _chosen_port(self) -> str:
+        """The port to open, with Auto meaning "let discovery decide"."""
+        text = self.port_box.currentText().strip()
+        return "" if text in ("", AUTO_PORT) else text
+
+    def _rescan_ports(self) -> None:
+        """Repopulates the port list, keeping whatever was typed or selected."""
+        current = self.port_box.currentText()
+        found = [AUTO_PORT, *(item.device for item in candidates())]
+        if current and current not in found:
+            found.append(current)
+        self.port_box.blockSignals(True)
+        self.port_box.clear()
+        self.port_box.addItems(found)
+        self.port_box.setCurrentText(current or AUTO_PORT)
+        self.port_box.blockSignals(False)
 
     def _autoconnect(self) -> None:
         """Opens the obvious device on startup.
@@ -975,18 +1008,6 @@ class MainWindow(QMainWindow):
         if outcome is not None and not session.recording:
             self._refresh_all()
         self.record_banner.setVisible(session.recording)
-
-    def _rescan_ports(self) -> None:
-        """Repopulates the port list, keeping whatever was typed or selected."""
-        current = self.port_box.currentText()
-        found = [item.device for item in candidates()]
-        if current and current not in found:
-            found.append(current)
-        self.port_box.blockSignals(True)
-        self.port_box.clear()
-        self.port_box.addItems(found)
-        self.port_box.setCurrentText(current)
-        self.port_box.blockSignals(False)
 
     def _push(self) -> None:
         """Writes the profile to the device, in the background.

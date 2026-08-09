@@ -1,12 +1,12 @@
 """Profile model, binary encoding and on-disk storage."""
 
 from .model import (
+    EDITABLE_GESTURES,
     GESTURES,
     KEY_COUNT,
     LAYER_COUNT,
     LED_COUNT,
     Action,
-    Chord,
     HostAction,
     KeySlot,
     Layer,
@@ -17,12 +17,12 @@ from .model import (
 from .store import Settings, load_profile, save_profile
 
 __all__ = [
+    "EDITABLE_GESTURES",
     "GESTURES",
     "KEY_COUNT",
     "LAYER_COUNT",
     "LED_COUNT",
     "Action",
-    "Chord",
     "HostAction",
     "KeySlot",
     "Layer",

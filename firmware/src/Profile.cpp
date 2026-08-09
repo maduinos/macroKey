@@ -37,7 +37,7 @@ Action makeKey(uint8_t modifiers, uint8_t keycode, uint8_t flags = KEYF_NONE) {
 }  // namespace
 
 uint16_t Profile::keymapAddress(uint8_t layer, uint8_t key, uint8_t gesture) const {
-  uint16_t index = ((uint16_t)layer * MK_KEY_COUNT + key) * MK_GESTURE_COUNT + gesture;
+  uint16_t index = ((uint16_t)layer * MK_KEY_COUNT + key) * MK_KEYMAP_GESTURES + gesture;
   return MK_KEYMAP_OFFSET + index * sizeof(Action);
 }
 
@@ -49,7 +49,7 @@ bool Profile::begin() {
                EEPROM.read(MK_HEADER_OFFSET + H_SCHEMA) == MK_PROFILE_SCHEMA &&
                EEPROM.read(MK_HEADER_OFFSET + H_LAYERS) == MK_LAYER_COUNT &&
                EEPROM.read(MK_HEADER_OFFSET + H_KEYS) == MK_KEY_COUNT &&
-               EEPROM.read(MK_HEADER_OFFSET + H_GESTURES) == MK_GESTURE_COUNT;
+               EEPROM.read(MK_HEADER_OFFSET + H_GESTURES) == MK_KEYMAP_GESTURES;
 
   if (valid) {
     uint16_t stored = (uint16_t)EEPROM.read(MK_HEADER_OFFSET + H_CRC_LO) |
@@ -71,7 +71,10 @@ bool Profile::begin() {
 
 Action Profile::action(uint8_t layer, uint8_t key, uint8_t gesture) const {
   Action result = {ACT_NONE, 0, 0, 0};
-  if (layer >= MK_LAYER_COUNT || key >= MK_KEY_COUNT || gesture >= MK_GESTURE_COUNT) {
+  // GESTURE_HOLD is past the end of the keymap on purpose: it is how recording
+  // starts, so it is reported but never bound, and asking for it reads as the
+  // empty action rather than off the end of the region.
+  if (layer >= MK_LAYER_COUNT || key >= MK_KEY_COUNT || gesture >= MK_KEYMAP_GESTURES) {
     return result;
   }
   uint16_t address = keymapAddress(layer, key, gesture);
@@ -93,40 +96,31 @@ Rgb Profile::paletteColor(uint8_t layer, uint8_t led) const {
   return color;
 }
 
-bool Profile::chord(uint8_t slot, uint8_t *mask, Action *action) const {
-  if (slot >= MK_CHORD_SLOTS) return false;
-  uint16_t address = MK_CHORD_OFFSET + (uint16_t)slot * MK_CHORD_ENTRY_SIZE;
-  uint8_t storedMask = EEPROM.read(address);
-  uint8_t type = EEPROM.read(address + 1);
-  // A chord needs at least two keys to be meaningful, and an action to run.
-  if (storedMask == 0 || type == ACT_NONE || type >= ACT_TYPE_COUNT) return false;
-  *mask = storedMask;
-  action->type = type;
-  action->a = EEPROM.read(address + 2);
-  action->b = EEPROM.read(address + 3);
-  action->c = EEPROM.read(address + 4);
-  return true;
-}
-
-uint8_t Profile::macroStepCount(uint8_t slot) const {
+uint8_t Profile::macroRecordCount(uint8_t slot) const {
   if (slot >= MK_MACRO_SLOTS) return 0;
-  return EEPROM.read(MK_MACRO_OFFSET + (uint16_t)slot * 2 + 1);
+  return EEPROM.read(MK_MACRO_OFFSET + slot);
 }
 
-MacroStep Profile::macroStep(uint8_t slot, uint8_t index) const {
-  MacroStep step = {ACT_NONE, 0, 0};
-  if (slot >= MK_MACRO_SLOTS || index >= macroStepCount(slot)) return step;
+uint16_t Profile::macroBase(uint8_t slot) const {
+  if (slot >= MK_MACRO_SLOTS) return 0;
+  uint16_t base = 0;
+  for (uint8_t earlier = 0; earlier < slot; earlier++) {
+    base += EEPROM.read(MK_MACRO_OFFSET + earlier);
+  }
+  return base;
+}
 
-  uint8_t stepOffset = EEPROM.read(MK_MACRO_OFFSET + (uint16_t)slot * 2);
-  uint16_t address = MK_MACRO_OFFSET + MK_MACRO_INDEX_SIZE +
-                     ((uint16_t)stepOffset + index) * MK_MACRO_STEP_SIZE;
-  if (address + MK_MACRO_STEP_SIZE > MK_PROFILE_SIZE) return step;
+MacroStep Profile::macroRecord(uint16_t base, uint8_t index) const {
+  MacroStep record = {ACT_NONE, 0, 0};
+  uint16_t position = base + index;
+  if (position >= MK_MACRO_RECORD_CAPACITY) return record;
 
-  step.type = EEPROM.read(address + 0);
-  step.a = EEPROM.read(address + 1);
-  step.b = EEPROM.read(address + 2);
-  if (step.type >= ACT_TYPE_COUNT) step.type = ACT_NONE;
-  return step;
+  uint16_t address =
+      MK_MACRO_OFFSET + MK_MACRO_INDEX_SIZE + position * MK_MACRO_RECORD_SIZE;
+  record.type = EEPROM.read(address + 0);
+  record.a = EEPROM.read(address + 1);
+  record.b = EEPROM.read(address + 2);
+  return record;
 }
 
 void Profile::readRaw(uint16_t offset, uint8_t *out, uint16_t length) const {
@@ -153,7 +147,7 @@ void Profile::writeHeaderFields(uint16_t crc) {
   EEPROM.update(MK_HEADER_OFFSET + H_SCHEMA, MK_PROFILE_SCHEMA);
   EEPROM.update(MK_HEADER_OFFSET + H_LAYERS, MK_LAYER_COUNT);
   EEPROM.update(MK_HEADER_OFFSET + H_KEYS, MK_KEY_COUNT);
-  EEPROM.update(MK_HEADER_OFFSET + H_GESTURES, MK_GESTURE_COUNT);
+  EEPROM.update(MK_HEADER_OFFSET + H_GESTURES, MK_KEYMAP_GESTURES);
   EEPROM.update(MK_HEADER_OFFSET + H_BRIGHTNESS, brightness_);
   EEPROM.update(MK_HEADER_OFFSET + H_BASE_LAYER, baseLayer_);
   EEPROM.update(MK_HEADER_OFFSET + H_FLAGS, flags_);
@@ -179,8 +173,8 @@ void Profile::writeDefaults() {
     writeAction(keymapAddress(0, key, GESTURE_TAP), makeKey(hyper, '1' + key));
   }
 
-  // No layer switching and no chord: eight keys that each do one thing, and
-  // everything else is recorded onto them by holding the key.
+  // No layer switching: eight keys that each do one thing, and everything else
+  // is recorded onto them by holding the key.
 
   // A dim blue-grey resting glow. Off reads as unplugged, and this is what the
   // pixel shows most of the time; the recording and result colours are driven

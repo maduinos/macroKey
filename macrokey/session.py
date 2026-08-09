@@ -14,6 +14,8 @@ are opened only after the pad asks and closed the moment it asks again.
 from __future__ import annotations
 
 import logging
+import threading
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -35,6 +37,14 @@ REJECTED_COLOR = (255, 0, 60)
 #: it is refreshed well inside that. Long enough that a slow save does not blink.
 LED_HOLD_MS = 30000
 FLASH_MS = 900
+
+#: How often the watchdog looks in. Also the LED keepalive period.
+WATCH_SECONDS = 5.0
+#: A recording left running captures everything typed anywhere, and the password
+#: filter is a guess rather than a guarantee. The pad is the only way to finish
+#: one, so a pad that has been unplugged or forgotten would otherwise leave
+#: capture on for the rest of the session.
+MAX_RECORDING_SECONDS = 600.0
 
 
 @dataclass
@@ -62,6 +72,8 @@ class RecordingSession:
         self._on_change = on_change or (lambda: None)
         self.active_key: int | None = None
         self.last_outcome: RecordOutcome | None = None
+        self._started_at = 0.0
+        self._watch_stop = threading.Event()
 
     @property
     def recording(self) -> bool:
@@ -86,14 +98,15 @@ class RecordingSession:
             )
             self._flash(REJECTED_COLOR)
 
-    def abort(self) -> None:
+    def abort(self, reason: str = "Recording cancelled") -> None:
         """Drops a recording in progress without storing it."""
         if self.active_key is None:
             return
-        self.app.stop_recording()
         self.active_key = None
+        self._watch_stop.set()
+        self.app.stop_recording()
         self._release_led()
-        self.app.status("Recording cancelled")
+        self.app.status(reason)
         self._on_change()
 
     # ---------------------------------------------------------------- internals --
@@ -106,14 +119,53 @@ class RecordingSession:
             self._flash(REJECTED_COLOR)
             return
         self.active_key = key
+        self._started_at = time.monotonic()
         self._show_recording()
+        self._start_watchdog()
         self.app.status(f"Recording into key {key + 1}. Hold it again to finish.")
         self._on_change()
+
+    # ---------------------------------------------------------------- watchdog --
+
+    def _start_watchdog(self) -> None:
+        """Keeps the pixel lit, and ends a recording nothing else can end.
+
+        Its own thread rather than a Qt timer: every call in here blocks on the
+        serial link, and on the main thread a pad that stopped answering froze
+        the window for the full two second timeout, twice, every five seconds.
+        It also means this works with no window at all.
+        """
+        self._watch_stop.clear()
+        threading.Thread(target=self._watch, name="macrokey-recwatch", daemon=True).start()
+
+    def _watch(self) -> None:
+        while not self._watch_stop.wait(WATCH_SECONDS):
+            key = self.active_key
+            if key is None:
+                return
+
+            # The pad is the only way to finish a recording. If it is gone,
+            # nothing will ever arrive to stop this and capture stays on.
+            if not self.app.device.connected:
+                self.abort("Keypad disconnected, so the recording was dropped")
+                return
+
+            if time.monotonic() - self._started_at >= MAX_RECORDING_SECONDS:
+                minutes = int(MAX_RECORDING_SECONDS // 60)
+                self.app.status(f"Recording ran for {minutes} minutes; storing it now")
+                # Through the record worker, not inline: finishing writes the
+                # whole profile, and that belongs on the one thread that owns
+                # starting and finishing so the two cannot interleave.
+                self.app.request_record(key)
+                return
+
+            self._show_recording()
 
     def _finish(self) -> None:
         key = self.active_key
         assert key is not None
         self.active_key = None
+        self._watch_stop.set()
         steps = self.app.stop_recording()
 
         if not steps:
@@ -166,12 +218,6 @@ class RecordingSession:
             self.app.device.set_all(RECORDING_COLOR, effect="pulse", period=700)
         except DeviceError:
             log.debug("could not show the recording colour", exc_info=True)
-
-    def refresh_led(self) -> None:
-        """Keeps the recording colour alive. Cheap; call it every few seconds."""
-        if self.active_key is None:
-            return
-        self._show_recording()
 
     def _flash(self, color: tuple[int, int, int]) -> None:
         try:

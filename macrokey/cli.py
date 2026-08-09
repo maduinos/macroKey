@@ -15,7 +15,7 @@ import time
 
 from . import __version__
 from .app import MacroKeyApp
-from .config import GESTURES, KEY_COUNT, LAYER_COUNT
+from .config import EDITABLE_GESTURES, KEY_COUNT
 from .device import DeviceError, candidates, pyserial_available
 from .led import default_socket_path
 from .recorder.recorder import DEFAULT_STOP_KEY
@@ -41,9 +41,10 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("daemon", help="run headless: host actions and LEDs, no window")
 
     record = sub.add_parser("record", help="record input and bind it to a key")
-    record.add_argument("--layer", type=int, default=0, choices=range(LAYER_COUNT))
     record.add_argument("--key", type=int, required=True, choices=range(1, KEY_COUNT + 1))
-    record.add_argument("--gesture", default="tap", choices=GESTURES)
+    # Not GESTURES: hold is how recording starts on the pad itself, so nothing
+    # may be bound to it. There is no --layer either -- there is one layer.
+    record.add_argument("--gesture", default="tap", choices=EDITABLE_GESTURES)
     record.add_argument("--name", default="")
 
     state = sub.add_parser("state", help="send a state event to the running app")
@@ -200,12 +201,12 @@ def cmd_record(args: argparse.Namespace) -> int:
         for line in app.recorder.summary(steps):
             print(f"  {line}")
 
-        answer = input(f"\nbind to layer {args.layer} key {args.key} {args.gesture}? [y/N] ")
+        answer = input(f"\nbind to key {args.key} {args.gesture}? [y/N] ")
         if answer.strip().lower() not in ("y", "yes"):
             print("discarded")
             return 1
 
-        where = app.assign_recording(steps, args.layer, key_index, args.gesture, args.name)
+        where = app.assign_recording(steps, 0, key_index, args.gesture, args.name)
         app.save()
         print(f"bound as {where}")
         print("run `macrokey push` to write it to the device")

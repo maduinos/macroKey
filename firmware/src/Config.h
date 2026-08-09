@@ -18,8 +18,16 @@
 // added a mode nobody could see and a shortcut nobody could remember, and the
 // keymap they cost is 288 bytes of EEPROM that macro steps now use instead.
 #define MK_LAYER_COUNT 1
+// Gestures the scanner can report. Hold is one of them, but it is not stored:
+// see MK_KEYMAP_GESTURES.
 #define MK_GESTURE_COUNT 3
-#define MK_CHORD_SLOTS 8
+// Gestures the keymap has room for, and the order they sit in: tap, then
+// double. Hold is how recording starts, so nothing may be bound to it and its
+// slot held nothing but zeroes on every key -- 32 bytes macro records now use.
+#define MK_KEYMAP_GESTURES 2
+// No chords. Eight slots at five bytes that nothing could fill: the editor
+// never offered them and the defaults left them empty, so the region only ever
+// held zeroes. Forty more bytes for macro records.
 #define MK_MACRO_SLOTS 16
 
 // Button pins, active-low with the internal pull-up. Index order is the key
@@ -51,7 +59,6 @@ static const uint8_t MK_KEY_PINS[MK_KEY_COUNT] = {3, 4, 5, 6, 7, 8, 9, 10};
 #define MK_DOUBLE_TAP_MS 250    // second press must start within this window
 #define MK_HOLD_MS 400          // press longer than this becomes a hold
 #define MK_HOLD_REPEAT_MS 120   // auto-repeat period for repeating hold actions
-#define MK_CHORD_WINDOW_MS 40   // presses this close together may form a chord
 
 // HID output is suppressed for this long after boot. If a macro misfires into
 // an infinite key storm this window is the only chance to re-flash the board.
@@ -121,5 +128,18 @@ static const uint8_t MK_KEY_PINS[MK_KEY_COUNT] = {3, 4, 5, 6, 7, 8, 9, 10};
 
 // ------------------------------------------------------------------ limits --
 
-#define MK_MACRO_MAX_STEPS 32     // per invocation, guards runaway sequences
-#define MK_MACRO_MAX_RUN_MS 5000  // total wall clock per invocation
+// Records per invocation, guarding a runaway sequence rather than rationing
+// storage: a slot's count is one byte, so this is simply as many records as a
+// macro can have. It was 32 steps, which no real recording met -- a typed
+// command line was one 3 byte key action per character and past 32 before it
+// was half over -- so recordings fell back to host actions and the pad stopped
+// working with the app closed, which is the one thing it exists to do.
+#define MK_MACRO_MAX_RECORDS 255
+// Total wall clock per invocation. A macro runs inside loop(), so this is also
+// how long the pad can stop scanning buttons and answering the host: 30 s was
+// long enough that the desktop app decided the link was dead. Replaying real
+// thinking-time still fits, and mkMacroYield keeps the pixel alive throughout.
+#define MK_MACRO_MAX_RUN_MS 10000
+// Between characters of a text run. The host needs a report boundary to see
+// them as separate keystrokes; below about 4 ms fast applications drop some.
+#define MK_MACRO_TEXT_DELAY_MS 5

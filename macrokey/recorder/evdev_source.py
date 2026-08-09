@@ -26,7 +26,7 @@ import threading
 import time
 from collections.abc import Callable
 
-from .events import KEY_DOWN, KEY_UP, MOUSE_CLICK, SCROLL, RawEvent
+from .events import KEY_DOWN, KEY_UP, MOUSE_CLICK, MOUSE_MOVE, MOUSE_RELEASE, SCROLL, RawEvent
 
 try:  # pragma: no cover - import guard, exercised by absence
     import evdev
@@ -82,6 +82,12 @@ _SHIFTED = {
 }
 
 _BUTTONS = {"BTN_LEFT": "left", "BTN_RIGHT": "right", "BTN_MIDDLE": "middle"}
+
+#: Motion this still or stiller is a hand resting on the mouse, not a gesture.
+MOTION_DEAD_ZONE = 6
+#: A pointer that has not moved for this long has finished its gesture. Also
+#: the select timeout, so a resting pointer is flushed without a second timer.
+MOTION_REST_SECONDS = 0.12
 
 _MODIFIER_TOKENS = {"shift", "rshift"}
 
@@ -140,6 +146,15 @@ class EvdevRecorder:
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
         self._shift_held = False
+        # Pointer motion arrives as a stream of one-pixel deltas -- a mouse
+        # reports hundreds of times a second, so a two-second drag is a few
+        # thousand events. They are summed here and flushed as one move when
+        # something else happens or the pointer comes to rest, which is what
+        # turns "the mouse was moved over there" into a single step.
+        self._pending_dx = 0
+        self._pending_dy = 0
+        self._motion_started_at = 0.0
+        self._motion_last_at = 0.0
 
     def start(self) -> None:
         usable, reason = available()
@@ -190,7 +205,8 @@ class EvdevRecorder:
             selector.register(device, selectors.EVENT_READ)
         try:
             while not self._stop.is_set():
-                for key, _mask in selector.select(timeout=0.2):
+                ready = selector.select(timeout=MOTION_REST_SECONDS)
+                for key, _mask in ready:
                     device = key.fileobj
                     try:
                         for event in device.read():
@@ -198,19 +214,51 @@ class EvdevRecorder:
                     except OSError:
                         # Unplugged mid-recording; keep the others going.
                         selector.unregister(device)
+                # A pointer that stopped moving has finished its gesture, and
+                # nothing else may ever arrive to flush it -- a recording that
+                # ends on a mouse movement would otherwise lose it entirely.
+                if time.monotonic() - self._motion_last_at >= MOTION_REST_SECONDS:
+                    self._flush_motion()
         finally:
+            self._flush_motion()
             selector.close()
 
     def _handle(self, event) -> None:
         now = time.monotonic()
+
+        if event.type == ecodes.EV_REL and event.code in (ecodes.REL_X, ecodes.REL_Y):
+            if not self._pending_dx and not self._pending_dy:
+                self._motion_started_at = now
+            if event.code == ecodes.REL_X:
+                self._pending_dx += int(event.value)
+            else:
+                self._pending_dy += int(event.value)
+            self._motion_last_at = now
+            return
+
+        # Only the event types that become steps end the move that preceded
+        # them, so a click lands after the pointer has been put where the click
+        # belongs. Flushing on *any* other type would flush on EV_SYN, which the
+        # kernel appends to every single mouse report -- the accumulation would
+        # never span more than one report and a drag would be thousands of
+        # one-pixel steps instead of one move.
+        if event.type not in (ecodes.EV_KEY, ecodes.EV_REL):
+            return
+        self._flush_motion()
 
         if event.type == ecodes.EV_KEY:
             name = ecodes.BTN.get(event.code)
             if isinstance(name, (list, tuple)):
                 name = next((alias for alias in name if alias in _BUTTONS), name[0])
             if isinstance(name, str) and name in _BUTTONS:
-                if event.value == 1:  # press only; a release is not a second click
+                # Both halves. A press and a release with movement between them
+                # is a drag, and normalize needs to see the pair to tell that
+                # from a click -- folding the release away here is what made a
+                # drag replay as two clicks with the pointer jumping between.
+                if event.value == 1:
                     self._emit(RawEvent(kind=MOUSE_CLICK, token=_BUTTONS[name], at=now))
+                elif event.value == 0:
+                    self._emit(RawEvent(kind=MOUSE_RELEASE, token=_BUTTONS[name], at=now))
                 return
 
             token = _token_for(event.code)
@@ -228,6 +276,25 @@ class EvdevRecorder:
 
         if event.type == ecodes.EV_REL and event.code == ecodes.REL_WHEEL and event.value:
             self._emit(RawEvent(kind=SCROLL, token="scroll", at=now, data=(0, int(event.value))))
+
+    def _flush_motion(self) -> None:
+        """Emits the accumulated pointer movement as one event, if any.
+
+        Dated at the moment motion *started*, not at the flush: the delay before
+        a move is the pause the person took before reaching for something, and
+        stamping it at the end would fold the whole gesture into that pause.
+        """
+        dx, dy = self._pending_dx, self._pending_dy
+        if not dx and not dy:
+            return
+        self._pending_dx = self._pending_dy = 0
+        if abs(dx) < MOTION_DEAD_ZONE and abs(dy) < MOTION_DEAD_ZONE:
+            # A hand resting on the mouse. Replaying it does nothing useful and
+            # it would sit between two keystrokes as a step that reads as noise.
+            return
+        self._emit(
+            RawEvent(kind=MOUSE_MOVE, token="move", at=self._motion_started_at, data=(dx, dy))
+        )
 
     def _char(self, token: str) -> str:
         if len(token) != 1:

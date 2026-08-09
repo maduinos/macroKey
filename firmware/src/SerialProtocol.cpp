@@ -116,15 +116,6 @@ void SerialProtocol::sendLog(char level, const char *message) {
   Serial.println(encoded);
 }
 
-void SerialProtocol::sendChord(uint8_t mask, uint8_t layer) {
-  char hex[3];
-  mkFormatHex(mask, 2, hex);
-  Serial.print(F("EV t=chord m="));
-  Serial.print(hex);
-  Serial.print(F(" l="));
-  Serial.println(layer);
-}
-
 // ------------------------------------------------------------------ parsing --
 
 bool SerialProtocol::parseLine() {

@@ -46,11 +46,15 @@ def test_each_mouse_button_is_captured(captured, code, token) -> None:
     assert [(e.kind, e.token) for e in events] == [("mouse_click", token)]
 
 
-def test_button_release_is_not_a_second_click(captured) -> None:
+def test_both_halves_of_a_button_are_captured(captured) -> None:
+    """The release used to be dropped, which is what made a drag unrecordable:
+    a press and a release with movement between them is the whole gesture."""
+    from macrokey.recorder.events import MOUSE_CLICK, MOUSE_RELEASE
+
     events, recorder = captured
     recorder._handle(key_event(ecodes.BTN_LEFT, 1))
     recorder._handle(key_event(ecodes.BTN_LEFT, 0))
-    assert len(events) == 1
+    assert [event.kind for event in events] == [MOUSE_CLICK, MOUSE_RELEASE]
 
 
 def test_the_alias_tuple_is_unwrapped() -> None:
@@ -124,3 +128,73 @@ def test_pointer_movement_is_not_recorded(captured) -> None:
     recorder._handle(rel_event(ecodes.REL_X, 40))
     recorder._handle(rel_event(ecodes.REL_Y, -12))
     assert events == []
+
+
+# ------------------------------------------------------- motion accumulation --
+
+pytest.importorskip("evdev")
+
+
+def _fake(kind: int, code: int, value: int):
+    from types import SimpleNamespace
+
+    return SimpleNamespace(type=kind, code=code, value=value)
+
+
+def _source():
+    from macrokey.recorder.evdev_source import EvdevRecorder
+
+    got = []
+    return EvdevRecorder(got.append, capture_mouse=True), got
+
+
+def test_a_report_stream_accumulates_into_one_move() -> None:
+    """The kernel appends EV_SYN to every mouse report. Treating that as "some
+    other event happened" flushed after each one, so a drag came back as
+    thousands of one-pixel steps instead of a single move."""
+    from evdev import ecodes
+
+    source, got = _source()
+    for _ in range(50):  # 50 reports, as a real mouse sends them
+        source._handle(_fake(ecodes.EV_REL, ecodes.REL_X, 2))
+        source._handle(_fake(ecodes.EV_REL, ecodes.REL_Y, -1))
+        source._handle(_fake(ecodes.EV_SYN, ecodes.SYN_REPORT, 0))
+
+    assert got == [], "nothing should be emitted while the pointer is still moving"
+    source._flush_motion()
+    assert len(got) == 1
+    assert got[0].data == (100, -50)
+
+
+def test_a_click_flushes_the_move_that_led_to_it() -> None:
+    """Otherwise the click replays before the pointer has been moved."""
+    from evdev import ecodes
+
+    from macrokey.recorder.events import MOUSE_CLICK, MOUSE_MOVE
+
+    source, got = _source()
+    source._handle(_fake(ecodes.EV_REL, ecodes.REL_X, 90))
+    source._handle(_fake(ecodes.EV_SYN, ecodes.SYN_REPORT, 0))
+    source._handle(_fake(ecodes.EV_KEY, ecodes.BTN_LEFT, 1))
+
+    assert [event.kind for event in got] == [MOUSE_MOVE, MOUSE_CLICK]
+
+
+def test_a_hand_resting_on_the_mouse_is_not_a_step() -> None:
+    from evdev import ecodes
+
+    source, got = _source()
+    source._handle(_fake(ecodes.EV_REL, ecodes.REL_X, 2))
+    source._handle(_fake(ecodes.EV_REL, ecodes.REL_Y, -1))
+    source._flush_motion()
+    assert got == []
+
+
+def test_flushing_twice_emits_once() -> None:
+    from evdev import ecodes
+
+    source, got = _source()
+    source._handle(_fake(ecodes.EV_REL, ecodes.REL_X, 80))
+    source._flush_motion()
+    source._flush_motion()
+    assert len(got) == 1

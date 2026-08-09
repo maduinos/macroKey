@@ -22,7 +22,6 @@ class SerialProtocol {
   void sendRecordRequest(uint8_t key);
   void sendKeyEvent(uint8_t key, uint8_t gesture, uint8_t layer, bool released);
   void sendHostAction(uint8_t token, uint8_t key, uint8_t layer);
-  void sendChord(uint8_t mask, uint8_t layer);
 
   // Diagnostics, off by default so the link stays quiet in normal use.
   bool debugEnabled() const { return debug_; }

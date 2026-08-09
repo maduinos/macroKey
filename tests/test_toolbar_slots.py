@@ -29,7 +29,7 @@ def window():
     return MainWindow()
 
 
-CLICKED_SLOTS = ("_toggle_connection", "_brightness_settled", "_rescan_ports")
+CLICKED_SLOTS = ("_toggle_connection", "_brightness_settled")
 
 
 @pytest.mark.parametrize("name", CLICKED_SLOTS)
@@ -59,3 +59,36 @@ def test_the_toolbar_offers_no_manual_sync(window) -> None:
 
 def test_connecting_is_still_offered(window) -> None:
     assert window.connect_button.text() in ("Connect", "Disconnect", "Connecting...")
+
+
+def test_the_port_can_still_be_chosen_by_hand(window) -> None:
+    """Auto-connect picks the port; it is not the only thing that may. Two
+    boards, a slow board, a port that has to be named -- when the guess is
+    wrong there has to be somewhere to say so."""
+    from macrokey.ui.app import AUTO_PORT
+
+    assert window.port_box.isEditable()
+    assert AUTO_PORT in [window.port_box.itemText(i) for i in range(window.port_box.count())]
+
+
+def test_auto_means_let_discovery_decide(window) -> None:
+    """`connect("")` probes the candidates; a literal "Auto" would be opened as
+    a device path and fail."""
+    from macrokey.ui.app import AUTO_PORT
+
+    window.port_box.setCurrentText(AUTO_PORT)
+    assert window._chosen_port() == ""
+    window.port_box.setCurrentText("/dev/ttyACM1")
+    assert window._chosen_port() == "/dev/ttyACM1"
+
+
+def test_hold_is_not_offered_as_a_binding(window) -> None:
+    """It is the recording trigger. A key bound to both would fire the binding
+    at 400 ms and open the recorder at 3 s, from one press."""
+    assert {gesture for _, _, gesture in window.buttons} == {"tap", "double"}
+
+
+def test_the_single_layer_is_not_wrapped_in_tabs(window) -> None:
+    from PySide6.QtWidgets import QTabWidget
+
+    assert not window.findChildren(QTabWidget)

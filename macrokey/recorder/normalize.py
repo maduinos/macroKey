@@ -10,8 +10,8 @@ from __future__ import annotations
 from typing import Any
 
 from ..config import keycodes
-from ..config.model import Action
-from .events import KEY_DOWN, KEY_UP, MOUSE_CLICK, SCROLL, RawEvent
+from ..config.model import MACRO_MAX_RECORDS, TEXT_RUN_MAX, Action, ProfileError, macro_records
+from .events import KEY_DOWN, KEY_UP, MOUSE_CLICK, MOUSE_MOVE, MOUSE_RELEASE, SCROLL, RawEvent
 
 #: Gaps shorter than this are dropped rather than replayed.
 DEFAULT_MIN_GAP_MS = 40
@@ -19,6 +19,53 @@ DEFAULT_MIN_GAP_MS = 40
 DELAY_QUANTUM_MS = 10
 #: A pause longer than this is treated as the user thinking, not as timing.
 MAX_DELAY_MS = 2000
+
+
+def _produces_a_step(event: RawEvent) -> bool:
+    """Whether this raw event becomes something replayable.
+
+    Key releases and modifier presses do not: the first is bookkeeping and the
+    second decorates the key that follows rather than standing on its own.
+    """
+    if event.kind == KEY_UP:
+        return False
+    if event.kind == KEY_DOWN:
+        return event.token not in keycodes.MODIFIER_BITS
+    return True
+
+
+def _mouse_modes(events: list[RawEvent]) -> dict[int, str]:
+    """Classifies each mouse button event as a click, or as half of a drag.
+
+    A press whose release follows with nothing in between is a click, and is
+    worth storing as one step. A press with pointer movement before its release
+    is a drag: both halves have to survive, because the button must still be
+    down while the pointer travels. Collapsing every press and release into a
+    click is what made drag-and-drop impossible to record.
+    """
+    modes: dict[int, str] = {}
+    open_presses: dict[str, int] = {}
+
+    for index, event in enumerate(events):
+        if event.kind == MOUSE_CLICK:
+            open_presses[event.token] = index
+            modes[index] = "press"
+        elif event.kind == MOUSE_RELEASE:
+            start = open_presses.pop(event.token, None)
+            if start is None:
+                modes[index] = "skip"  # a release for a press from before capture
+            elif any(_produces_a_step(between) for between in events[start + 1 : index]):
+                modes[index] = "release"
+            else:
+                modes[start] = "click"
+                modes[index] = "skip"
+
+    # A press whose release never arrived -- the recording ended mid-drag, or
+    # the release was the click that stopped it. Replaying it as a press would
+    # leave the button held down for good, with no macro step to let it go.
+    for index in open_presses.values():
+        modes[index] = "click"
+    return modes
 
 
 def normalize(
@@ -32,6 +79,7 @@ def normalize(
     held: list[str] = []
     text = ""
     last_at: float | None = None
+    mouse_modes = _mouse_modes(events)
 
     def flush_text() -> None:
         nonlocal text
@@ -48,7 +96,7 @@ def normalize(
                 steps.append({"type": "delay", "params": {"ms": quantized}})
         last_at = at
 
-    for event in events:
+    for position, event in enumerate(events):
         if event.kind == KEY_UP:
             if event.token in held:
                 held.remove(event.token)
@@ -82,16 +130,21 @@ def normalize(
             steps.append({"type": "hotkey", "params": {"hotkey": event.token}})
             continue
 
-        if event.kind == MOUSE_CLICK:
+        if event.kind in (MOUSE_CLICK, MOUSE_RELEASE):
             # The button, not the position. Replaying the coordinates too would
             # mean a macro that clicks the right pixel only while nothing has
             # moved -- a different window position, a different resolution, a
             # second monitor, and it silently clicks something else. Buttons at
             # the current pointer are the part that stays true, and they are the
             # part the firmware can send by itself.
+            mode = mouse_modes.get(position, "click")
+            if mode == "skip":
+                continue
             flush_text()
             add_delay(event.at)
-            steps.append({"type": "mouse_button", "params": {"button": event.token}})
+            steps.append(
+                {"type": "mouse_button", "params": {"button": event.token, "mode": mode}}
+            )
             continue
 
         if event.kind == SCROLL:
@@ -101,6 +154,21 @@ def normalize(
             flush_text()
             add_delay(event.at)
             steps.append({"type": "mouse_wheel", "params": {"delta": int(delta)}})
+            continue
+
+        if event.kind == MOUSE_MOVE:
+            dx = event.data[0] if event.data else 0
+            dy = event.data[1] if len(event.data) > 1 else 0
+            if not dx and not dy:
+                continue
+            # Relative, and that is the whole point: the pointer ends up the
+            # same distance from where it started rather than at the same
+            # screen coordinate, so the macro survives a window being moved.
+            # It also means a drag has to begin from where you left the
+            # pointer, which is the honest version of what was recorded.
+            flush_text()
+            add_delay(event.at)
+            steps.append({"type": "mouse_move", "params": {"dx": int(dx), "dy": int(dy)}})
             continue
 
     flush_text()
@@ -197,10 +265,17 @@ def summarize(steps: list[dict[str, Any]]) -> list[str]:
         elif kind == "delay":
             lines.append(f"wait   {params.get('ms')} ms")
         elif kind == "mouse_button":
-            lines.append(f"click  {params.get('button')} button (where the pointer is)")
+            mode = params.get("mode", "click")
+            verb = {"click": "click ", "press": "hold  ", "release": "let go"}.get(mode, "click ")
+            lines.append(f"{verb} {params.get('button')} button (where the pointer is)")
         elif kind == "mouse_wheel":
             delta = int(params.get("delta", 0))
             lines.append(f"scroll {'up' if delta > 0 else 'down'} {abs(delta)}")
+        elif kind == "mouse_move":
+            lines.append(
+                f"move   pointer by {int(params.get('dx', 0)):+d}, "
+                f"{int(params.get('dy', 0)):+d} (relative)"
+            )
         elif "note" in step:
             lines.append(f"skip   {step['note']}")
         else:
@@ -233,58 +308,50 @@ def reduce_to_device_action(steps: list[dict[str, Any]]) -> Action | None:
 MAX_DEVICE_DELAY_MS = 255 * 10
 
 
-def expand_text_to_keys(text: str) -> list[Action] | None:
-    """Typed text as one key action per character, or None if it cannot be.
+def text_to_runs(text: str) -> list[Action] | None:
+    """Typed text as device text runs, or None when the pad cannot type it.
 
-    The firmware has no "type this string" action -- it presses keys -- so text
-    was the thing that forced a recording onto the host, and with the daemon off
-    that meant the macro silently did nothing. Most typed text is plain ASCII and
-    is perfectly expressible as keys.
+    The firmware types the characters out of the macro itself, so a run costs
+    one header record plus one record per three characters. It used to be one
+    3-byte key action per character: a single command line was 38 records and
+    the whole pad held 273, so anything worth recording went to the host and
+    stopped working the moment the app was closed.
 
-    Uppercase becomes shift plus the lowercase key, because the keycode parser
-    lower-cases anything it is handed; the shifted symbols carry their own ASCII
-    value, which is what the Arduino keyboard library expects. Tabs, newlines and
-    anything outside printable ASCII return None -- a Korean macro is a host
-    macro, and pretending otherwise would type nothing at all.
+    Longer than one run's 255 characters simply becomes several runs. Tabs,
+    newlines and anything outside printable ASCII return None -- a Korean macro
+    is a host macro, and pretending otherwise would type nothing at all.
     """
     if not text:
         return None
-    keys: list[Action] = []
-    for character in text:
-        if character == " ":
-            hotkey = "space"
-        elif character.isupper() and character.isascii():
-            hotkey = f"shift+{character.lower()}"
-        elif character.isascii() and character.isprintable():
-            hotkey = character
-        else:
-            return None
-        try:
-            action = Action(kind="key", hotkey=hotkey)
-            action.encode()
-        except Exception:  # noqa: BLE001 - anything unparseable belongs on the host
-            return None
-        keys.append(action)
-    return keys
+    try:
+        return [
+            Action(kind="text", text=text[offset : offset + TEXT_RUN_MAX])
+            for offset in range(0, len(text), TEXT_RUN_MAX)
+        ]
+    except ProfileError:
+        return None  # not printable ASCII; the host can still type it
 
 
 def reduce_to_device_macro(
     steps: list[dict[str, Any]],
     *,
-    max_steps: int = 32,
+    max_records: int = MACRO_MAX_RECORDS,
 ) -> list[Action] | None:
-    """Compiles a whole recording into steps the firmware can replay itself.
+    """Compiles a whole recording into records the firmware can replay itself.
 
-    The firmware has always been able to run a stored sequence -- sixteen slots
-    of up to thirty-two steps, with its own delay step -- but nothing ever built
-    one, so every recording longer than a single shortcut became a host action
-    and stopped working the moment the desktop app was not running. A keyboard
-    macro with pauses is exactly what the sequence format is for.
+    The firmware has always been able to run a stored sequence, but nothing ever
+    built one, so every recording longer than a single shortcut became a host
+    action and stopped working the moment the desktop app was not running. A
+    keyboard macro with pauses is exactly what the sequence format is for.
 
-    Returns None when a step has no on-device equivalent, which is the honest
-    answer for mouse movement, long text and anything the host has to interpret.
-    `max_steps` mirrors MK_MACRO_MAX_STEPS: the firmware stops replaying past it,
-    so a macro that would be silently truncated is not a device macro at all.
+    Returns None when a step has no on-device equivalent, or when the result
+    would be truncated: `max_records` mirrors MK_MACRO_MAX_RECORDS, past which
+    the firmware stops replaying, and half a macro is worse than an honest
+    fallback to the host.
+
+    The budget is counted in *records*, not steps -- a text run spans a header
+    plus one record per three characters, and it is records the region runs out
+    of.
     """
     if not steps:
         return None
@@ -323,34 +390,66 @@ def reduce_to_device_macro(
             continue
 
         if kind == "mouse_button":
-            button = params.get("button", "left")
             try:
-                compiled.append(Action(kind="mouse_button", button=button))
-                compiled[-1].encode()
+                action = Action(
+                    kind="mouse_button",
+                    button=params.get("button", "left"),
+                    mode=params.get("mode", "click"),
+                )
+                action.encode()
             except Exception:  # noqa: BLE001 - unknown button, keep it off the device
                 return None
+            compiled.append(action)
             continue
 
         if kind == "mouse_wheel":
             delta = int(params.get("delta", 0))
             # One signed byte on the wire; a bigger scroll becomes repeats.
-            step = 127 if delta > 0 else -127
             while delta:
-                slice_delta = step if abs(delta) > 127 else delta
-                compiled.append(Action(kind="mouse_wheel", delta=int(slice_delta)))
+                slice_delta = max(-127, min(127, delta))
+                compiled.append(Action(kind="mouse_wheel", delta=slice_delta))
                 delta -= slice_delta
             continue
 
+        if kind == "mouse_move":
+            compiled.extend(_split_move(int(params.get("dx", 0)), int(params.get("dy", 0))))
+            continue
+
         if kind == "text":
-            typed = expand_text_to_keys(params.get("text", ""))
-            if typed is None:
+            runs = text_to_runs(params.get("text", ""))
+            if runs is None:
                 return None
-            compiled.extend(typed)
+            compiled.extend(runs)
             continue
 
         # Clipboard and shell still need the host.
         return None
 
-    if not compiled or len(compiled) > max_steps:
+    if not compiled or macro_records(compiled) > max_records:
         return None
     return compiled
+
+
+def _split_move(dx: int, dy: int) -> list[Action]:
+    """Pointer travel as steps of at most one signed byte per axis.
+
+    Along the straight line between the ends, not one axis at a time and not
+    each axis clamped on its own: both of those bend the path, and a drag
+    selects whatever it is dragged across. The longer axis sets how many steps
+    there are, and the shorter one is spread evenly over them, so every step
+    keeps the gesture's direction.
+    """
+    span = max(abs(dx), abs(dy))
+    if span == 0:
+        return []
+    count = -(-span // 127)  # ceiling division: steps needed for the long axis
+    moves: list[Action] = []
+    done_x = done_y = 0
+    for index in range(1, count + 1):
+        step_x = round(dx * index / count) - done_x
+        step_y = round(dy * index / count) - done_y
+        done_x += step_x
+        done_y += step_y
+        if step_x or step_y:
+            moves.append(Action(kind="mouse_move", dx=step_x, dy=step_y))
+    return moves

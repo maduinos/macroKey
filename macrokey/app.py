@@ -8,6 +8,7 @@ what keeps a daemon mode possible.
 from __future__ import annotations
 
 import logging
+import queue
 import threading
 from collections.abc import Callable
 
@@ -15,7 +16,6 @@ from .actions import HostActionRunner
 from .backends import active_window_title
 from .config import Profile, Settings, binary, load_profile, save_profile
 from .device import (
-    ChordEvent,
     DeviceClient,
     DeviceError,
     HostEvent,
@@ -51,7 +51,10 @@ class MacroKeyApp:
         self.device = DeviceClient(on_event=self._on_device_event, on_status=self.status)
         self.actions = HostActionRunner(self.profile, status=self.status, device=self.device)
         self.leds: LedService | None = None
-        self.recorder = Recorder(min_gap_ms=self.settings.recorder_min_gap_ms)
+        self.recorder = Recorder(
+            min_gap_ms=self.settings.recorder_min_gap_ms,
+            capture_mouse=self.settings.recorder_capture_mouse,
+        )
         #: How many steps the last recording lost to the password filter.
         self.last_redacted = 0
         #: Set by whoever wants to drive hold-to-record; None disables it.
@@ -60,6 +63,11 @@ class MacroKeyApp:
         self._app_layer_rules: dict[str, int] = {}
         self._app_layer_thread: threading.Thread | None = None
         self._app_layer_stop = threading.Event()
+
+        # Record requests are handled here, one at a time, and never on the
+        # thread that delivered them. See `_record_worker`.
+        self._record_queue: queue.Queue[int] = queue.Queue()
+        self._record_thread: threading.Thread | None = None
 
     # ------------------------------------------------------------ observers --
 
@@ -123,22 +131,61 @@ class MacroKeyApp:
             # Tell the recorder so it drops the keypad's own HID echo.
             self.recorder.note_device_key()
         elif isinstance(event, RecordRequest):
-            # Runs on the serial reader thread. Views that touch widgets must
-            # marshal; the session itself only touches the app and the device.
-            if self.session is not None:
-                self.session.handle_request(event.key)
+            if self.session is None:
+                self.status(f"Key {event.key + 1} asked to record, but nothing is listening")
             else:
-                self.status(
-                    f"Key {event.key + 1} asked to record, but nothing is listening"
-                )
-        elif isinstance(event, ChordEvent):
-            self.status(f"Chord {'+'.join(str(k + 1) for k in event.keys)}")
+                # Not inline. This callback *is* the serial reader thread, and
+                # handling a record request means talking to the device: setting
+                # the LED, then writing the whole profile. Every one of those
+                # waits for a reply only the reader thread can deliver -- so
+                # running them here means waiting on ourselves. It never hung
+                # outright, which is what made it hard to see: each call just
+                # timed out after two seconds, so recording started with no red
+                # pixel and finishing ground through twenty timeouts before
+                # failing to save.
+                self._queue_record_request(event.key)
 
         for callback in list(self._event_callbacks):
             try:
                 callback(event)
             except Exception:  # noqa: BLE001
                 log.exception("event callback raised")
+
+    def request_record(self, key: int) -> None:
+        """Asks the session to start or finish recording into `key`.
+
+        Public because the session's own watchdog needs it: a recording that has
+        run too long has to be finished, and that must happen on the worker like
+        every other request rather than on whatever thread noticed.
+        """
+        self._queue_record_request(key)
+
+    def _queue_record_request(self, key: int) -> None:
+        """Hands a record request to the worker, starting it on first use."""
+        if self._record_thread is None or not self._record_thread.is_alive():
+            self._record_thread = threading.Thread(
+                target=self._record_worker, name="macrokey-record", daemon=True
+            )
+            self._record_thread.start()
+        self._record_queue.put(key)
+
+    def _record_worker(self) -> None:
+        """Runs record requests in order, off the reader thread.
+
+        One thread rather than one per request: start and finish are two halves
+        of the same state machine, and handling them concurrently would let a
+        finish overtake the start it belongs to.
+        """
+        while True:
+            key = self._record_queue.get()
+            session = self.session
+            if session is None:
+                continue
+            try:
+                session.handle_request(key)
+            except Exception:  # noqa: BLE001 - a bad recording must not end the thread
+                log.exception("record request for key %d failed", key + 1)
+                self.status(f"Key {key + 1}: recording failed, see the log")
 
     # --------------------------------------------------------------- profile --
 
@@ -253,18 +300,20 @@ class MacroKeyApp:
         """Finds room for a device macro, or None when the profile is full.
 
         Storage is shared across all sixteen slots, so a slot being free is not
-        enough -- the steps have to fit the remaining bytes too. Returning None
+        enough -- the records have to fit the remaining bytes too. Returning None
         rather than raising lets the caller fall back to a host action, which is
         slower but unbounded.
         """
-        from .config.model import MACRO_SLOTS, MACRO_STEP_CAPACITY
+        from .config.model import MACRO_RECORD_CAPACITY, MACRO_SLOTS, macro_records
 
         macros = self.profile.device_macros
         while len(macros) < MACRO_SLOTS:
             macros.append([])
 
-        used = sum(len(existing) for existing in macros)
-        if used + len(macro) > MACRO_STEP_CAPACITY:
+        # Records, not actions: a text run is a header plus a record per three
+        # characters, and it is records the region runs out of.
+        used = sum(macro_records(existing) for existing in macros)
+        if used + macro_records(macro) > MACRO_RECORD_CAPACITY:
             return None
         for index, existing in enumerate(macros):
             if not existing:
@@ -280,6 +329,18 @@ class MacroKeyApp:
         Returns a short description of where it ended up.
         """
         from .config import Action, HostAction
+
+        # Clear the binding first, then sweep. Re-recording into a key is the
+        # ordinary case, and until this ran the macro being replaced kept its
+        # slot for good: sixteen corrections to one key filled all sixteen slots
+        # with steps nothing pointed at, after which every recording fell back
+        # to a host action and the pad stopped working with the app closed.
+        # Clearing before claiming is what lets the new recording reuse the
+        # storage the old one was holding.
+        self.profile.set_action(layer, key, gesture, Action())
+        freed_slots, freed_tokens = self.profile.reclaim_storage()
+        if freed_slots or freed_tokens:
+            log.debug("reclaimed %d macro slot(s), %d host action(s)", freed_slots, freed_tokens)
 
         device_action = self.recorder.device_action(steps)
         if device_action is not None:

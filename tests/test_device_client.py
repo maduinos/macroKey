@@ -164,3 +164,71 @@ def test_encode_round_trips_through_parse() -> None:
     assert message.verb == "LED"
     assert message.get("mode") == "host"
     assert message.get("ms") == "45000"
+
+
+# ------------------------------------------------------- key 0 is a real key --
+
+
+def test_key_zero_parses_as_zero_and_not_as_minus_one() -> None:
+    """`message.int("k", -1) or -1` reads as a default and is not one: 0 is
+    falsy, so the first key on the pad parsed as -1. Nothing then failed --
+    -1 is a valid Python index meaning "the last one" -- so holding key 1 to
+    record silently stored the macro on key 8.
+    """
+    from macrokey.device import protocol
+
+    for line, attribute in (
+        ("EV t=key k=0 g=tap l=0 ms=100", "key"),
+        ("EV t=record k=0 ms=100", "key"),
+    ):
+        event = protocol.parse_event(protocol.parse(line))
+        assert event is not None, line
+        assert getattr(event, attribute) == 0, line
+
+
+def test_every_key_index_survives_parsing() -> None:
+    from macrokey.device import protocol
+
+    for key in range(8):
+        event = protocol.parse_event(protocol.parse(f"EV t=record k={key} ms=1"))
+        assert event.key == key
+
+
+def test_a_missing_index_is_still_reported_as_absent() -> None:
+    """The default has to keep working; -1 means "the device did not say"."""
+    from macrokey.device import protocol
+
+    event = protocol.parse_event(protocol.parse("EV t=record ms=1"))
+    assert event.key == -1
+
+
+def test_layer_and_uptime_zero_are_not_swallowed() -> None:
+    from macrokey.device import protocol
+
+    event = protocol.parse_event(protocol.parse("EV t=key k=3 g=tap l=0 ms=0"))
+    assert event.layer == 0
+    assert event.uptime_ms == 0
+
+
+def test_host_token_zero_is_a_real_token() -> None:
+    """Token 0 is the first one `next_host_token` hands out."""
+    from macrokey.device import protocol
+
+    event = protocol.parse_event(protocol.parse("EV t=host tok=0 k=0 l=0"))
+    assert event.token == 0
+    assert event.key == 0
+
+
+def test_an_out_of_range_key_is_refused_rather_than_wrapped() -> None:
+    """Second line of defence. A negative index is a perfectly good Python
+    index, which is why the first bug was invisible."""
+    import pytest
+
+    from macrokey.config.model import Action, ProfileError, default_profile
+
+    profile = default_profile()
+    for bad in (-1, 8, 99):
+        with pytest.raises(ProfileError):
+            profile.set_action(0, bad, "tap", Action(kind="key", hotkey="a"))
+        with pytest.raises(ProfileError):
+            profile.action(0, bad, "tap")
