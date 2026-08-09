@@ -208,12 +208,21 @@ def test_a_text_macro_types_its_characters(harness) -> None:
 def test_a_drag_holds_the_button_across_the_movement(harness) -> None:
     lines = run(harness, "replay", "1", blob=binary.encode_profile(sample_profile()))
     mouse = [line for line in lines if line.startswith("mouse ")]
-    assert mouse[0] == "mouse press 1"
-    moves = [line for line in mouse if line.startswith("mouse move")]
+
+    # The pointer is driven into the corner first, so the drag starts from the
+    # same pixel it was recorded from. That is a run of hard -127,-127 moves.
+    homing = 0
+    while mouse[homing] == "mouse move -127 -127":
+        homing += 1
+    assert homing >= 40, f"only {homing} homing steps"
+
+    drag = mouse[homing:]
+    assert drag[0] == "mouse press 1"
+    moves = [line for line in drag if line.startswith("mouse move")]
     assert len(moves) == 3
     assert sum(int(line.split()[2]) for line in moves) == 300
     assert sum(int(line.split()[3]) for line in moves) == -200
-    assert "mouse release 1" in mouse
+    assert "mouse release 1" in drag
 
 
 @pytest.mark.parametrize("slot", [0, 1])

@@ -140,6 +140,11 @@ static const uint8_t MK_KEY_PINS[MK_KEY_COUNT] = {3, 4, 5, 6, 7, 8, 9, 10};
 // long enough that the desktop app decided the link was dead. Replaying real
 // thinking-time still fits, and mkMacroYield keeps the pixel alive throughout.
 #define MK_MACRO_MAX_RUN_MS 10000
+// How far ACT_MOUSE_HOME pushes, in steps of 127 pixels on each axis. The
+// pointer stops at the edge, so this only has to be further than the desktop is
+// wide: 48 covers 6096 px, which is a 5K display with room to spare.
+#define MK_MOUSE_HOME_STEPS 48
+
 // Between characters of a text run. The host needs a report boundary to see
 // them as separate keystrokes; below about 4 ms fast applications drop some.
 #define MK_MACRO_TEXT_DELAY_MS 5

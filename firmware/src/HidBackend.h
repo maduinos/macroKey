@@ -71,6 +71,12 @@ inline void mkMouseReleaseAll() {
   Mouse.release(MB_MIDDLE);
 }
 
+// Into the top-left corner and stop there. The compositor clamps at the edge,
+// so overshooting is how this works rather than something to avoid.
+inline void mkMouseHome() {
+  for (uint8_t i = 0; i < MK_MOUSE_HOME_STEPS; i++) Mouse.move(-127, -127, 0);
+}
+
 // One character of a text run. Printable ASCII only: Keyboard.write maps it to
 // a keycode and shift state, and anything else is either a control code we
 // never stored or padding at the end of the last record.

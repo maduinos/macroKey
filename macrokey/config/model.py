@@ -69,6 +69,9 @@ ACTION_TYPE_IDS: dict[str, int] = {
     #: rather than one 3 byte key action each, which is what makes a recording
     #: of real typed text fit on the pad at all.
     "text": 12,
+    #: Drives the pointer into the top-left corner, so the moves after it are
+    #: measured from a known origin. Macro records only.
+    "mouse_home": 13,
 }
 
 KEYF_REPEAT = 0x01
@@ -177,6 +180,8 @@ class Action:
             if mask is None:
                 raise ProfileError(f"unknown mouse button: {self.button!r}")
             return type_id, mask, MOUSE_MODES[self.mode], 0
+        if self.kind == "mouse_home":
+            return type_id, 0, 0, 0
         if self.kind == "text":
             # The header only. `records()` is what emits the characters, and a
             # text action cannot be bound to a key -- it exists inside macros.
@@ -222,6 +227,8 @@ class Action:
             return cls(kind="host", token=a)
         if kind == "led_scene":
             return cls(kind="led_scene", scene=a)
+        if kind == "mouse_home":
+            return cls(kind="mouse_home")
         if kind == "delay":
             return cls(kind="delay", delay_ms=a * 10)
         return cls()
@@ -249,6 +256,8 @@ class Action:
             return f"host action #{self.token}"
         if self.kind == "led_scene":
             return f"led scene {self.scene}"
+        if self.kind == "mouse_home":
+            return "move the pointer to the top-left corner"
         if self.kind == "delay":
             return f"wait {self.delay_ms} ms"
         return "-"

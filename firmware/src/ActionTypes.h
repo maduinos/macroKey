@@ -26,6 +26,11 @@ enum ActionType : uint8_t {
   // Macro records only -- it spans more than one and so cannot sit in a keymap
   // slot, which is a fixed four bytes.
   ACT_TEXT,
+  // Drives the pointer hard into the top-left corner, so what follows is
+  // measured from a known origin instead of from wherever the cursor happened
+  // to be. One record: the firmware does the whole slam, which as host-emitted
+  // moves would have been forty of them.
+  ACT_MOUSE_HOME,
   ACT_TYPE_COUNT
 };
 
