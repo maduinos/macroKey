@@ -14,6 +14,7 @@ from macrokey.config.model import (
     DEFAULT_RESTING_COLOR,
     KEY_COUNT,
     Action,
+    Profile,
     ProfileError,
     default_profile,
 )
@@ -73,6 +74,55 @@ def test_no_double_tap_is_bound_by_default() -> None:
     """Arming double-tap on a key delays every tap of it, so the default is none."""
     profile = default_profile()
     assert [key for key in range(KEY_COUNT) if profile.action(key, "double").kind != "none"] == []
+
+
+def test_every_action_kind_can_be_written_down() -> None:
+    """`to_dict` used to build a blank instance of the same kind to diff
+    against, which meant constructing a deliberately incomplete action --
+    `Action(kind="text")` has no text, and __post_init__ refuses exactly that.
+    So saving any recording containing typed words raised "a text action needs
+    text" from the one method whose job is to write it down, and the recording
+    was lost every time.
+    """
+    from macrokey.config.model import ACTION_TYPE_IDS
+
+    samples = {
+        "none": Action(),
+        "key": Action(kind="key", hotkey="ctrl+alt+t"),
+        "consumer": Action(kind="consumer", usage="volume_up"),
+        "mouse_button": Action(kind="mouse_button", button="left", mode="press"),
+        "mouse_move": Action(kind="mouse_move", dx=40, dy=-20),
+        "mouse_wheel": Action(kind="mouse_wheel", delta=-3),
+        "sequence": Action(kind="sequence", slot=2),
+        "host": Action(kind="host", token=7),
+        "led_scene": Action(kind="led_scene", scene=1),
+        "delay": Action(kind="delay", delay_ms=800),
+        "text": Action(kind="text", text="agentpet claude"),
+        "mouse_home": Action(kind="mouse_home"),
+    }
+    assert set(samples) == set(ACTION_TYPE_IDS), "a kind with no sample here is untested"
+    for kind, action in samples.items():
+        restored = Action.from_dict(action.to_dict())
+        assert restored == action, kind
+
+
+def test_a_recording_with_typed_text_saves() -> None:
+    """The whole path, because the failure was in serialising rather than in
+    anything to do with the device: the profile simply never reached disk."""
+    profile = default_profile()
+    profile.device_macros = [[
+        Action(kind="key", hotkey="ctrl+alt+t"),
+        Action(kind="delay", delay_ms=800),
+        Action(kind="text", text="agentpet claude"),
+        Action(kind="key", hotkey="enter"),
+    ]]
+    profile.set_action(0, "tap", Action(kind="sequence", slot=0))
+
+    restored = Profile.from_dict(profile.to_dict())
+    assert [a.describe() for a in restored.device_macros[0]] == [
+        a.describe() for a in profile.device_macros[0]
+    ]
+    assert binary.encode_profile(restored) == binary.encode_profile(profile)
 
 
 @pytest.mark.parametrize("hotkey", ["ctrl+alt+shift+1", "ctrl+c", "f5", "a"])
