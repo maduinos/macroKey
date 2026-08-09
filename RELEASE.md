@@ -13,8 +13,10 @@ This is a personal macro keypad lab repository. Releases are optional.
    and the same for `arduino:avr:leonardo` and `arduino:avr:micro`. Note the
    flash and SRAM figures: the staging buffer leaves about 200 bytes of stack
    headroom, and `Profile.h` records how that was measured.
-4. Flash a real pad, record something, and replay it. The harness proves the
-   bytes; only the pad proves the recording.
+4. Flash a real pad with `compile --upload`, not `upload` on its own -- `upload`
+   sends the last build output and will happily flash a stale binary. Check the
+   version it reports back. Then record something and replay it: the harness
+   proves the bytes, only the pad proves the recording.
 5. Bump the version in `pyproject.toml`, `macrokey/__init__.py` and
    `firmware/src/Config.h` together, and `MK_PROFILE_SCHEMA` / `binary.SCHEMA`
    if the EEPROM layout moved -- the blob is the same size either way, so
