@@ -17,7 +17,7 @@ enum : uint16_t {
   H_BRIGHTNESS = 8,
   H_BASE_LAYER = 9,
   H_FLAGS = 10,
-  H_RESERVED = 11,
+  H_TEXT_DELAY = 11,  // was reserved; 0 means the build-time default
   H_CRC_LO = 12,
   H_CRC_HI = 13
 };
@@ -62,6 +62,7 @@ bool Profile::begin() {
 
   brightness_ = EEPROM.read(MK_HEADER_OFFSET + H_BRIGHTNESS);
   flags_ = EEPROM.read(MK_HEADER_OFFSET + H_FLAGS);
+  textDelayMs_ = EEPROM.read(MK_HEADER_OFFSET + H_TEXT_DELAY);
   return true;
 }
 
@@ -145,7 +146,7 @@ void Profile::writeHeaderFields(uint16_t crc) {
   EEPROM.update(MK_HEADER_OFFSET + H_BRIGHTNESS, brightness_);
   EEPROM.update(MK_HEADER_OFFSET + H_BASE_LAYER, 0);  // retired, kept for layout
   EEPROM.update(MK_HEADER_OFFSET + H_FLAGS, flags_);
-  EEPROM.update(MK_HEADER_OFFSET + H_RESERVED, 0);
+  EEPROM.update(MK_HEADER_OFFSET + H_TEXT_DELAY, textDelayMs_);
   EEPROM.update(MK_HEADER_OFFSET + H_CRC_LO, (uint8_t)(crc & 0xFF));
   EEPROM.update(MK_HEADER_OFFSET + H_CRC_HI, (uint8_t)(crc >> 8));
   EEPROM.update(MK_HEADER_OFFSET + 14, 0);
@@ -183,6 +184,7 @@ void Profile::writeDefaults() {
 
   brightness_ = MK_LED_DEFAULT_BRIGHTNESS;
   flags_ = 0;
+  textDelayMs_ = 0;
   writeHeaderFields(bodyCrc());
 }
 
@@ -221,6 +223,7 @@ bool Profile::stageCommit() {
     // The staged header carries the tunables; magic and CRC are ours to write.
     brightness_ = stage_[MK_HEADER_OFFSET + H_BRIGHTNESS];
     flags_ = stage_[MK_HEADER_OFFSET + H_FLAGS];
+    textDelayMs_ = stage_[MK_HEADER_OFFSET + H_TEXT_DELAY];
     writeHeaderFields(stageCrc_);
   }
   stageAbort();

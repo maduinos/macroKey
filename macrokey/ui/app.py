@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QSlider,
+    QSpinBox,
     QVBoxLayout,
     QWidget,
 )
@@ -30,7 +31,7 @@ from PySide6.QtWidgets import (
 from .. import __version__
 from ..app import MacroKeyApp
 from ..config import KEY_COUNT
-from ..config.model import EDITABLE_GESTURES
+from ..config.model import EDITABLE_GESTURES, MAX_TEXT_SPEED_MS
 from ..device import DeviceError, candidates
 from ..session import RecordingSession
 from .describe import describe_binding
@@ -171,6 +172,23 @@ class MainWindow(QMainWindow):
         )
         self.brightness_value.setNum(self.brightness.value())
 
+        # Replay is faster than the recording was: consecutive characters are
+        # merged into one run with no timing kept, and the pad retypes them at a
+        # fixed rate. Too fast for anything that has to catch up -- a terminal
+        # still starting, a field that validates as you type -- so it is a knob,
+        # and it lives on the profile because the pad replays without the app.
+        self.text_speed = QSpinBox()
+        self.text_speed.setRange(0, MAX_TEXT_SPEED_MS)
+        self.text_speed.setSuffix(" ms")
+        self.text_speed.setSpecialValueText("default")
+        self.text_speed.setFixedWidth(84)
+        self.text_speed.setValue(self.app.profile.text_speed_ms)
+        self.text_speed.setToolTip(
+            "Pause between characters when the pad replays typed text.\n"
+            "Raise it if the receiving window misses the start."
+        )
+        self.text_speed.valueChanged.connect(self._text_speed_changed)
+
         version = QLabel(f"v{__version__}")
         version.setStyleSheet("color: palette(mid);")
 
@@ -179,8 +197,17 @@ class MainWindow(QMainWindow):
         row.addWidget(self.brightness)
         row.addWidget(self.brightness_value)
         row.addSpacing(12)
+        row.addWidget(QLabel("Typing"))
+        row.addWidget(self.text_speed)
+        row.addSpacing(12)
         row.addWidget(version)
         return bar
+
+    def _text_speed_changed(self, value: int) -> None:
+        if value == self.app.profile.text_speed_ms:
+            return
+        self.app.profile.text_speed_ms = value
+        self._apply("Typing speed " + ("default" if value == 0 else f"{value} ms per character"))
 
     def _build_capture(self) -> QWidget:
         """Where the last recording is listed, step by step.

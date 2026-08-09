@@ -23,30 +23,42 @@ from .recorder.recorder import DEFAULT_STOP_KEY
 from .ui import MissingToolkit
 
 
-def _log_to_file() -> None:
-    """Everything, always, into a file beside the profile.
+def _setup_logging(verbose: bool) -> None:
+    """Everything to the file, only what is worth interrupting to the terminal.
 
-    Not behind --verbose. A recording is made with the window unwatched and the
-    pad under a hand: by the time it is clear something went wrong, whatever
-    would have explained it has scrolled away or was never printed. The one
-    question worth answering afterwards is "what did it actually capture", and
-    it has to already be written down for that to be answerable.
+    The two have different jobs. The file answers "what did it actually
+    capture" afterwards, so it takes everything and is not behind --verbose: a
+    recording is made with the window unwatched and the pad under a hand, and by
+    the time something is obviously wrong the explanation has already happened.
+    The terminal is where someone is reading, and status messages already reach
+    them through the status callback -- logging those too printed every line
+    twice.
+
+    The levels belong on the handlers. Raising the root logger so the file could
+    see everything sent all of it to the terminal as well, which is how the
+    console came to be full of every step of every recording.
     """
     from .config.store import profile_path
+
+    root = logging.getLogger()
+    root.setLevel(logging.DEBUG)
+
+    console = logging.StreamHandler()
+    console.setLevel(logging.DEBUG if verbose else logging.WARNING)
+    console.setFormatter(logging.Formatter("%(levelname)s %(name)s: %(message)s"))
+    root.addHandler(console)
 
     try:
         path = profile_path().parent / "macrokey.log"
         path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-        handler = logging.handlers.RotatingFileHandler(
+        to_file = logging.handlers.RotatingFileHandler(
             path, maxBytes=512_000, backupCount=1, encoding="utf-8"
         )
-        handler.setFormatter(
+        to_file.setLevel(logging.DEBUG)
+        to_file.setFormatter(
             logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
         )
-        handler.setLevel(logging.DEBUG)
-        root = logging.getLogger()
-        root.addHandler(handler)
-        root.setLevel(logging.DEBUG)
+        root.addHandler(to_file)
     except OSError:
         pass  # a log we cannot write is not a reason to refuse to run
 
@@ -88,14 +100,7 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    # Warnings and worse by default. Status messages already reach the terminal
-    # through the status callback, so logging them at INFO as well printed every
-    # line twice -- once bare, once with a level prefix that read like an error.
-    logging.basicConfig(
-        level=logging.DEBUG if args.verbose else logging.WARNING,
-        format="%(levelname)s %(name)s: %(message)s",
-    )
-    _log_to_file()
+    _setup_logging(args.verbose)
 
     command = args.command or "gui"
     handler = {

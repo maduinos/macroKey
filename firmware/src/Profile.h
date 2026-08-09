@@ -91,6 +91,14 @@ class Profile {
   uint8_t brightness() const { return brightness_; }
   void setBrightness(uint8_t value) { brightness_ = value; }
 
+  // Milliseconds between characters of a typed run. Zero means the build-time
+  // default: replay is faster than the recording was -- consecutive characters
+  // are merged into one run with no timing kept -- and this is the knob for
+  // anything that has to catch up.
+  uint8_t textDelayMs() const {
+    return textDelayMs_ != 0 ? textDelayMs_ : MK_MACRO_TEXT_DELAY_MS;
+  }
+
   // Persists the runtime-tunable header fields without touching the body.
   void saveHeader();
 
@@ -140,6 +148,7 @@ class Profile {
 
   uint8_t brightness_ = MK_LED_DEFAULT_BRIGHTNESS;
   uint8_t flags_ = 0;
+  uint8_t textDelayMs_ = 0;  // 0 = MK_MACRO_TEXT_DELAY_MS
 
   uint8_t *stage_ = NULL;
   uint16_t stageBytes_ = 0;

@@ -87,7 +87,37 @@ def test_the_two_layouts_are_the_same_layout(harness) -> None:
         "macro_slots": model.MACRO_SLOTS,
         "profile_size": binary.PROFILE_SIZE,
         "schema": binary.SCHEMA,
+        "text_delay_default": FIRMWARE_TEXT_DELAY_MS,
     }
+
+
+#: What the firmware was built with, and what a profile of 0 falls back to.
+FIRMWARE_TEXT_DELAY_MS = 5
+
+
+def test_the_pad_honours_the_typing_speed_from_the_profile(harness) -> None:
+    """Replay is faster than the recording was -- consecutive characters merge
+    into one run with no timing kept -- so this is the knob for anything that
+    has to catch up. It lives on the profile because the pad replays with the
+    app closed, and zero means whatever the firmware was built with."""
+    profile = sample_profile()
+
+    profile.text_speed_ms = 0
+    lines = run(harness, "profile", blob=binary.encode_profile(profile))
+    assert f"text_delay {FIRMWARE_TEXT_DELAY_MS}" in lines
+
+    profile.text_speed_ms = 40
+    lines = run(harness, "profile", blob=binary.encode_profile(profile))
+    assert "text_delay 40" in lines
+
+
+def test_the_typing_speed_does_not_disturb_the_body(harness) -> None:
+    """It lives in a header byte that was reserved and written as zero, which is
+    why it needed no schema bump. The CRC covers the body, not the header."""
+    slow, quick = sample_profile(), sample_profile()
+    slow.text_speed_ms = 200
+    assert binary.encode_profile(slow)[16:] == binary.encode_profile(quick)[16:]
+    assert run(harness, "profile", blob=binary.encode_profile(slow))[0] == "valid 1"
 
 
 # ------------------------------------------------------------------ profile --
