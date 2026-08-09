@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import logging.handlers
 import socket
 import sys
 import time
@@ -20,6 +21,34 @@ from .device import DeviceError, candidates, pyserial_available
 from .led import default_socket_path
 from .recorder.recorder import DEFAULT_STOP_KEY
 from .ui import MissingToolkit
+
+
+def _log_to_file() -> None:
+    """Everything, always, into a file beside the profile.
+
+    Not behind --verbose. A recording is made with the window unwatched and the
+    pad under a hand: by the time it is clear something went wrong, whatever
+    would have explained it has scrolled away or was never printed. The one
+    question worth answering afterwards is "what did it actually capture", and
+    it has to already be written down for that to be answerable.
+    """
+    from .config.store import profile_path
+
+    try:
+        path = profile_path().parent / "macrokey.log"
+        path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        handler = logging.handlers.RotatingFileHandler(
+            path, maxBytes=512_000, backupCount=1, encoding="utf-8"
+        )
+        handler.setFormatter(
+            logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
+        )
+        handler.setLevel(logging.DEBUG)
+        root = logging.getLogger()
+        root.addHandler(handler)
+        root.setLevel(logging.DEBUG)
+    except OSError:
+        pass  # a log we cannot write is not a reason to refuse to run
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -66,6 +95,7 @@ def main(argv: list[str] | None = None) -> int:
         level=logging.DEBUG if args.verbose else logging.WARNING,
         format="%(levelname)s %(name)s: %(message)s",
     )
+    _log_to_file()
 
     command = args.command or "gui"
     handler = {
