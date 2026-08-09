@@ -529,11 +529,25 @@ class MainWindow(QMainWindow):
         nothing to look at, so the only move was to guess -- and "it moved on
         its own" is not a thing anyone can debug from a status bar.
         """
-        steps = self.app.recorder.summary(self.session.last_steps)
         where = outcome.where or outcome.error or "nothing was captured"
         self.capture_title.setText(f"Key {outcome.key + 1} {outcome.gesture} - {where}")
+
+        # What will actually run, read back out of the profile -- not the raw
+        # capture. The two are not the same list and saying so matters: a macro
+        # that touches the pointer gains a step that sends it to the corner
+        # first, long text becomes one typed run, a long move becomes several.
+        # Showing the capture alone meant the window described something the
+        # pad was not going to do.
+        action = self.app.profile.action(outcome.key, outcome.gesture)
+        if action.kind == "sequence" and action.slot < len(self.app.profile.device_macros):
+            lines = [step.describe() for step in self.app.profile.device_macros[action.slot]]
+        elif action.kind == "host":
+            lines = self.app.recorder.summary(self.session.last_steps)
+        else:
+            lines = [action.describe()]
+
         self.capture_list.clear()
-        self.capture_list.addItems(steps or ["(nothing)"])
+        self.capture_list.addItems(lines or ["(nothing)"])
         self.capture_box.setVisible(True)
 
     def _push(self) -> None:
