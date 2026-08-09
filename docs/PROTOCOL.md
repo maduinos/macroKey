@@ -46,7 +46,7 @@ HELLO proto=1 fw=0.3.0 board=leonardo keys=8 leds=8 layers=4 uid=A1B2C3D4
 ```
 EV t=key    k=<0..7> g=<tap|double|hold|holdend> l=<layer> ms=<millis>
 EV t=host   tok=<0..255> k=<0..7> l=<layer>
-EV t=record k=<0..7> ms=<millis>
+EV t=record k=<0..7> g=<tap|double> ms=<millis>
 ```
 
 - `t=key`는 **알림용**입니다. 장치는 이미 HID를 보냈고, 호스트는 로깅·앱별 레이어 전환·
@@ -55,6 +55,14 @@ EV t=record k=<0..7> ms=<millis>
   액션이 실행되기를 기다립니다. 호스트가 없으면 아무 일도 일어나지 않습니다.
 - `t=record`는 **키 하나를 3초(`MK_RECORD_HOLD_MS`) 동안 단독으로 눌렀다**는 보고입니다.
   이것이 녹음의 유일한 진입점입니다.
+
+  `g`는 **어느 슬롯을 프로그래밍하는지**입니다. 그냥 홀드하면 `tap`, 직전 릴리즈로부터
+  `MK_DOUBLE_TAP_MS` 안에 다시 눌러 홀드하면(= 더블클릭 후 홀드) `double`입니다. 이
+  판정은 릴리즈와 다음 프레스 사이의 간격만 보고 하며, 탭 지연(`PH_PENDING_TAP`)과는
+  무관합니다 — 그쪽은 *이미 더블 바인딩이 있는 키*에서만 켜지는데, 녹음이 필요한 건
+  정확히 더블 슬롯이 비어 있는 키이기 때문입니다. 지연 비용도 없습니다.
+
+  `g`가 없는 구형 펌웨어는 `tap`으로 읽습니다.
 
   장치는 녹음 상태를 **전혀 갖지 않습니다.** 이 이벤트가 녹음 시작인지 종료인지는 호스트가
   정합니다. 양쪽이 상태를 나눠 가지면 재연결 후 서로 다른 모드에 있다고 믿게 되고, 그건

@@ -54,8 +54,8 @@ static void reportHost(uint8_t token, uint8_t key, uint8_t layer) {
   gSerial.sendHostAction(token, key, layer);
 }
 
-static void reportRecordRequest(uint8_t key) {
-  gSerial.sendRecordRequest(key);
+static void reportRecordRequest(uint8_t key, uint8_t gesture) {
+  gSerial.sendRecordRequest(key, gesture);
 }
 
 // Called from inside a replaying macro. A macro runs in loop(), so without this

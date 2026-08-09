@@ -76,9 +76,11 @@ void SerialProtocol::sendState() {
   Serial.println(millis());
 }
 
-void SerialProtocol::sendRecordRequest(uint8_t key) {
+void SerialProtocol::sendRecordRequest(uint8_t key, uint8_t gesture) {
   Serial.print(F("EV t=record k="));
   Serial.print(key);
+  Serial.print(F(" g="));
+  Serial.print(gestureName(gesture));
   Serial.print(F(" ms="));
   Serial.println(millis());
 }

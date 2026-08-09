@@ -66,7 +66,7 @@ class MacroKeyApp:
 
         # Record requests are handled here, one at a time, and never on the
         # thread that delivered them. See `_record_worker`.
-        self._record_queue: queue.Queue[int] = queue.Queue()
+        self._record_queue: queue.Queue[tuple[int, str]] = queue.Queue()
         self._record_thread: threading.Thread | None = None
 
     # ------------------------------------------------------------ observers --
@@ -143,7 +143,7 @@ class MacroKeyApp:
                 # timed out after two seconds, so recording started with no red
                 # pixel and finishing ground through twenty timeouts before
                 # failing to save.
-                self._queue_record_request(event.key)
+                self._queue_record_request(event.key, event.gesture)
 
         for callback in list(self._event_callbacks):
             try:
@@ -151,23 +151,23 @@ class MacroKeyApp:
             except Exception:  # noqa: BLE001
                 log.exception("event callback raised")
 
-    def request_record(self, key: int) -> None:
+    def request_record(self, key: int, gesture: str = "tap") -> None:
         """Asks the session to start or finish recording into `key`.
 
         Public because the session's own watchdog needs it: a recording that has
         run too long has to be finished, and that must happen on the worker like
         every other request rather than on whatever thread noticed.
         """
-        self._queue_record_request(key)
+        self._queue_record_request(key, gesture)
 
-    def _queue_record_request(self, key: int) -> None:
+    def _queue_record_request(self, key: int, gesture: str = "tap") -> None:
         """Hands a record request to the worker, starting it on first use."""
         if self._record_thread is None or not self._record_thread.is_alive():
             self._record_thread = threading.Thread(
                 target=self._record_worker, name="macrokey-record", daemon=True
             )
             self._record_thread.start()
-        self._record_queue.put(key)
+        self._record_queue.put((key, gesture))
 
     def _record_worker(self) -> None:
         """Runs record requests in order, off the reader thread.
@@ -177,12 +177,12 @@ class MacroKeyApp:
         finish overtake the start it belongs to.
         """
         while True:
-            key = self._record_queue.get()
+            key, gesture = self._record_queue.get()
             session = self.session
             if session is None:
                 continue
             try:
-                session.handle_request(key)
+                session.handle_request(key, gesture)
             except Exception:  # noqa: BLE001 - a bad recording must not end the thread
                 log.exception("record request for key %d failed", key + 1)
                 self.status(f"Key {key + 1}: recording failed, see the log")

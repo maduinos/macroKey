@@ -43,6 +43,14 @@ void ButtonInput::onPressEdge(uint8_t key, uint32_t now) {
   pressedMask_ |= (uint8_t)(1 << key);
   lastPressEdgeAt_ = now;
 
+  // Was this press the second of a quick pair? Answered from the gap alone,
+  // deliberately separate from the PH_PENDING_TAP path below: that one only
+  // arms for keys that already have a double binding, and recording into the
+  // double slot has to work on a key whose double slot is empty. Reading the
+  // gap costs nothing and changes no timing.
+  state.secondPress =
+      state.hasReleased && (uint32_t)(now - state.releasedAt) < MK_DOUBLE_TAP_MS;
+
   if (state.phase == PH_PENDING_TAP) {
     // Second press inside the window: this is a double tap, and the deferred
     // single tap is discarded rather than emitted first.
@@ -60,6 +68,10 @@ void ButtonInput::onPressEdge(uint8_t key, uint32_t now) {
 void ButtonInput::onReleaseEdge(uint8_t key, uint32_t now) {
   KeyState &state = keys_[key];
   pressedMask_ &= (uint8_t)~(1 << key);
+  // Every release, not just the ones that defer a tap: the next press reads
+  // this to decide whether it is the second of a pair.
+  state.releasedAt = now;
+  state.hasReleased = true;
 
   if (state.suppressed) {
     state.suppressed = false;
@@ -74,8 +86,7 @@ void ButtonInput::onReleaseEdge(uint8_t key, uint32_t now) {
     push(key, GESTURE_HOLD, true);
     state.phase = PH_IDLE;
   } else if (doubleTapMask_ & (1 << key)) {
-    state.phase = PH_PENDING_TAP;
-    state.releasedAt = now;
+    state.phase = PH_PENDING_TAP;  // releasedAt was set above
   } else {
     push(key, GESTURE_TAP, false);
     state.phase = PH_IDLE;
@@ -114,6 +125,11 @@ void ButtonInput::update(uint32_t now) {
         now - state.pressedAt >= MK_RECORD_HOLD_MS) {
       state.recordFired = true;
       recordRequest_ = (int8_t)key;
+      // Tap-tap-hold programs the double slot, plain hold programs the tap
+      // slot. Without this the pad could only ever record into tap, and a
+      // double-tap-and-hold -- which already reached here -- stored the macro
+      // on the tap slot without saying so.
+      recordGesture_ = state.secondPress ? GESTURE_DOUBLE : GESTURE_TAP;
     }
 
     if (state.phase == PH_PENDING_TAP && now - state.releasedAt >= MK_DOUBLE_TAP_MS) {

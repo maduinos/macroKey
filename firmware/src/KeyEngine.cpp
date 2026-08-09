@@ -257,7 +257,7 @@ void KeyEngine::update(uint32_t now) {
     // The key is still down. Suppressing it stops the release from firing the
     // binding as well: the person is programming the key, not using it.
     input_->suppressUntilRelease((uint8_t)(1 << recordKey));
-    onRecord_((uint8_t)recordKey);
+    onRecord_((uint8_t)recordKey, input_->recordGesture());
   }
 
   if (!hidEnabled_ && now >= MK_BOOT_GRACE_MS) hidEnabled_ = true;
