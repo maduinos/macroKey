@@ -49,6 +49,14 @@ class FakeApp:
         self._where = behaviour.get("where", "on the keypad: a")
         self.requested: list[int] = []
 
+    #: The session writes every captured step to the log, so it needs this.
+    class recorder:  # noqa: N801 - stands in for the real Recorder
+        @staticmethod
+        def summary(steps):
+            from macrokey.recorder.normalize import summarize
+
+            return summarize(steps)
+
     def status(self, message: str) -> None:
         self.messages.append(message)
 

@@ -7,6 +7,8 @@ replay ends by clicking wherever the Stop button used to be.
 
 from __future__ import annotations
 
+import time
+
 import pytest
 
 from macrokey.recorder.events import KEY_DOWN, MOUSE_CLICK, SCROLL, RawEvent
@@ -152,6 +154,41 @@ def test_a_press_and_its_release_are_one_click_step(recorder) -> None:
 
     steps = normalize(recorder._events)
     assert steps == [{"type": "mouse_button", "params": {"button": "left", "mode": "click"}}]
+
+
+# ------------------------------------------------------- the self-echo blanket --
+
+
+def test_evdev_keeps_what_was_typed_right_after_a_pad_event() -> None:
+    """The pad is a USB keyboard, so it used to be recorded along with
+    everything else. The defence was to drop *all* input for 150 ms after any
+    pad event -- and evdev skips the pad's nodes outright now, so the only
+    thing that blanket could still throw away was what was really being typed.
+    """
+    device = Recorder()
+    device.backend = "evdev"
+    device.note_device_key()
+    device._record(RawEvent(kind=KEY_DOWN, token="a", char="a", at=time.monotonic()))
+    assert [event.token for event in device._events] == ["a"]
+
+
+def test_pynput_still_needs_the_blanket() -> None:
+    """It reports keystrokes with no idea which device made them, so the pad's
+    own output is indistinguishable from typing and this is the only defence."""
+    device = Recorder()
+    device.backend = "pynput"
+    device.note_device_key()
+    device._record(RawEvent(kind=KEY_DOWN, token="a", char="a", at=time.monotonic()))
+    assert device._events == []
+
+
+def test_the_backend_is_named_before_capture_starts() -> None:
+    """`_record` asks which backend it is on. Named after the reader thread was
+    started, the first events of every recording were judged by the wrong rule."""
+    import inspect
+
+    source = inspect.getsource(Recorder.start)
+    assert source.index('self.backend = "evdev"') < source.index("self._evdev.start()")
 
 
 # ------------------------------------------------------------------ stop key --

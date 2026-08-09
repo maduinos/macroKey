@@ -179,6 +179,14 @@ class RecordingSession:
         self._watch_stop.set()
         steps = self.app.stop_recording()
 
+        # Every step, written out, every time. A recording is authored blind --
+        # there is no screen on the pad and the window need not even be open --
+        # so the only way to see that what was captured is not what was done is
+        # to be told. "It moved on its own" is what this is for: the answer is
+        # in here, and without it the only move is to guess.
+        for line in self.app.recorder.summary(steps):
+            log.info("  captured: %s", line)
+
         if not steps:
             self.last_outcome = RecordOutcome(key, 0, "", False, error="nothing was captured")
             self.app.status(
