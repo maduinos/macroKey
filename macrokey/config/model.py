@@ -7,7 +7,7 @@ depends on both agreeing and the device rejects a blob of the wrong size.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field, fields, replace
 from typing import Any
 
 from . import keycodes
@@ -263,17 +263,24 @@ class Action:
         return "-"
 
     def to_dict(self) -> dict[str, Any]:
-        """Emits only the fields that differ from the defaults."""
+        """Emits only the fields that differ from the defaults.
+
+        The defaults are read off the dataclass rather than by building an
+        instance to compare against. Building one meant constructing an action
+        that was deliberately incomplete -- `Action(kind="text")` carries no
+        text -- and `__post_init__` refuses exactly that. So saving any
+        recording that contained typed words raised "a text action needs text"
+        from the one method whose job is to write it down.
+        """
         if self.is_empty:
             return {"kind": "none"}
-        blank = Action(kind=self.kind)
         data: dict[str, Any] = {"kind": self.kind}
-        for name in self.__dataclass_fields__:
-            if name == "kind":
+        for field_ in fields(self):
+            if field_.name == "kind":
                 continue
-            value = getattr(self, name)
-            if value != getattr(blank, name):
-                data[name] = value
+            value = getattr(self, field_.name)
+            if value != field_.default:
+                data[field_.name] = value
         return data
 
     @classmethod
