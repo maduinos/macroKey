@@ -146,6 +146,18 @@ static int modeButtons() {
   gPinLow[TEST_PIN] = true; tick(500);
   report("short_hold");
 
+  // The same gesture on a key whose double slot is already full. That arms the
+  // tap-deferral mask, which is a different path through onPressEdge -- and it
+  // is the ordinary case, because correcting a double macro means doing this.
+  reset();
+  gInput.setDoubleTapMask(1 << TEST_KEY);
+  tick(400);
+  gPinLow[TEST_PIN] = true; tick(settle);
+  gPinLow[TEST_PIN] = false; tick(settle);
+  gPinLow[TEST_PIN] = true; tick(MK_RECORD_HOLD_MS + settle);
+  report("tap_then_hold_when_double_is_bound");
+  gInput.setDoubleTapMask(0);
+
   // A first press before anything has ever been released. `releasedAt` starts
   // at zero, which read as "released at uptime 0": for the first double-tap
   // window after boot a plain hold programmed the double slot.
@@ -169,8 +181,16 @@ static int modeReplay(int argc, char **argv) {
   gClock = MK_BOOT_GRACE_MS + 1;   // past the window where HID is suppressed
   gEngine.update(gClock);
 
+  // Held down for the whole replay. A macro blocks loop(), and the scan has to
+  // keep running through it: the first tap of a double-record gesture fires the
+  // key's macro, and if the scan stopped there the second press would be
+  // timestamped after it finished -- seconds past the pair window, so recording
+  // into the double slot was impossible on any key that already had one.
+  gPinLow[MK_KEY_PINS[0]] = true;
+
   Action run = {ACT_SEQUENCE, slot, 0, 0};
   gEngine.dispatch(run, 0, gClock);
+  printf("scanned-during-replay %d\n", gInput.pressedMask() != 0 ? 1 : 0);
   return 0;
 }
 

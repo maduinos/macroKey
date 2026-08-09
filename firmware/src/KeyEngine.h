@@ -39,6 +39,13 @@ class KeyEngine {
   void setRecordCallback(MkRecordRequestFn onRecord) { onRecord_ = onRecord; }
   void setMacroYield(MkMacroYieldFn onYield) { onYield_ = onYield; }
 
+  // The stored profile changed under us. Which keys have a double binding is
+  // the one thing the engine caches, and a recording is exactly what changes
+  // it: without this a freshly recorded double macro never fired, because the
+  // key was still in the "no double, report the tap immediately" set until the
+  // pad was next unplugged.
+  void noteProfileChanged() { doubleTapMaskReady_ = false; }
+
   void setReportCallbacks(MkKeyReportFn key, MkHostActionFn host);
 
   // True once the boot grace window has passed and HID output is allowed.
@@ -55,8 +62,10 @@ class KeyEngine {
   void runMacro(uint8_t slot, uint32_t now);
   // Types one text run. Returns the record index just past it.
   uint8_t runText(uint16_t base, uint8_t header, uint8_t length, uint8_t count);
-  // delay(), but the pixel keeps moving.
+  // delay(), but the pad stays awake.
   void macroWait(uint16_t milliseconds);
+  // One pass of everything that must keep running while a macro blocks loop().
+  void macroPump();
 
   Profile *profile_ = NULL;
   ButtonInput *input_ = NULL;

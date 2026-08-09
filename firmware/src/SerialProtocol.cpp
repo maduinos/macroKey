@@ -371,6 +371,7 @@ void SerialProtocol::cmdProfile(uint32_t now) {
 
   if (strcmp(sub_, "commit") == 0) {
     if (profile_->stageCommit()) {
+      engine_->noteProfileChanged();
       sendOk();
     } else {
       sendErr("crc");
