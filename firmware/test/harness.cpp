@@ -64,6 +64,7 @@ static int modeLayout() {
   printf("macro_slots %u\n", MK_MACRO_SLOTS);
   printf("profile_size %u\n", MK_PROFILE_SIZE);
   printf("schema %u\n", MK_PROFILE_SCHEMA);
+  printf("text_delay_default %u\n", MK_MACRO_TEXT_DELAY_MS);
   return 0;
 }
 
@@ -72,6 +73,7 @@ static int modeLayout() {
 static int modeProfile() {
   if (!readBlob()) return 2;
   printf("valid %d\n", gProfile.begin() ? 1 : 0);
+  printf("text_delay %u\n", gProfile.textDelayMs());
 
   for (uint8_t key = 0; key < MK_KEY_COUNT; key++) {
     for (uint8_t gesture = 0; gesture < MK_GESTURE_COUNT; gesture++) {

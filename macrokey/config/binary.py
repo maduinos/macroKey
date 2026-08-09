@@ -14,6 +14,7 @@ from .model import (
     MACRO_MAX_RECORDS,
     MACRO_RECORD_CAPACITY,
     MACRO_SLOTS,
+    MAX_TEXT_SPEED_MS,
     Action,
     KeySlot,
     Profile,
@@ -100,6 +101,10 @@ def encode_profile(profile: Profile) -> bytes:
     blob[8] = profile.brightness & 0xFF
     blob[9] = 0
     blob[10] = 0
+    # Byte 11 was reserved and written as zero, so putting the typing speed here
+    # needs no schema bump: zero still means "whatever the firmware was built
+    # with". The CRC covers the body from byte 16, not the header.
+    blob[11] = max(0, min(MAX_TEXT_SPEED_MS, profile.text_speed_ms))
 
     for key_index, slot in enumerate(profile.keys[:KEY_COUNT]):
         for gesture_index, gesture in enumerate(KEYMAP_GESTURES):
@@ -179,6 +184,7 @@ def decode_profile(blob: bytes, *, name: str = "device") -> Profile:
         name=name,
         brightness=blob[8],
         resting_color=bytes(blob[PALETTE_OFFSET : PALETTE_OFFSET + 3]).hex(),
+        text_speed_ms=blob[11],
         keys=keys,
         device_macros=macros,
     )

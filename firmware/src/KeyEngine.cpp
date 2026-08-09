@@ -140,7 +140,7 @@ uint8_t KeyEngine::runText(uint16_t base, uint8_t header, uint8_t length, uint8_
       uint8_t index = (uint8_t)(record * 3 + offset);
       if (index >= length) break;
       mkTypeChar(bytes[offset]);
-      macroWait(MK_MACRO_TEXT_DELAY_MS);
+      macroWait(profile_->textDelayMs());
     }
   }
   return next;

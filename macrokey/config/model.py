@@ -46,6 +46,18 @@ EDITABLE_GESTURES = ("tap", "double")
 
 SCHEMA_VERSION = 2
 
+#: Milliseconds the pad waits between characters of a typed run. 0 means "use
+#: whatever the firmware was built with" (MK_MACRO_TEXT_DELAY_MS, 5 ms).
+#:
+#: Replay is faster than the recording was, and this is the knob. Consecutive
+#: characters are merged into one text run with no timing kept -- reproducing
+#: human typing speed is almost never wanted -- so the pad retypes them at a
+#: fixed rate. That is too fast for anything that has to catch up: a terminal
+#: still starting, a field that validates as you type.
+DEFAULT_TEXT_SPEED_MS = 0
+#: The pad stores this in one byte.
+MAX_TEXT_SPEED_MS = 255
+
 #: What the pixel rests at, as RRGGBB. Must match the firmware's writeDefaults.
 #: A dim blue-grey rather than off, because off reads as unplugged.
 DEFAULT_RESTING_COLOR = "3c5073"  # (60, 80, 115)
@@ -365,6 +377,8 @@ class Profile:
     brightness: int = 64
     #: What the pixel rests at when nothing is happening, as RRGGBB.
     resting_color: str = DEFAULT_RESTING_COLOR
+    #: Milliseconds between characters when the pad replays a typed run.
+    text_speed_ms: int = DEFAULT_TEXT_SPEED_MS
     keys: list[KeySlot] = field(default_factory=list)
     # No chords. They were eight EEPROM slots the editor never offered a way to
     # fill and the defaults left empty, so the region only ever held zeroes --
@@ -480,6 +494,7 @@ class Profile:
             "name": self.name,
             "brightness": self.brightness,
             "resting_color": self.resting_color,
+            "text_speed_ms": self.text_speed_ms,
             "keys": [key.to_dict() for key in self.keys],
             "host_actions": {
                 str(token): action.to_dict() for token, action in sorted(self.host_actions.items())
@@ -496,6 +511,9 @@ class Profile:
             name=str(data.get("name", "default")),
             brightness=_clamp(int(data.get("brightness", 64)), 0, 255),
             resting_color=str(data.get("resting_color", DEFAULT_RESTING_COLOR)),
+            text_speed_ms=_clamp(
+                int(data.get("text_speed_ms", DEFAULT_TEXT_SPEED_MS)), 0, MAX_TEXT_SPEED_MS
+            ),
             keys=_keys_from_dict(data),
             host_actions={
                 int(token): HostAction.from_dict(value)
