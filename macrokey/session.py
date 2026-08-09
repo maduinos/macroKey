@@ -251,11 +251,33 @@ class RecordingSession:
             return
 
         self.app.status(f"Key {key + 1} ({self.active_gesture}): {where}")
+        # The captured steps were logged above; this is what the pad will
+        # actually do with them, which is not the same list. A macro that
+        # touches the pointer gains a step that sends it to the corner first.
+        if on_device:
+            for line in self._stored_steps(key):
+                log.info("  will run: %s", line)
         # push_profile already flashes its own acknowledgement; this replaces it
         # with one that says *where* the macro ended up, which is the part that
         # decides whether the pad works with this app closed.
         self._flash(SAVED_ON_DEVICE_COLOR if on_device else SAVED_ON_HOST_COLOR)
         self._on_change()
+
+    def _stored_steps(self, key: int) -> list[str]:
+        """What the pad will actually do, read back out of the profile.
+
+        Not the captured steps: a macro that touches the pointer gains a step
+        that sends it to the corner first, long text becomes one typed run, and
+        a long move becomes several. Reporting the capture as though it were the
+        macro described something the pad was not going to do.
+        """
+        profile = getattr(self.app, "profile", None)
+        if profile is None:
+            return []
+        action = profile.action(key, self.active_gesture)
+        if action.kind != "sequence" or action.slot >= len(profile.device_macros):
+            return []
+        return [step.describe() for step in profile.device_macros[action.slot]]
 
     # ---------------------------------------------------------------------- LED --
 
