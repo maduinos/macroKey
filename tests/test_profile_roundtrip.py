@@ -11,9 +11,8 @@ import pytest
 
 from macrokey.config import binary
 from macrokey.config.model import (
+    DEFAULT_RESTING_COLOR,
     KEY_COUNT,
-    LAYER_COLORS,
-    LAYER_COUNT,
     Action,
     ProfileError,
     default_profile,
@@ -29,13 +28,12 @@ def test_encoded_profile_is_the_size_the_firmware_expects() -> None:
 def test_round_trip_preserves_every_bound_slot() -> None:
     profile = default_profile()
     restored = binary.decode_profile(binary.encode_profile(profile))
-    for layer in range(LAYER_COUNT):
-        for key in range(KEY_COUNT):
-            for gesture in GESTURES:
-                before = profile.action(layer, key, gesture)
-                after = restored.action(layer, key, gesture)
-                assert after.kind == before.kind, f"L{layer} key{key} {gesture}"
-                assert after.describe() == before.describe()
+    for key in range(KEY_COUNT):
+        for gesture in GESTURES:
+            before = profile.action(key, gesture)
+            after = restored.action(key, gesture)
+            assert after.kind == before.kind, f"key {key + 1} {gesture}"
+            assert after.describe() == before.describe()
 
 
 def test_round_trip_is_byte_stable() -> None:
@@ -45,9 +43,15 @@ def test_round_trip_is_byte_stable() -> None:
     assert once == twice
 
 
-def test_layer_colours_round_trip() -> None:
+def test_the_resting_colour_round_trips() -> None:
     restored = binary.decode_profile(binary.encode_profile(default_profile()))
-    assert [layer.keys[0].color for layer in restored.layers] == list(LAYER_COLORS)
+    assert restored.resting_color == DEFAULT_RESTING_COLOR
+
+
+def test_a_chosen_resting_colour_round_trips() -> None:
+    profile = default_profile()
+    profile.resting_color = "ff8800"
+    assert binary.decode_profile(binary.encode_profile(profile)).resting_color == "ff8800"
 
 
 def test_brightness_round_trips() -> None:
@@ -59,59 +63,16 @@ def test_brightness_round_trips() -> None:
 # --------------------------------------------------------------------- defaults --
 
 
-def test_every_layer_above_the_base_can_be_reached() -> None:
-    """A layer with no way into it is a layer that does not exist.
-
-    Layers 2 and 3 shipped with colours defined and nothing bound to enter them.
-    """
-    profile = default_profile()
-    reachable = {
-        profile.action(layer, key, gesture).layer
-        for layer in range(LAYER_COUNT)
-        for key in range(KEY_COUNT)
-        for gesture in GESTURES
-        if profile.action(layer, key, gesture).kind in ("layer_momentary", "layer_toggle")
-    }
-    assert reachable == set(range(1, LAYER_COUNT))
-
-
-def test_base_layer_binds_every_key_on_tap() -> None:
+def test_every_key_is_bound_on_tap() -> None:
     profile = default_profile()
     for key in range(KEY_COUNT):
-        assert profile.action(0, key, "tap").kind == "key"
+        assert profile.action(key, "tap").kind == "key"
 
 
 def test_no_double_tap_is_bound_by_default() -> None:
     """Arming double-tap on a key delays every tap of it, so the default is none."""
     profile = default_profile()
-    bound = [
-        (layer, key)
-        for layer in range(LAYER_COUNT)
-        for key in range(KEY_COUNT)
-        if profile.action(layer, key, "double").kind != "none"
-    ]
-    assert bound == []
-
-
-def test_layer_colour_count_matches_layer_count() -> None:
-    assert len(LAYER_COLORS) == LAYER_COUNT
-
-
-def test_base_layer_is_a_valid_colour() -> None:
-    for value in LAYER_COLORS:
-        assert len(value) == 6
-        int(value, 16)  # raises if it is not hex
-
-
-# ----------------------------------------------------------------------- limits --
-
-
-def test_action_rejects_a_layer_outside_the_range() -> None:
-    action = Action(kind="layer_momentary", layer=99)
-    # Encoding clamps rather than raising, so the device can never be told to
-    # switch to a layer it does not have.
-    _, value, _, _ = action.encode()
-    assert value == LAYER_COUNT - 1
+    assert [key for key in range(KEY_COUNT) if profile.action(key, "double").kind != "none"] == []
 
 
 @pytest.mark.parametrize("hotkey", ["ctrl+alt+shift+1", "ctrl+c", "f5", "a"])
@@ -145,36 +106,36 @@ def test_binding_hold_is_refused_outright() -> None:
     things -- so the write itself is what has to fail."""
     profile = default_profile()
     with pytest.raises(ProfileError, match="reserved"):
-        profile.set_action(0, 3, "hold", Action(kind="key", hotkey="ctrl+alt+t"))
+        profile.set_action(3, "hold", Action(kind="key", hotkey="ctrl+alt+t"))
 
 
 def test_clearing_hold_is_still_allowed() -> None:
     """Sanitising an old profile has to be able to write the empty action."""
     profile = default_profile()
-    profile.set_action(0, 3, "hold", Action())
-    assert profile.action(0, 3, "hold").kind == "none"
+    profile.set_action(3, "hold", Action())
+    assert profile.action(3, "hold").kind == "none"
 
 
 def test_hold_has_no_room_in_the_keymap_at_all() -> None:
     """It is not stored, so a device blob cannot carry one back."""
     restored = binary.decode_profile(binary.encode_profile(default_profile()))
-    assert all(restored.action(0, key, "hold").kind == "none" for key in range(KEY_COUNT))
+    assert all(restored.action(key, "hold").kind == "none" for key in range(KEY_COUNT))
 
 
 def test_tap_and_double_survive_the_same_path() -> None:
     profile = default_profile()
-    profile.set_action(0, 2, "tap", Action(kind="key", hotkey="ctrl+c"))
-    profile.set_action(0, 2, "double", Action(kind="key", hotkey="ctrl+v"))
+    profile.set_action(2, "tap", Action(kind="key", hotkey="ctrl+c"))
+    profile.set_action(2, "double", Action(kind="key", hotkey="ctrl+v"))
 
     restored = binary.decode_profile(binary.encode_profile(profile))
-    assert restored.action(0, 2, "tap").hotkey == "ctrl+c"
-    assert restored.action(0, 2, "double").hotkey == "ctrl+v"
+    assert restored.action(2, "tap").hotkey == "ctrl+c"
+    assert restored.action(2, "double").hotkey == "ctrl+v"
 
 
 def test_no_key_ships_with_a_hold_binding() -> None:
     profile = default_profile()
     for key in range(KEY_COUNT):
-        assert profile.action(0, key, "hold").kind == "none"
+        assert profile.action(key, "hold").kind == "none"
 
 
 # ------------------------------------------------ the macro region, in full --

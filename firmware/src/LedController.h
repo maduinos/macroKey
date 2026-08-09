@@ -1,7 +1,7 @@
 // WS2812 output: composition, power limiting and the host watchdog.
 //
-// Four sources are layered, highest priority first:
-//   1. key press flash   2. layer tint   3. host ambient   4. profile scene
+// Three sources are composited, highest priority first:
+//   1. key press flash   2. host ambient   3. profile scene
 #pragma once
 
 #include <Adafruit_NeoPixel.h>
@@ -16,7 +16,6 @@ class LedController {
   void begin(Profile *profile);
   void update(uint32_t now);
 
-  void setActiveLayer(uint8_t layer) { activeLayer_ = layer; }
   void setBrightness(uint8_t value) { brightness_ = value; }
   uint8_t brightness() const { return brightness_; }
 
@@ -27,10 +26,10 @@ class LedController {
   void notePress(uint8_t key, uint32_t now);
   //: The hold threshold was crossed while the key is still down.
   void noteHold(uint8_t key, uint32_t now);
-  //: The key was received but this layer has nothing bound to it.
+  //: The key was received but nothing is bound to it.
   void noteUnbound(uint8_t key, uint32_t now);
 
-  // ---- host controlled ambient layer --------------------------------------
+  // ---- host controlled ambient --------------------------------------------
   // `timeoutMs` is how long the host promises to be worth waiting for. The
   // watchdog exists so a host that dies cannot freeze the pixel on its last
   // colour, but a host that is sitting on a colour picker is silent for far
@@ -91,7 +90,6 @@ class LedController {
   uint32_t lastRenderAt_ = 0;
   uint32_t lastHostAt_ = 0;
   uint16_t hostTimeoutMs_ = MK_LED_HOST_TIMEOUT_MS;
-  uint8_t activeLayer_ = 0;
   uint8_t brightness_ = MK_LED_DEFAULT_BRIGHTNESS;
   bool hostMode_ = false;
   bool dirty_ = true;

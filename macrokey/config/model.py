@@ -16,10 +16,10 @@ KEY_COUNT = 8
 # One WS2812B on the pad. Kept separate from KEY_COUNT because the two are
 # genuinely independent: the palette is per pixel, the keymap is per key.
 LED_COUNT = 1
-# One layer. Eight keys that each do one thing is the product; layers added a
+# No layers. Eight keys that each do one thing is the product; layers added a
 # mode that was invisible and a way in that had to be remembered, and the keymap
-# they cost is EEPROM that macro steps use instead.
-LAYER_COUNT = 1
+# they cost is EEPROM that macro records use instead. What was left afterwards
+# was a `layer` argument on almost every call that was always 0.
 MACRO_SLOTS = 16
 #: Three-byte records the macro region holds across every slot: the ATmega32u4's
 #: whole 1 KB EEPROM, less the header, keymap and palette, less one count byte
@@ -46,6 +46,10 @@ EDITABLE_GESTURES = ("tap", "double")
 
 SCHEMA_VERSION = 2
 
+#: What the pixel rests at, as RRGGBB. Must match the firmware's writeDefaults.
+#: A dim blue-grey rather than off, because off reads as unplugged.
+DEFAULT_RESTING_COLOR = "3c5073"  # (60, 80, 115)
+
 # Action type ids, shared with ActionTypes.h.
 ACTION_TYPE_IDS: dict[str, int] = {
     "none": 0,
@@ -54,8 +58,9 @@ ACTION_TYPE_IDS: dict[str, int] = {
     "mouse_button": 3,
     "mouse_move": 4,
     "mouse_wheel": 5,
-    "layer_momentary": 6,
-    "layer_toggle": 7,
+    # 6 and 7 were layer_momentary and layer_toggle. The numbers stay retired
+    # rather than being reused: an id is a wire format, and shuffling the ones
+    # above them would turn every stored macro into a different macro.
     "sequence": 8,
     "host": 9,
     "led_scene": 10,
@@ -102,7 +107,6 @@ class Action:
     dx: int = 0            # kind="mouse_move"
     dy: int = 0
     delta: int = 0         # kind="mouse_wheel"
-    layer: int = 0         # kind="layer_momentary" / "layer_toggle"
     slot: int = 0          # kind="sequence"
     token: int = 0         # kind="host"
     scene: int = 0         # kind="led_scene"
@@ -181,8 +185,6 @@ class Action:
             return type_id, _clamp(self.dx, -127, 127) & 0xFF, _clamp(self.dy, -127, 127) & 0xFF, 0
         if self.kind == "mouse_wheel":
             return type_id, _clamp(self.delta, -127, 127) & 0xFF, 0, 0
-        if self.kind in ("layer_momentary", "layer_toggle"):
-            return type_id, _clamp(self.layer, 0, LAYER_COUNT - 1), 0, 0
         if self.kind == "sequence":
             return type_id, _clamp(self.slot, 0, MACRO_SLOTS - 1), 0, 0
         if self.kind == "host":
@@ -214,8 +216,6 @@ class Action:
             return cls(kind="mouse_move", dx=_signed(a), dy=_signed(b))
         if kind == "mouse_wheel":
             return cls(kind="mouse_wheel", delta=_signed(a))
-        if kind in ("layer_momentary", "layer_toggle"):
-            return cls(kind=kind, layer=a)
         if kind == "sequence":
             return cls(kind="sequence", slot=a)
         if kind == "host":
@@ -243,10 +243,6 @@ class Action:
             return f"mouse move {self.dx:+d},{self.dy:+d}"
         if self.kind == "mouse_wheel":
             return f"wheel {self.delta:+d}"
-        if self.kind == "layer_momentary":
-            return f"layer {self.layer} while held"
-        if self.kind == "layer_toggle":
-            return f"toggle layer {self.layer}"
         if self.kind == "sequence":
             return f"device macro #{self.slot}"
         if self.kind == "host":
@@ -291,7 +287,6 @@ class KeySlot:
     tap: Action = field(default_factory=Action)
     double: Action = field(default_factory=Action)
     hold: Action = field(default_factory=Action)
-    color: str = "001014"
 
     def gesture(self, name: str) -> Action:
         return getattr(self, name)
@@ -304,7 +299,6 @@ class KeySlot:
             "tap": self.tap.to_dict(),
             "double": self.double.to_dict(),
             "hold": self.hold.to_dict(),
-            "color": self.color,
         }
 
     @classmethod
@@ -313,23 +307,7 @@ class KeySlot:
             tap=Action.from_dict(data.get("tap")),
             double=Action.from_dict(data.get("double")),
             hold=Action.from_dict(data.get("hold")),
-            color=str(data.get("color", "001014")),
         )
-
-
-@dataclass
-class Layer:
-    name: str = ""
-    keys: list[KeySlot] = field(default_factory=lambda: [KeySlot() for _ in range(KEY_COUNT)])
-
-    def to_dict(self) -> dict[str, Any]:
-        return {"name": self.name, "keys": [key.to_dict() for key in self.keys]}
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> Layer:
-        keys = [KeySlot.from_dict(item) for item in data.get("keys", [])]
-        keys = (keys + [KeySlot() for _ in range(KEY_COUNT)])[:KEY_COUNT]
-        return cls(name=str(data.get("name", "")), keys=keys)
 
 
 def macro_records(macro: list[Action]) -> int:
@@ -369,8 +347,9 @@ class Profile:
     schema_version: int = SCHEMA_VERSION
     name: str = "default"
     brightness: int = 64
-    base_layer: int = 0
-    layers: list[Layer] = field(default_factory=list)
+    #: What the pixel rests at when nothing is happening, as RRGGBB.
+    resting_color: str = DEFAULT_RESTING_COLOR
+    keys: list[KeySlot] = field(default_factory=list)
     # No chords. They were eight EEPROM slots the editor never offered a way to
     # fill and the defaults left empty, so the region only ever held zeroes --
     # forty bytes that macro records now use instead.
@@ -379,58 +358,41 @@ class Profile:
     device_macros: list[list[Action]] = field(default_factory=list)
 
     def __post_init__(self) -> None:
-        while len(self.layers) < LAYER_COUNT:
-            self.layers.append(Layer(name=f"Layer {len(self.layers)}"))
-        del self.layers[LAYER_COUNT:]
-        self._drop_unreachable_layer_actions()
-        if self.base_layer >= LAYER_COUNT:
-            self.base_layer = 0
+        self.keys = (self.keys + [KeySlot() for _ in range(KEY_COUNT)])[:KEY_COUNT]
+        self._drop_reserved_bindings()
 
-    def _drop_unreachable_layer_actions(self) -> None:
+    def _drop_reserved_bindings(self) -> None:
         """Clears bindings this build can no longer honour.
 
-        Two kinds. A profile written when there were four layers still holds
-        actions pointing at layers 1 to 3; leaving them would mean a key bound
-        to a switch that cannot happen, and anything reading the target's name
-        indexes off the end of the list.
+        Any binding on hold, which is how recording starts. The editor stopped
+        offering it and `set_action` refuses it, but profiles written before
+        either still carry one, and a hold binding fires at 400 ms on the way to
+        the recorder -- so it has to be cleared on the way in, not merely hidden.
 
-        The other is any binding on hold, which is now how recording starts.
-        The editor stopped offering it, but profiles from before it did still
-        carry one, and a hold binding fires on the way to the recorder -- so it
-        has to be cleared here rather than merely hidden.
+        Layer switches used to be cleared here too. Those action ids are retired
+        now, so they decode as nothing and need no special case.
         """
-        for index, layer in enumerate(self.layers):
-            keys = []
-            for slot in layer.keys:
-                for gesture in GESTURES:
-                    action = slot.gesture(gesture)
-                    unreachable_layer = (
-                        action.kind in ("layer_momentary", "layer_toggle")
-                        and action.layer >= LAYER_COUNT
-                    )
-                    reserved_for_recording = gesture not in EDITABLE_GESTURES
-                    if unreachable_layer or (reserved_for_recording and action.kind != "none"):
-                        slot = slot.with_gesture(gesture, Action())
-                keys.append(slot)
-            self.layers[index] = replace(layer, keys=keys)
+        reserved = [gesture for gesture in GESTURES if gesture not in EDITABLE_GESTURES]
+        for index, slot in enumerate(self.keys):
+            for gesture in reserved:
+                if not slot.gesture(gesture).is_empty:
+                    slot = slot.with_gesture(gesture, Action())
+            self.keys[index] = slot
 
-    def slot(self, layer: int, key: int) -> KeySlot:
+    def slot(self, key: int) -> KeySlot:
         # Checked rather than indexed straight through. A negative key is a
         # perfectly good Python index and means "counting from the end", so a
         # key that arrived as -1 read and wrote the *last* key without anything
         # going wrong anywhere -- the recording simply appeared on key 8. An
         # index this far off is a bug upstream, and it should say so here.
-        if not 0 <= layer < len(self.layers):
-            raise ProfileError(f"layer {layer} is out of range")
-        keys = self.layers[layer].keys
-        if not 0 <= key < len(keys):
-            raise ProfileError(f"key {key} is out of range (0..{len(keys) - 1})")
-        return keys[key]
+        if not 0 <= key < len(self.keys):
+            raise ProfileError(f"key {key} is out of range (0..{len(self.keys) - 1})")
+        return self.keys[key]
 
-    def action(self, layer: int, key: int, gesture: str) -> Action:
-        return self.slot(layer, key).gesture(gesture)
+    def action(self, key: int, gesture: str) -> Action:
+        return self.slot(key).gesture(gesture)
 
-    def set_action(self, layer: int, key: int, gesture: str, action: Action) -> None:
+    def set_action(self, key: int, gesture: str, action: Action) -> None:
         # Refused here, not merely hidden in the editor. Hold is how recording
         # starts, and the firmware still reports the gesture at 400 ms on the
         # way there -- a binding on it would fire then, and the recorder would
@@ -442,8 +404,7 @@ class Profile:
                 f"{gesture!r} is reserved: holding a key is how recording starts. "
                 f"Bind one of {', '.join(EDITABLE_GESTURES)} instead."
             )
-        updated = self.slot(layer, key).with_gesture(gesture, action)  # validates both
-        self.layers[layer].keys[key] = updated
+        self.keys[key] = self.slot(key).with_gesture(gesture, action)  # validates both
 
     def next_host_token(self) -> int:
         """Lowest unused token. 200+ is reserved for system hooks."""
@@ -458,14 +419,13 @@ class Profile:
         """``(macro slots, host tokens)`` some binding still points at."""
         slots: set[int] = set()
         tokens: set[int] = set()
-        for layer in self.layers:
-            for key in layer.keys:
-                for gesture in GESTURES:
-                    action = key.gesture(gesture)
-                    if action.kind == "sequence":
-                        slots.add(action.slot)
-                    elif action.kind == "host":
-                        tokens.add(action.token)
+        for key in self.keys:
+            for gesture in GESTURES:
+                action = key.gesture(gesture)
+                if action.kind == "sequence":
+                    slots.add(action.slot)
+                elif action.kind == "host":
+                    tokens.add(action.token)
         return slots, tokens
 
     def reclaim_storage(self) -> tuple[int, int]:
@@ -503,8 +463,8 @@ class Profile:
             "schema_version": self.schema_version,
             "name": self.name,
             "brightness": self.brightness,
-            "base_layer": self.base_layer,
-            "layers": [layer.to_dict() for layer in self.layers],
+            "resting_color": self.resting_color,
+            "keys": [key.to_dict() for key in self.keys],
             "host_actions": {
                 str(token): action.to_dict() for token, action in sorted(self.host_actions.items())
             },
@@ -519,8 +479,8 @@ class Profile:
             schema_version=int(data.get("schema_version", SCHEMA_VERSION)),
             name=str(data.get("name", "default")),
             brightness=_clamp(int(data.get("brightness", 64)), 0, 255),
-            base_layer=_clamp(int(data.get("base_layer", 0)), 0, LAYER_COUNT - 1),
-            layers=[Layer.from_dict(item) for item in data.get("layers", [])],
+            resting_color=str(data.get("resting_color", DEFAULT_RESTING_COLOR)),
+            keys=_keys_from_dict(data),
             host_actions={
                 int(token): HostAction.from_dict(value)
                 for token, value in data.get("host_actions", {}).items()
@@ -532,11 +492,19 @@ class Profile:
         )
 
 
-# Must match `layerColors` in the firmware's Profile::writeDefaults. Layer 0 is
-# a dim resting glow rather than off, and the rest are brighter and clearly
-# another hue, because "which layer am I in" is the one question eight keys
-# carrying 96 slots cannot answer by feel.
-LAYER_COLORS = ("3c5073",)  # matches the firmware resting glow (60, 80, 115)
+def _keys_from_dict(data: dict[str, Any]) -> list[KeySlot]:
+    """Reads the key list, accepting the shape profiles used to be written in.
+
+    They held a `layers` list, and everything lived in the first one. Rather
+    than a migration step that has to be remembered, the old shape is simply
+    still readable -- there was only ever one layer with anything in it.
+    """
+    if "keys" in data:
+        return [KeySlot.from_dict(item) for item in data.get("keys", [])]
+    layers = data.get("layers") or []
+    if layers and isinstance(layers[0], dict):
+        return [KeySlot.from_dict(item) for item in layers[0].get("keys", [])]
+    return []
 
 
 def default_profile() -> Profile:
@@ -545,18 +513,13 @@ def default_profile() -> Profile:
     A freshly flashed board and a freshly installed app must agree, otherwise
     the first connection reports a spurious mismatch.
     """
-    profile = Profile(name="default", brightness=64, base_layer=0)
-    # Every key in a layer carries the same colour: with one pixel the LED shows
-    # which layer is active, not which key was hit.
-    profile.layers = [
-        Layer(name="Keys", keys=[KeySlot(color=LAYER_COLORS[0]) for _ in range(KEY_COUNT)])
-    ]
+    profile = Profile(name="default", brightness=64)
 
-    # Layer 0: hyper + 1..8. Nothing binds ctrl+alt+shift+digit, so the pad does
+    # Hyper + 1..8. Nothing binds ctrl+alt+shift+digit, so the pad does
     # something useful the moment it is plugged in without taking a shortcut
     # away from anything already running.
     for key in range(KEY_COUNT):
-        profile.set_action(0, key, "tap", Action(kind="key", hotkey=f"ctrl+alt+shift+{key + 1}"))
+        profile.set_action(key, "tap", Action(kind="key", hotkey=f"ctrl+alt+shift+{key + 1}"))
 
     # No host actions by default. The tokens that used to be here pointed at
     # nothing, so three keys did nothing at all.

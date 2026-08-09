@@ -143,13 +143,13 @@ void LedController::render(uint32_t now) {
       scene = ambient_[i].color;
       effect = ambient_[i].effect;
     } else {
-      scene = profile_->paletteColor(activeLayer_, i);
+      scene = profile_->paletteColor(i);
     }
 
     // The fade triggers on the scene, not on the rendered colour. An animated
     // effect produces a different colour every frame, so comparing output would
     // restart the fade continuously and freeze the animation on its first step.
-    // This also covers a layer switch and a host/local handover, because both
+    // This also covers a host/local handover, because both
     // change which scene the pixel is reading from.
     if (scene.r != lastScene_[i].r || scene.g != lastScene_[i].g ||
         scene.b != lastScene_[i].b || effect != lastEffect_[i] ||

@@ -65,10 +65,10 @@ class FakeApp:
         self.started = False
         return self.steps
 
-    def assign_recording(self, steps, layer, key, gesture, name=""):
+    def assign_recording(self, steps, key, gesture, name=""):
         if self._assign_raises:
             raise ValueError("device macro storage exhausted")
-        self.assigned = (tuple(steps), layer, key, gesture)
+        self.assigned = (tuple(steps), key, gesture)
         return self._where
 
     def save(self) -> None:
@@ -102,8 +102,8 @@ def test_holding_the_same_key_again_stores_it_on_that_key() -> None:
     session.handle_request(2)
     session.handle_request(2)
     assert session.recording is False
-    assert app.assigned[2] == 2, "stored against the key that was held"
-    assert app.assigned[3] == "tap"
+    assert app.assigned[1] == 2, "stored against the key that was held"
+    assert app.assigned[2] == "tap"
     assert app.saved and app.pushed
 
 
@@ -271,7 +271,7 @@ def test_every_key_can_be_recorded_into(key: int) -> None:
     app, session, _ = session_for()
     session.handle_request(key)
     session.handle_request(key)
-    assert app.assigned[2] == key
+    assert app.assigned[1] == key
 
 
 # ------------------------------------------------ which thread handles it --

@@ -85,10 +85,10 @@ def test_auto_means_let_discovery_decide(window) -> None:
 def test_hold_is_not_offered_as_a_binding(window) -> None:
     """It is the recording trigger. A key bound to both would fire the binding
     at 400 ms and open the recorder at 3 s, from one press."""
-    assert {gesture for _, _, gesture in window.buttons} == {"tap", "double"}
+    assert {gesture for _, gesture in window.buttons} == {"tap", "double"}
 
 
-def test_the_single_layer_is_not_wrapped_in_tabs(window) -> None:
+def test_the_keys_are_not_wrapped_in_tabs(window) -> None:
     from PySide6.QtWidgets import QTabWidget
 
     assert not window.findChildren(QTabWidget)

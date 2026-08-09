@@ -135,14 +135,6 @@ class ShellAction(HostActionHandler):
         context.status(f"Launched {command[0]}")
 
 
-@register("layer", "Switch the device layer")
-class LayerAction(HostActionHandler):
-    def run(self, context: ActionContext) -> None:
-        if context.device is None:
-            raise ActionError("layer action needs a connected device")
-        context.device.set_layer(self.integer("layer", 0))
-
-
 @register("sequence", "Run several actions in order")
 class SequenceAction(HostActionHandler):
     def run(self, context: ActionContext) -> None:

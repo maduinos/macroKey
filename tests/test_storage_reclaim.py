@@ -61,27 +61,27 @@ def used_records(app) -> int:
 def test_re_recording_the_same_key_reuses_its_slot() -> None:
     app = fake_app()
     for attempt in range(MACRO_SLOTS * 3):
-        where = app.assign_recording(RECORDING, 0, 0, "tap")
+        where = app.assign_recording(RECORDING, 0, "tap")
         assert "keypad" in where, f"fell back to the host on attempt {attempt + 1}"
         assert used_slots(app) == 1, f"{used_slots(app)} slots after {attempt + 1} recordings"
 
 
 def test_the_record_budget_does_not_creep() -> None:
     app = fake_app()
-    app.assign_recording(RECORDING, 0, 0, "tap")
+    app.assign_recording(RECORDING, 0, "tap")
     after_one = used_records(app)
     for _ in range(20):
-        app.assign_recording(RECORDING, 0, 0, "tap")
+        app.assign_recording(RECORDING, 0, "tap")
     assert used_records(app) == after_one
 
 
 def test_recording_over_a_host_action_frees_its_token() -> None:
     """Host actions leaked the same way, through the same path."""
     app = fake_app()
-    app.assign_recording([{"type": "shell", "params": {"command": "ls"}}], 0, 0, "tap")
+    app.assign_recording([{"type": "shell", "params": {"command": "ls"}}], 0, "tap")
     assert len(app.profile.host_actions) == 1
     for _ in range(10):
-        app.assign_recording([{"type": "shell", "params": {"command": "ls"}}], 0, 0, "tap")
+        app.assign_recording([{"type": "shell", "params": {"command": "ls"}}], 0, "tap")
     assert len(app.profile.host_actions) == 1
 
 
@@ -89,19 +89,19 @@ def test_every_key_still_gets_its_own_slot() -> None:
     """Reclaiming must not confuse "replaced" with "some other key's"."""
     app = fake_app()
     for key in range(8):
-        app.assign_recording(RECORDING, 0, key, "tap")
+        app.assign_recording(RECORDING, key, "tap")
     assert used_slots(app) == 8
-    slots = {app.profile.action(0, key, "tap").slot for key in range(8)}
+    slots = {app.profile.action(key, "tap").slot for key in range(8)}
     assert len(slots) == 8
 
 
 def test_tap_and_double_on_one_key_do_not_evict_each_other() -> None:
     app = fake_app()
-    app.assign_recording(RECORDING, 0, 0, "tap")
-    app.assign_recording(RECORDING, 0, 0, "double")
+    app.assign_recording(RECORDING, 0, "tap")
+    app.assign_recording(RECORDING, 0, "double")
     assert used_slots(app) == 2
-    assert app.profile.action(0, 0, "tap").kind == "sequence"
-    assert app.profile.action(0, 0, "double").kind == "sequence"
+    assert app.profile.action(0, "tap").kind == "sequence"
+    assert app.profile.action(0, "double").kind == "sequence"
 
 
 # ------------------------------------------------------------------ the sweep --
@@ -113,7 +113,7 @@ def test_reclaim_repairs_a_profile_that_already_leaked() -> None:
     profile = default_profile()
     profile.device_macros = [[Action(kind="key", hotkey="a")] for _ in range(MACRO_SLOTS)]
     profile.host_actions = {}
-    profile.set_action(0, 0, "tap", Action(kind="sequence", slot=4))
+    profile.set_action(0, "tap", Action(kind="sequence", slot=4))
 
     freed_slots, freed_tokens = profile.reclaim_storage()
     assert freed_slots == MACRO_SLOTS - 1
@@ -123,8 +123,8 @@ def test_reclaim_repairs_a_profile_that_already_leaked() -> None:
 
 def test_reclaim_keeps_what_is_still_referenced() -> None:
     app = fake_app()
-    app.assign_recording(RECORDING, 0, 2, "tap")
-    slot = app.profile.action(0, 2, "tap").slot
+    app.assign_recording(RECORDING, 2, "tap")
+    slot = app.profile.action(2, "tap").slot
     app.profile.reclaim_storage()
     assert app.profile.device_macros[slot]
 
@@ -134,6 +134,6 @@ def test_a_full_pad_still_falls_back_rather_than_raising() -> None:
     by re-recording the same key."""
     app = fake_app()
     app.profile.device_macros = [[Action(kind="key", hotkey="a")] * MACRO_RECORD_CAPACITY]
-    app.profile.set_action(0, 7, "tap", Action(kind="sequence", slot=0))
-    where = app.assign_recording(RECORDING, 0, 0, "tap")
+    app.profile.set_action(7, "tap", Action(kind="sequence", slot=0))
+    where = app.assign_recording(RECORDING, 0, "tap")
     assert "host action" in where

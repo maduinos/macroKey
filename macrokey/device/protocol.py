@@ -99,7 +99,6 @@ class Hello:
     board: str
     keys: int
     leds: int
-    layers: int
     profile_bytes: int
 
     @classmethod
@@ -112,7 +111,6 @@ class Hello:
             board=message.get("board", "?") or "?",
             keys=message.int("keys", 0) or 0,
             leds=message.int("leds", 0) or 0,
-            layers=message.int("layers", 0) or 0,
             profile_bytes=message.int("bytes", 0) or 0,
         )
 
@@ -127,7 +125,6 @@ class KeyEvent:
 
     key: int
     gesture: str
-    layer: int
     uptime_ms: int
 
 
@@ -137,7 +134,6 @@ class HostEvent:
 
     token: int
     key: int
-    layer: int
 
 
 @dataclass
@@ -179,7 +175,6 @@ def parse_event(message: Message) -> KeyEvent | HostEvent | RecordRequest | None
         return KeyEvent(
             key=_field(message, "k", -1),
             gesture=message.get("g", "?") or "?",
-            layer=_field(message, "l", 0),
             uptime_ms=_field(message, "ms", 0),
         )
     if kind == "host":
@@ -187,7 +182,6 @@ def parse_event(message: Message) -> KeyEvent | HostEvent | RecordRequest | None
             # `tok`, not `id`: `id` is reserved for request/response correlation.
             token=_field(message, "tok", -1),
             key=_field(message, "k", -1),
-            layer=_field(message, "l", 0),
         )
     if kind == "record":
         # Older firmware sends no `g`; tap is what it always meant.

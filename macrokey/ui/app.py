@@ -1,18 +1,11 @@
-"""PySide6 editor.
+"""The editor window.
 
-This is the only module allowed to import a UI toolkit. Everything it does is a
-call into :class:`~macrokey.app.MacroKeyApp`, so replacing this view or running
-with no view at all costs nothing elsewhere.
-
-Work that touches the serial link runs on plain threads, exactly as before, and
-reports back through Qt signals. A signal emitted from a worker thread is
-delivered on the GUI thread by the event loop, which is what makes it safe to
-touch widgets from the slot.
+The only module in the package that imports a UI toolkit, which is what
+keeps every other module in the package runnable headless.
 """
 
 from __future__ import annotations
 
-import os
 import sys
 import threading
 
@@ -20,15 +13,11 @@ from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QApplication,
-    QCheckBox,
     QColorDialog,
-    QComboBox,
     QDialog,
     QGridLayout,
     QHBoxLayout,
     QLabel,
-    QLineEdit,
-    QListWidget,
     QMainWindow,
     QMessageBox,
     QPushButton,
@@ -39,513 +28,18 @@ from PySide6.QtWidgets import (
 
 from .. import __version__
 from ..app import MacroKeyApp
-from ..config import KEY_COUNT, Action, Profile
+from ..config import KEY_COUNT
 from ..config.model import EDITABLE_GESTURES
 from ..device import DeviceError, candidates
 from ..session import RecordingSession
+from .describe import describe_binding
+from .slot_dialog import SlotDialog
+from .widgets import AUTO_PORT, RescanningComboBox
 
-#: How long the device holds a previewed colour without hearing from us. Covers
-#: a person deliberating over a colour wheel plus the profile write that
-#: follows, and is bounded so a crash cannot park the pixel for good.
+#: How long the pad is told to hold a previewed colour without being spoken to.
+#: Someone reading a colour wheel is silent far longer than the device's own
+#: three second default, and has not crashed.
 PREVIEW_HOLD_MS = 45000
-
-def _daemon_running() -> bool:
-    """Whether anything is actually listening on the daemon's state socket.
-
-    Existence is not enough: the socket file outlives the process that made it,
-    so a stopped daemon leaves one behind and a check on the path alone reports
-    a daemon that is not there. Connecting is the only answer that means
-    anything.
-    """
-    import socket as socket_module
-
-    from ..led import default_socket_path
-
-    if not hasattr(socket_module, "AF_UNIX"):
-        return False
-    try:
-        path = default_socket_path()
-        if not path.exists():
-            return False
-        with socket_module.socket(socket_module.AF_UNIX, socket_module.SOCK_STREAM) as probe:
-            probe.settimeout(0.2)
-            probe.connect(str(path))
-        return True
-    except OSError:
-        return False
-
-
-def _nothing_captured_hint() -> str:
-    """Why a recording can come back empty, when that has a known cause.
-
-    pynput falls back to its X11 backend under Wayland, where it only sees
-    input going to XWayland clients. Typing into a native Wayland window is
-    invisible to it, and the recording ends up empty with no explanation.
-    """
-    if os.environ.get("XDG_SESSION_TYPE", "").lower() == "wayland":
-        return (
-            "Nothing was captured. On Wayland, input capture only sees X11 "
-            "windows, so typing into most applications is invisible to it. "
-            "Recording into a terminal started under XWayland does work."
-        )
-    return "Nothing was captured. Press Start recording, do the thing, then Stop."
-
-
-#: A typed run at least this long is worth pointing at before it is stored.
-#: Real macros type short things -- a command, a name, a snippet; passwords and
-#: pasted tokens are what long unbroken runs usually are.
-SECRET_TEXT_LENGTH = 12
-
-
-def _longest_typed_run(steps) -> int:
-    return max(
-        (
-            len(step.get("params", {}).get("text", ""))
-            for step in steps
-            if step.get("type") == "text"
-        ),
-        default=0,
-    )
-
-
-def describe_binding(profile: Profile, action: Action) -> str:
-    """What this key does, said the way someone using the pad would say it.
-
-    The grid used to show `action.describe()`, which speaks in the wire format's
-    terms -- "host 3", "sequence 1" -- and told you nothing about what pressing
-    the key would produce.
-    """
-    if action.kind == "none":
-        return "nothing"
-    if action.kind == "layer_momentary":
-        name = profile.layers[action.layer].name or f"layer {action.layer}"
-        return f"hold for {name}"
-    if action.kind == "layer_toggle":
-        name = profile.layers[action.layer].name or f"layer {action.layer}"
-        return f"toggle {name}"
-    if action.kind == "sequence":
-        macros = profile.device_macros
-        steps = macros[action.slot] if action.slot < len(macros) else []
-        # Counted the way it reads, not the way it is stored. A typed line is
-        # one text action, so "1 step" would be true and useless; the number
-        # someone wants is how much of the recording there is.
-        typed = sum(len(step.text) for step in steps if step.kind == "text")
-        others = sum(1 for step in steps if step.kind not in ("text", "delay"))
-        parts = []
-        if typed:
-            parts.append(f"{typed} characters")
-        if others:
-            parts.append(f"{others} key{'s' if others != 1 else ''}")
-        detail = " + ".join(parts) or "empty"
-        return f"recording, {detail} (on the keypad)"
-    if action.kind == "host":
-        spec = profile.host_actions.get(action.token)
-        if spec is None:
-            return f"missing host action {action.token}"
-        return f"recording: {spec.describe()} (needs this computer)"
-    return action.describe()
-
-
-class ShortcutEdit(QLineEdit):
-    """Records a shortcut by having it pressed, the way desktop settings do.
-
-    Typing "ctrl+alt+shift+1" means knowing the vocabulary and the separator and
-    that it is "gui" rather than "super" here. Pressing the combination needs
-    none of that, and it is how every shortcut setting on this desktop already
-    works.
-
-    This reads Qt key events rather than capturing globally: the dialog has
-    focus while it is open, so the combination arrives here and nowhere else --
-    which also means it cannot trigger whatever it is currently bound to.
-    """
-
-    QT_MODIFIERS = (
-        (Qt.ControlModifier, "ctrl"),
-        (Qt.ShiftModifier, "shift"),
-        (Qt.AltModifier, "alt"),
-        (Qt.MetaModifier, "gui"),
-    )
-    #: Qt names these differently from macroKey's vocabulary.
-    QT_NAMES = {
-        Qt.Key_Escape: "esc",
-        Qt.Key_Return: "enter",
-        Qt.Key_Enter: "enter",
-        Qt.Key_Backspace: "backspace",
-        Qt.Key_Delete: "delete",
-        Qt.Key_Space: "space",
-        Qt.Key_Tab: "tab",
-        Qt.Key_Up: "up",
-        Qt.Key_Down: "down",
-        Qt.Key_Left: "left",
-        Qt.Key_Right: "right",
-        Qt.Key_Home: "home",
-        Qt.Key_End: "end",
-        Qt.Key_PageUp: "pageup",
-        Qt.Key_PageDown: "pagedown",
-        Qt.Key_Insert: "insert",
-        Qt.Key_CapsLock: "capslock",
-        Qt.Key_Print: "printscreen",
-    }
-    BARE_MODIFIERS = {
-        Qt.Key_Control,
-        Qt.Key_Shift,
-        Qt.Key_Alt,
-        Qt.Key_Meta,
-        Qt.Key_AltGr,
-    }
-
-    changed = Signal(str)
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.capturing = False
-        self.setPlaceholderText("ctrl+alt+shift+1")
-
-    def start_capture(self) -> None:
-        """Next combination pressed fills the field."""
-        self.capturing = True
-        self.clear()
-        self.setPlaceholderText("Press the shortcut...")
-        self.setFocus()
-
-    def stop_capture(self) -> None:
-        self.capturing = False
-        self.setPlaceholderText("ctrl+alt+shift+1")
-
-    def keyPressEvent(self, event) -> None:  # noqa: N802 - Qt naming
-        # Typed editing stays available. Capture is a convenience for the common
-        # case, not the only way in: some shortcuts are awkward or impossible to
-        # press here -- anything the compositor swallows first, or a key this
-        # keyboard does not have -- and those still have to be settable.
-        if not self.capturing:
-            super().keyPressEvent(event)
-            return
-
-        key = event.key()
-        if key in self.BARE_MODIFIERS:
-            # Held on its own it is not a shortcut yet; show it building up.
-            self.setText("+".join(self._modifiers(event)) + "+" if self._modifiers(event) else "")
-            return
-
-        parts = self._modifiers(event)
-        name = self.QT_NAMES.get(key)
-        if name is None:
-            if Qt.Key_F1 <= key <= Qt.Key_F24:
-                name = f"f{key - Qt.Key_F1 + 1}"
-            elif 32 < key < 127:
-                # event.key() is the key before shift is applied, which is what
-                # a shortcut is made of. event.text() is the glyph it produced,
-                # so with shift held ctrl+alt+shift+1 arrives as "!" -- a
-                # character the keypad has no key for, and one this app cannot
-                # parse. The keypad sends the modifiers and the key; the shifted
-                # glyph is what the receiving application makes of that.
-                name = chr(key).lower()
-            else:
-                text = event.text()
-                name = text.lower() if text and text.isprintable() and len(text) == 1 else ""
-        if not name:
-            return
-
-        parts.append(name)
-        value = "+".join(parts)
-        self.setText(value)
-        # One combination per press of the button: staying in capture mode would
-        # eat the typing of anyone who then wanted to adjust it by hand.
-        self.stop_capture()
-        self.changed.emit(value)
-
-    def keyReleaseEvent(self, event) -> None:  # noqa: N802 - Qt naming
-        if event.key() in self.BARE_MODIFIERS and self.text().endswith("+"):
-            self.setText("")
-
-    def _modifiers(self, event) -> list[str]:
-        state = event.modifiers()
-        return [name for flag, name in self.QT_MODIFIERS if state & flag]
-
-
-class SlotDialog(QDialog):
-    """Everything one key can be, in one window.
-
-    Binding used to be two nested dialogs: pick an action kind and a value in
-    one, and if you chose to record, a second window on top of it. The kinds
-    were the serial wire format showing through -- key, consumer, mouse_button,
-    host -- which is not how anyone thinks about what a key should do.
-
-    There are three answers. Send a shortcut, which is the common one and has to
-    be typeable: recording ctrl+alt+shift+5 means pressing it, which fires
-    whatever is already bound to it. Replay something, which is authored by
-    doing it. Or change layer, the one binding a recording cannot express,
-    because it is a state change on the device rather than input to replay.
-    """
-
-    captured = Signal(list)
-    liveEvent = Signal(str)
-
-    def __init__(self, parent: QWidget, app: MacroKeyApp, layer: int, key: int, gesture: str):
-        super().__init__(parent)
-        self.app = app
-        self.layer, self.key, self.gesture = layer, key, gesture
-        self.result_action: Action | None = None
-        self.recorded_steps: list[dict] | None = None
-        self._recording = False
-
-        self.setWindowTitle(f"Key {key + 1} · {gesture}")
-        self.setModal(True)
-        self.resize(520, 470)
-
-        current = app.profile.action(layer, key, gesture)
-        self.now = QLabel(f"Now: {describe_binding(app.profile, current)}")
-        self.now.setWordWrap(True)
-        self.now.setStyleSheet("font-weight: 600;")
-
-        # ---- shortcut ---------------------------------------------------------
-        self.shortcut = ShortcutEdit()
-        if current.kind == "key":
-            self.shortcut.setText(current.hotkey)
-        self.shortcut.changed.connect(lambda _v: self.shortcut.stop_capture())
-        press_keys = QPushButton("Press keys")
-        press_keys.setToolTip(
-            "Fills the field from the next combination pressed. The field can "
-            "also just be typed into."
-        )
-        press_keys.clicked.connect(self.shortcut.start_capture)
-        set_shortcut = QPushButton("Set")
-        set_shortcut.clicked.connect(self._use_shortcut)
-        shortcut_row = QHBoxLayout()
-        shortcut_row.addWidget(self.shortcut, 1)
-        shortcut_row.addWidget(press_keys)
-        shortcut_row.addWidget(set_shortcut)
-
-        # ---- recording --------------------------------------------------------
-        self.record_button = QPushButton("Start recording")
-        self.record_button.clicked.connect(self._toggle_recording)
-
-        self.capture_mouse = QCheckBox("Include mouse")
-        self.capture_mouse.setChecked(True)
-        self.capture_mouse.setToolTip(
-            "Records button clicks and the wheel, not pointer positions: a "
-            "replayed click lands wherever the pointer is at the time."
-        )
-
-        self.log = QListWidget()
-        self.log.setAlternatingRowColors(True)
-
-        self.where = QLabel()
-        self.where.setWordWrap(True)
-        self.where.setStyleSheet("color: palette(mid);")
-
-        self.use_recording = QPushButton("Use this recording")
-        self.use_recording.setEnabled(False)
-        self.use_recording.clicked.connect(self._use_recording)
-
-        record_row = QHBoxLayout()
-        record_row.addWidget(self.record_button)
-        record_row.addWidget(self.capture_mouse)
-        record_row.addStretch(1)
-        record_row.addWidget(self.use_recording)
-
-        # ---- bottom -----------------------------------------------------------
-        clear = QPushButton("Clear this key")
-        clear.clicked.connect(self._clear)
-        cancel = QPushButton("Cancel")
-        cancel.clicked.connect(self.reject)
-        bottom = QHBoxLayout()
-        bottom.addWidget(clear)
-        bottom.addStretch(1)
-        bottom.addWidget(cancel)
-
-        layout = QVBoxLayout(self)
-        layout.addWidget(self.now)
-        layout.addSpacing(8)
-        layout.addWidget(_heading("Send a shortcut"))
-        layout.addLayout(shortcut_row)
-        layout.addSpacing(10)
-        layout.addWidget(_heading("Or replay something you do"))
-        layout.addLayout(record_row)
-        layout.addWidget(self.log, 1)
-        layout.addWidget(self.where)
-        layout.addSpacing(10)
-        layout.addLayout(bottom)
-
-        self.captured.connect(self._show_result)
-        self.liveEvent.connect(self._append_live)
-        self._show_idle()
-
-    # ------------------------------------------------------------- recording --
-
-    def _show_idle(self) -> None:
-        self.log.clear()
-        self.log.addItem("Press Start recording, do the thing, then press Stop.")
-        self.where.setText(
-            "Anything the keypad can replay by itself is stored on the keypad and "
-            "keeps working with nothing running on this computer."
-        )
-
-    def _toggle_recording(self) -> None:
-        if self._recording:
-            # Stopping from a button rather than a key: a key would have to be
-            # one the macro can never contain, and Esc -- the obvious choice, and
-            # what this used to use -- rules out closing a dialog or leaving vim
-            # insert mode, which are exactly the things people record.
-            self._recording = False
-            self.record_button.setText("Start recording")
-            self.captured.emit(self.app.stop_recording())
-            return
-
-        self.app.recorder.capture_mouse = self.capture_mouse.isChecked()
-        # Stopping is a button, so without this the click that ends the
-        # recording is its last step, and every replay would finish by
-        # clicking wherever that button happened to be.
-        self._sync_ignored_region()
-        try:
-            self.app.start_recording(on_event=self._on_live_event)
-        except Exception as exc:  # noqa: BLE001 - pynput failures are environmental
-            QMessageBox.critical(self, "Cannot record", str(exc))
-            return
-        self._recording = True
-        self.recorded_steps = None
-        self.use_recording.setEnabled(False)
-        self.record_button.setText("Stop")
-        self.log.clear()
-        self.where.setText("Recording. Everything captured appears here as it happens.")
-
-    def _sync_ignored_region(self) -> None:
-        frame = self.frameGeometry()
-        self.app.recorder.ignore_click_region = (
-            frame.x(),
-            frame.y(),
-            frame.width(),
-            frame.height(),
-        )
-
-    def moveEvent(self, event) -> None:  # noqa: N802 - Qt naming
-        # The region is where the Stop button is *now*. Dragging the window
-        # mid-recording would otherwise leave it pointing at empty desk, and
-        # the click that stops the recording would land in the macro.
-        if self._recording:
-            self._sync_ignored_region()
-        super().moveEvent(event)
-
-    def _on_live_event(self, event) -> None:
-        """Called on the listener thread; hop to the GUI thread to touch widgets."""
-        char = f" {event.char!r}" if getattr(event, "char", "") else ""
-        self.liveEvent.emit(f"{event.kind}  {event.token}{char}")
-
-    def _append_live(self, line: str) -> None:
-        self.log.addItem(line)
-        self.log.scrollToBottom()
-
-    def _show_result(self, steps: list[dict]) -> None:
-        self.recorded_steps = steps
-        self.log.clear()
-        for line in self.app.recorder.summary(steps):
-            self.log.addItem(line)
-        self.use_recording.setEnabled(bool(steps))
-
-        if not steps:
-            self.log.addItem("(nothing captured)")
-            self.where.setText(_nothing_captured_hint())
-            return
-
-        if self.app.last_redacted:
-            # Say it plainly. A step vanishing without explanation looks like a
-            # capture bug, and the person needs to know their password was in
-            # range of the recorder so they can judge whether to change it.
-            self.log.addItem(
-                f"!  {self.app.last_redacted} step(s) removed: a password prompt "
-                "was answered while recording"
-            )
-
-        typed = _longest_typed_run(steps)
-        if typed >= SECRET_TEXT_LENGTH:
-            # Capture is global: it sees whatever was typed while it ran, into
-            # any window. A long unbroken run of characters is what a password
-            # looks like, and it would be stored verbatim in the profile.
-            self.log.addItem(f"!  {typed} characters of typed text captured")
-            self.where.setText(
-                f"This recording contains {typed} characters typed in one run. If any "
-                "of that was a password, discard it: recordings are stored as plain "
-                "text in the profile."
-            )
-            return
-        if self.app.recorder.device_action(steps) is not None:
-            self.where.setText("Will be stored on the keypad. Works with nothing running here.")
-        elif self.app.recorder.device_macro(steps) is not None:
-            self.where.setText(
-                f"Will be stored on the keypad as a {len(steps)} step macro. "
-                "Works with nothing running here."
-            )
-        else:
-            # Saying "needs the daemon" is not enough when the daemon is not
-            # running: the key would be bound, look bound, and do nothing at
-            # all. Check and say which of the two situations this is.
-            self.where.setText(
-                "Has steps the keypad cannot replay by itself -- text too long "
-                "for its macro slots, or characters it has no keys for. "
-                + (
-                    "The macroKey daemon is running, so it will work."
-                    if _daemon_running()
-                    else "The macroKey daemon is NOT running, so this key will do "
-                    "nothing until it is started:  systemctl --user start macrokey"
-                )
-            )
-
-    # --------------------------------------------------------------- choices --
-
-    def _use_shortcut(self) -> None:
-        text = self.shortcut.text().strip()
-        if not text:
-            return
-        try:
-            action = Action(kind="key", hotkey=text)
-            action.encode()  # rejects here rather than at write time
-        except Exception as exc:  # noqa: BLE001 - report any validation problem
-            QMessageBox.critical(self, "That is not a shortcut this keypad can send", str(exc))
-            return
-        self.result_action = action
-        self.accept()
-
-    def _use_recording(self) -> None:
-        if not self.recorded_steps:
-            return
-        self.accept()
-
-    def _clear(self) -> None:
-        self.result_action = Action()
-        self.accept()
-
-    def reject(self) -> None:
-        if self._recording:
-            self._recording = False
-            self.app.stop_recording()
-        super().reject()
-
-
-def _heading(text: str) -> QLabel:
-    label = QLabel(text)
-    label.setStyleSheet("font-weight: 600; color: palette(mid);")
-    return label
-
-
-#: Shown in the port box when discovery should choose. A word rather than a
-#: blank entry: an empty combo reads as "it failed to find anything".
-AUTO_PORT = "Auto"
-
-
-class _RescanningComboBox(QComboBox):
-    """A combo box that refreshes itself when it is opened.
-
-    Built once, it was a snapshot from before the pad was plugged in, and the
-    only way to see a new port was to restart the editor.
-    """
-
-    def __init__(self, rescan) -> None:
-        super().__init__()
-        self._rescan = rescan
-
-    def showPopup(self) -> None:  # noqa: N802 - Qt naming
-        self._rescan()
-        super().showPopup()
 
 
 class MainWindow(QMainWindow):
@@ -559,8 +53,7 @@ class MainWindow(QMainWindow):
     def __init__(self, port: str = "") -> None:
         super().__init__()
         self.app = MacroKeyApp(status=self.statusMessage.emit)
-        self.buttons: dict[tuple[int, int, str], QPushButton] = {}
-        self.swatches: dict[int, QPushButton] = {}
+        self.buttons: dict[tuple[int, str], QPushButton] = {}
         # Live colour preview state. No timer: the device is told up front how
         # long to hold the colour, so there is nothing to keep alive.
         self._preview_rgb: tuple[int, int, int] | None = None
@@ -635,7 +128,7 @@ class MainWindow(QMainWindow):
         # way to change its mind is worse than one that asks.
         #
         # Empty means "let discovery choose", which is the normal state.
-        self.port_box = _RescanningComboBox(self._rescan_ports)
+        self.port_box = RescanningComboBox(self._rescan_ports)
         self.port_box.setEditable(True)
         self.port_box.setMinimumWidth(150)
         self.port_box.setToolTip(
@@ -690,11 +183,9 @@ class MainWindow(QMainWindow):
     def _build_keys(self) -> QWidget:
         """The eight keys, and nothing wrapped around them.
 
-        This used to be a tab per layer. With one layer a QTabWidget is a tab
-        strip with a single tab: chrome that says the same thing on every pass
-        and hides a frame's worth of nothing behind it.
+        This used to be a tab per layer, then a single tab, then this: eight
+        rows and two columns, which is the whole pad.
         """
-        layer = 0
         page = QWidget()
         grid = QGridLayout(page)
         grid.setContentsMargins(8, 8, 8, 8)
@@ -713,11 +204,11 @@ class MainWindow(QMainWindow):
                 button.setStyleSheet("text-align: left; padding: 4px 8px;")
                 button.clicked.connect(
                     lambda _checked=False, key=key, gesture=gesture: self._edit(
-                        layer, key, gesture
+                        key, gesture
                     )
                 )
                 grid.addWidget(button, key + 1, index + 1)
-                self.buttons[(layer, key, gesture)] = button
+                self.buttons[(key, gesture)] = button
 
         # The resting colour is what the pixel spends most of its time saying,
         # and it was the one part of the profile the editor wrote but never let
@@ -725,24 +216,24 @@ class MainWindow(QMainWindow):
         grid.addWidget(QLabel("LED"), KEY_COUNT + 1, 0)
         swatch = QPushButton()
         swatch.setToolTip("Colour the pad rests at when nothing is happening.")
-        swatch.clicked.connect(lambda _checked=False: self._edit_layer_color(layer))
+        swatch.clicked.connect(self._edit_resting_color)
         grid.addWidget(swatch, KEY_COUNT + 1, 1, 1, len(EDITABLE_GESTURES))
-        self.swatches[layer] = swatch
+        self.swatch = swatch
 
         grid.setRowStretch(KEY_COUNT + 2, 1)
         return page
 
-    def _edit_layer_color(self, layer: int) -> None:
-        """Picks a layer colour, showing it on the real pixel while choosing.
+    def _edit_resting_color(self) -> None:
+        """Picks the resting colour, showing it on the real pixel while choosing.
 
         A hex value tells you nothing about how a colour reads on a diffused
         5 mm pixel at 25% brightness, so the pad previews every intermediate
         colour. The preview is host ambient, which never touches EEPROM: cancel
         and the device is exactly where it started, with no write to undo.
         """
-        before = self.app.profile.layers[layer].keys[0].color
+        before = self.app.profile.resting_color
         dialog = QColorDialog(QColor(f"#{before}"), self)
-        dialog.setWindowTitle(f"LED colour for layer {layer}")
+        dialog.setWindowTitle("Resting LED colour")
         dialog.currentColorChanged.connect(self._preview_color)
 
         self._begin_preview()
@@ -755,16 +246,13 @@ class MainWindow(QMainWindow):
             self._end_preview()
             return
 
-        # Stored per key because that is the profile's shape, but written to
-        # every key at once so the device and the editor cannot disagree.
         value = f"{chosen.red():02x}{chosen.green():02x}{chosen.blue():02x}"
-        for slot in self.app.profile.layers[layer].keys:
-            slot.color = value
-        self._refresh_swatches()
+        self.app.profile.resting_color = value
+        self._refresh_swatch()
 
         # Written before the preview is released, so the pixel never flashes the
         # old colour back at the person who just chose one.
-        self._apply(f"Layer {layer} LED #{value}")
+        self._apply(f"Resting LED #{value}")
         self._end_preview()
 
     # ------------------------------------------------------------- preview --
@@ -811,24 +299,23 @@ class MainWindow(QMainWindow):
         except DeviceError as exc:
             self.statusMessage.emit(f"Preview stopped: {exc}")
 
-    def _refresh_swatches(self) -> None:
-        for layer, swatch in self.swatches.items():
-            value = self.app.profile.layers[layer].keys[0].color
-            colour = QColor(f"#{value}")
-            # Black reads as "off" rather than as a colour, so say so: an empty
-            # black rectangle looks like a rendering failure.
-            swatch.setText("off" if colour.value() == 0 else f"#{value}")
-            text = "#f0f0f0" if colour.value() < 128 else "#101010"
-            swatch.setStyleSheet(
-                f"background-color: #{value}; color: {text}; padding: 4px 8px;"
-            )
+    def _refresh_swatch(self) -> None:
+        value = self.app.profile.resting_color
+        colour = QColor(f"#{value}")
+        # Black reads as "off" rather than as a colour, so say so: an empty
+        # black rectangle looks like a rendering failure.
+        self.swatch.setText("off" if colour.value() == 0 else f"#{value}")
+        text = "#f0f0f0" if colour.value() < 128 else "#101010"
+        self.swatch.setStyleSheet(
+            f"background-color: #{value}; color: {text}; padding: 4px 8px;"
+        )
 
     # --------------------------------------------------------------- actions --
 
     def _refresh_all(self) -> None:
-        self._refresh_swatches()
-        for (layer, key, gesture), button in self.buttons.items():
-            action = self.app.profile.action(layer, key, gesture)
+        self._refresh_swatch()
+        for (key, gesture), button in self.buttons.items():
+            action = self.app.profile.action(key, gesture)
             button.setText(describe_binding(self.app.profile, action))
             # Anything that needs this computer running is worth flagging on the
             # grid, not just in the dialog: it is the difference between a pad
@@ -839,19 +326,19 @@ class MainWindow(QMainWindow):
                 + ("color: palette(link);" if needs_host else "")
             )
 
-    def _edit(self, layer: int, key: int, gesture: str) -> None:
-        dialog = SlotDialog(self, self.app, layer, key, gesture)
+    def _edit(self, key: int, gesture: str) -> None:
+        dialog = SlotDialog(self, self.app, key, gesture)
         if dialog.exec() != QDialog.Accepted:
             return
         if dialog.recorded_steps:
-            where = self.app.assign_recording(dialog.recorded_steps, layer, key, gesture)
+            where = self.app.assign_recording(dialog.recorded_steps, key, gesture)
             self._refresh_all()
-            self._apply(f"Key {key + 1} {gesture} on layer {layer} ({where})")
+            self._apply(f"Key {key + 1} {gesture} ({where})")
             return
         if dialog.result_action is not None:
-            self.app.profile.set_action(layer, key, gesture, dialog.result_action)
+            self.app.profile.set_action(key, gesture, dialog.result_action)
             self._refresh_all()
-            self._apply(f"Key {key + 1} {gesture} on layer {layer}")
+            self._apply(f"Key {key + 1} {gesture}")
 
     def _apply(self, what: str) -> None:
         """Persists an edit and gets it onto the device.

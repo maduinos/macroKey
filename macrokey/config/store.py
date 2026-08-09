@@ -194,7 +194,7 @@ def migrate_legacy_bindings(items: Any) -> Profile:
     if not isinstance(items, list):
         return profile
 
-    for index, item in enumerate(items[: len(profile.layers[0].keys)]):
+    for index, item in enumerate(items[: len(profile.keys)]):
         if not isinstance(item, dict):
             continue
         image = str(item.get("image", "")).strip()
@@ -211,6 +211,6 @@ def migrate_legacy_bindings(items: Any) -> Profile:
             },
         )
         if item.get("enabled", True):
-            profile.set_action(0, index, "tap", Action(kind="host", token=token))
+            profile.set_action(index, "tap", Action(kind="host", token=token))
 
     return profile

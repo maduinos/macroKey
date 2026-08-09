@@ -342,9 +342,6 @@ class DeviceClient:
 
     # ----------------------------------------------------------------- misc --
 
-    def set_layer(self, layer: int) -> None:
-        self.request(protocol.encode("LAYER", set=layer))
-
     def ping(self) -> None:
         self.request(protocol.encode("PING"))
 

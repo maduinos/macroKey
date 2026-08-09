@@ -25,10 +25,10 @@ static const uint16_t MK_HEADER_OFFSET = 0;
 static const uint16_t MK_HEADER_SIZE = 16;
 static const uint16_t MK_KEYMAP_OFFSET = MK_HEADER_OFFSET + MK_HEADER_SIZE;
 static const uint16_t MK_KEYMAP_SIZE =
-    (uint16_t)MK_LAYER_COUNT * MK_KEY_COUNT * MK_KEYMAP_GESTURES * sizeof(Action);
+    (uint16_t)MK_KEY_COUNT * MK_KEYMAP_GESTURES * sizeof(Action);
 // No chord region: see MK_MACRO_SLOTS in Config.h.
 static const uint16_t MK_PALETTE_OFFSET = MK_KEYMAP_OFFSET + MK_KEYMAP_SIZE;
-static const uint16_t MK_PALETTE_SIZE = (uint16_t)MK_LAYER_COUNT * MK_LED_COUNT * 3;
+static const uint16_t MK_PALETTE_SIZE = (uint16_t)MK_LED_COUNT * 3;
 static const uint16_t MK_MACRO_OFFSET = MK_PALETTE_OFFSET + MK_PALETTE_SIZE;
 // One byte per slot: how many records it uses. There is no stored offset --
 // slots are packed in order, so a slot's start is the sum of the counts before
@@ -75,8 +75,8 @@ class Profile {
   // defaults and returns false when anything fails validation.
   bool begin();
 
-  Action action(uint8_t layer, uint8_t key, uint8_t gesture) const;
-  Rgb paletteColor(uint8_t layer, uint8_t led) const;
+  Action action(uint8_t key, uint8_t gesture) const;
+  Rgb paletteColor(uint8_t led) const;
 
   uint8_t macroRecordCount(uint8_t slot) const;
   // Where a slot's records start, in records from the base of the region. Sums
@@ -89,9 +89,7 @@ class Profile {
   MacroStep macroRecord(uint16_t base, uint8_t index) const;
 
   uint8_t brightness() const { return brightness_; }
-  uint8_t baseLayer() const { return baseLayer_; }
   void setBrightness(uint8_t value) { brightness_ = value; }
-  void setBaseLayer(uint8_t value) { baseLayer_ = value; }
 
   // Persists the runtime-tunable header fields without touching the body.
   void saveHeader();
@@ -137,11 +135,10 @@ class Profile {
   uint16_t bodyCrc() const;
 
  private:
-  uint16_t keymapAddress(uint8_t layer, uint8_t key, uint8_t gesture) const;
+  uint16_t keymapAddress(uint8_t key, uint8_t gesture) const;
   void writeHeaderFields(uint16_t crc);
 
   uint8_t brightness_ = MK_LED_DEFAULT_BRIGHTNESS;
-  uint8_t baseLayer_ = 0;
   uint8_t flags_ = 0;
 
   uint8_t *stage_ = NULL;
