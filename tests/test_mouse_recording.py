@@ -11,7 +11,7 @@ import pytest
 
 from macrokey.recorder.events import KEY_DOWN, MOUSE_CLICK, SCROLL, RawEvent
 from macrokey.recorder.normalize import normalize, reduce_to_device_macro, summarize
-from macrokey.recorder.recorder import Recorder
+from macrokey.recorder.recorder import Recorder, pynput_keyboard
 
 
 def click(token: str, at: float, x: int = 0, y: int = 0) -> RawEvent:
@@ -32,12 +32,12 @@ def press(token: str, at: float, char: str = "") -> RawEvent:
 def test_a_click_becomes_a_replayable_step() -> None:
     """It used to be recorded as an annotated no-op, so nothing was replayed."""
     steps = normalize([click("left", 1.0)])
-    assert steps == [{"type": "mouse_button", "params": {"button": "left"}}]
+    assert steps == [{"type": "mouse_button", "params": {"button": "left", "mode": "click"}}]
 
 
 def test_the_button_is_kept_and_the_position_is_not() -> None:
     steps = normalize([click("right", 1.0, x=1234, y=567)])
-    assert steps[0]["params"] == {"button": "right"}
+    assert steps[0]["params"] == {"button": "right", "mode": "click"}
     assert "x" not in steps[0]["params"] and "y" not in steps[0]["params"]
 
 
@@ -83,12 +83,12 @@ def test_an_unknown_button_is_not_forced_onto_the_device() -> None:
 
 
 def test_short_typed_text_mixed_with_mouse_fits_on_the_device() -> None:
-    """Text expands to key presses, so this no longer needs the host at all."""
+    """Text is a run the firmware types itself, so this needs no host at all."""
     recording = normalize([press("h", 1.0, "h"), press("i", 1.05, "i"), click("left", 1.5)])
     assert any(step["type"] == "text" for step in recording)
     macro = reduce_to_device_macro(recording)
     assert macro is not None
-    assert [action.kind for action in macro] == ["key", "key", "delay", "mouse_button"]
+    assert [action.kind for action in macro] == ["text", "delay", "mouse_button"]
 
 
 def test_text_the_keypad_has_no_keys_for_still_needs_the_host() -> None:
@@ -140,16 +140,32 @@ def test_with_no_region_set_every_click_counts() -> None:
     assert len(device._events) == 1
 
 
-def test_button_release_is_not_a_second_click(recorder) -> None:
+def test_a_press_and_its_release_are_one_click_step(recorder) -> None:
+    """Both halves are captured now -- normalize needs the pair to tell a click
+    from the start of a drag -- but a plain click is still a single step."""
+    from macrokey.recorder.events import MOUSE_CLICK, MOUSE_RELEASE
+
     recorder._events.clear()
     recorder._on_click(10, 10, type("B", (), {"name": "left"}), True)
     recorder._on_click(10, 10, type("B", (), {"name": "left"}), False)
-    assert len(recorder._events) == 1
+    assert [event.kind for event in recorder._events] == [MOUSE_CLICK, MOUSE_RELEASE]
+
+    steps = normalize(recorder._events)
+    assert steps == [{"type": "mouse_button", "params": {"button": "left", "mode": "click"}}]
 
 
 # ------------------------------------------------------------------ stop key --
 
+#: These drive the pynput path directly. Without pynput `_describe_key` cannot
+#: name a key at all, so the tests fail for a reason that has nothing to do with
+#: what they check -- and pynput is an optional extra, so that is the normal
+#: state on a machine that only installed the CLI.
+needs_pynput = pytest.mark.skipif(
+    pynput_keyboard is None, reason="pynput is an optional extra and is not installed"
+)
 
+
+@needs_pynput
 def test_esc_is_recordable_when_no_stop_key_is_set() -> None:
     """Esc used to end the recording, so a macro could never contain it."""
     device = Recorder()
@@ -158,9 +174,68 @@ def test_esc_is_recordable_when_no_stop_key_is_set() -> None:
     assert [event.token for event in device._events] == ["esc"]
 
 
+@needs_pynput
 def test_a_stop_key_still_works_when_one_is_asked_for() -> None:
     device = Recorder(stop_key="esc")
     device.recording = True
     device._on_press(type("K", (), {"name": "esc"}))
     assert device.recording is False
     assert device._events == []
+
+
+# ------------------------------------------------------------ pointer motion --
+
+
+def test_pointer_movement_becomes_one_relative_step() -> None:
+    """A mouse reports hundreds of deltas a second. The source sums them, so a
+    gesture arrives as a single move rather than a thousand one-pixel steps."""
+    from macrokey.recorder.events import MOUSE_MOVE, RawEvent
+    from macrokey.recorder.normalize import normalize
+
+    steps = normalize([RawEvent(kind=MOUSE_MOVE, token="move", at=0.0, data=(120, -40))])
+    assert steps == [{"type": "mouse_move", "params": {"dx": 120, "dy": -40}}]
+
+
+def test_a_long_move_is_split_into_signed_byte_steps() -> None:
+    """dx and dy are one signed byte each on the wire."""
+    from macrokey.config.model import Action
+    from macrokey.recorder.normalize import reduce_to_device_macro
+
+    macro = reduce_to_device_macro(
+        [{"type": "mouse_move", "params": {"dx": 300, "dy": -200}}]
+    )
+    assert macro is not None
+    assert all(isinstance(step, Action) and step.kind == "mouse_move" for step in macro)
+    assert sum(step.dx for step in macro) == 300
+    assert sum(step.dy for step in macro) == -200
+    for step in macro:
+        assert -128 <= step.dx <= 127 and -128 <= step.dy <= 127
+
+
+def test_a_split_move_travels_in_a_straight_line() -> None:
+    """Both axes advance together. Draining one first would send the pointer
+    along an L and a drag would select the wrong thing on the way."""
+    from macrokey.recorder.normalize import reduce_to_device_macro
+
+    macro = reduce_to_device_macro([{"type": "mouse_move", "params": {"dx": 254, "dy": 254}}])
+    assert macro is not None
+    assert all(step.dx and step.dy for step in macro)
+
+
+def test_a_move_survives_the_binary_round_trip() -> None:
+    from macrokey.config import binary
+    from macrokey.config.model import Action, default_profile
+
+    profile = default_profile()
+    profile.device_macros = [[Action(kind="mouse_move", dx=-30, dy=45)]]
+    restored = binary.decode_profile(binary.encode_profile(profile))
+    step = restored.device_macros[0][0]
+    assert (step.kind, step.dx, step.dy) == ("mouse_move", -30, 45)
+
+
+def test_the_recorder_captures_the_mouse_by_default() -> None:
+    """It was off, so hold-to-record -- which has no checkbox to offer -- gave
+    back keyboard-only recordings with nothing saying why."""
+    from macrokey.config.store import Settings
+
+    assert Settings().recorder_capture_mouse is True

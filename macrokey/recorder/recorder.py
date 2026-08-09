@@ -9,7 +9,7 @@ from collections.abc import Callable
 from typing import Any
 
 from . import evdev_source
-from .events import KEY_DOWN, KEY_UP, MOUSE_CLICK, SCROLL, RawEvent
+from .events import KEY_DOWN, KEY_UP, MOUSE_CLICK, MOUSE_RELEASE, SCROLL, RawEvent
 from .normalize import (
     DEFAULT_MIN_GAP_MS,
     normalize,
@@ -215,13 +215,17 @@ class Recorder:
         self._record(RawEvent(kind=KEY_UP, token=token, char=char, at=time.monotonic()))
 
     def _on_click(self, x: int, y: int, button, pressed: bool) -> None:
-        if not pressed:
-            return
         if self._inside_ignored_region(x, y):
             return
         name = getattr(button, "name", "left")
+        # Both halves, so normalize can tell a click from the start of a drag.
         self._record(
-            RawEvent(kind=MOUSE_CLICK, token=name, at=time.monotonic(), data=(int(x), int(y)))
+            RawEvent(
+                kind=MOUSE_CLICK if pressed else MOUSE_RELEASE,
+                token=name,
+                at=time.monotonic(),
+                data=(int(x), int(y)),
+            )
         )
 
     def _inside_ignored_region(self, x: int, y: int) -> bool:

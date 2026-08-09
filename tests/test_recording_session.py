@@ -17,6 +17,7 @@ from macrokey.session import RecordingSession
 class FakeDevice:
     def __init__(self, fail: bool = False) -> None:
         self.fail = fail
+        self.connected = True
         self.colors: list[tuple[int, int, int]] = []
         self.modes: list[bool] = []
 
@@ -46,9 +47,14 @@ class FakeApp:
         self._assign_raises = behaviour.get("assign_raises", False)
         self._push_raises = behaviour.get("push_raises", False)
         self._where = behaviour.get("where", "on the keypad: a")
+        self.requested: list[int] = []
 
     def status(self, message: str) -> None:
         self.messages.append(message)
+
+    def request_record(self, key: int) -> None:
+        """The real one hands this to the record worker."""
+        self.requested.append(key)
 
     def start_recording(self, on_event=None) -> None:
         if self._start_raises:
@@ -200,18 +206,64 @@ def test_aborting_when_idle_does_nothing() -> None:
     assert app.messages == []
 
 
-def test_refreshing_the_led_while_idle_is_a_no_op() -> None:
-    app, session, _ = session_for()
-    session.refresh_led()
-    assert app.device.colors == []
+# ------------------------------------------------------------------ watchdog --
 
 
-def test_refreshing_the_led_while_recording_re_sends_the_colour() -> None:
+def _run_watchdog(monkeypatch, session, seconds: float = 2.0):
+    """Drives the watchdog fast enough to observe, then waits for it to act."""
+    import time as _time
+
+    import macrokey.session as session_module
+
+    monkeypatch.setattr(session_module, "WATCH_SECONDS", 0.01)
+    session._start_watchdog()
+    deadline = _time.monotonic() + seconds
+    while _time.monotonic() < deadline:
+        _time.sleep(0.01)
+        yield
+
+
+def test_the_watchdog_keeps_the_recording_colour_alive(monkeypatch) -> None:
+    """The pad drops back to its own scene after LED_HOLD_MS of silence, so a
+    long recording has to keep saying so."""
     app, session, _ = session_for()
     session.handle_request(0)
     before = len(app.device.colors)
-    session.refresh_led()
-    assert len(app.device.colors) == before + 1
+    for _ in _run_watchdog(monkeypatch, session):
+        if len(app.device.colors) > before:
+            break
+    assert len(app.device.colors) > before
+
+
+def test_a_disconnected_pad_drops_the_recording(monkeypatch) -> None:
+    """The pad is the only way to finish one. Unplugged, nothing would ever
+    arrive to stop it and global capture would stay on for the session."""
+    app, session, _ = session_for()
+    session.handle_request(0)
+    assert session.recording
+    app.device.connected = False
+    for _ in _run_watchdog(monkeypatch, session):
+        if not session.recording:
+            break
+    assert not session.recording
+    assert app.started is False
+    assert any("disconnected" in message for message in app.messages)
+
+
+def test_a_recording_that_runs_too_long_is_stored_rather_than_left_open(
+    monkeypatch,
+) -> None:
+    """Finishing goes through the record worker, not the watchdog thread: the
+    worker owns start and finish so the two cannot interleave."""
+    import macrokey.session as session_module
+
+    monkeypatch.setattr(session_module, "MAX_RECORDING_SECONDS", 0.0)
+    app, session, _ = session_for()
+    session.handle_request(0)
+    for _ in _run_watchdog(monkeypatch, session):
+        if app.requested:
+            break
+    assert app.requested == [0]
 
 
 @pytest.mark.parametrize("key", range(8))
@@ -220,3 +272,82 @@ def test_every_key_can_be_recorded_into(key: int) -> None:
     session.handle_request(key)
     session.handle_request(key)
     assert app.assigned[2] == key
+
+
+# ------------------------------------------------ which thread handles it --
+
+
+def test_a_record_request_is_not_handled_on_the_serial_reader_thread() -> None:
+    """Handling it inline means the reader thread waits for a reply only the
+    reader thread can deliver. It never deadlocked outright -- every device call
+    just timed out -- so recording started with no red pixel and finishing
+    ground through twenty timeouts before failing to save.
+    """
+    import threading
+    import time
+
+    from macrokey.app import MacroKeyApp
+    from macrokey.device.protocol import RecordRequest
+
+    app = MacroKeyApp.__new__(MacroKeyApp)  # no settings, no serial port
+    app._record_queue = __import__("queue").Queue()
+    app._record_thread = None
+    app._status_callbacks = []
+    app._event_callbacks = []
+
+    seen: list[tuple[int, str]] = []
+
+    class Session:
+        def handle_request(self, key: int) -> None:
+            seen.append((key, threading.current_thread().name))
+
+    app.session = Session()
+    caller = threading.current_thread().name
+
+    MacroKeyApp._on_device_event(app, RecordRequest(key=3))
+
+    deadline = time.monotonic() + 2.0
+    while not seen and time.monotonic() < deadline:
+        time.sleep(0.01)
+
+    assert seen, "the request was never handled"
+    key, thread_name = seen[0]
+    assert key == 3
+    assert thread_name != caller, "handled inline on the delivering thread"
+
+
+def test_requests_are_handled_in_order_by_a_single_worker() -> None:
+    """Start and finish are two halves of one state machine. A thread per
+    request would let a finish overtake the start it belongs to."""
+    import queue as _queue
+    import threading
+    import time
+
+    from macrokey.app import MacroKeyApp
+    from macrokey.device.protocol import RecordRequest
+
+    app = MacroKeyApp.__new__(MacroKeyApp)
+    app._record_queue = _queue.Queue()
+    app._record_thread = None
+    app._status_callbacks = []
+    app._event_callbacks = []
+
+    seen: list[int] = []
+    threads: set[str] = set()
+
+    class Session:
+        def handle_request(self, key: int) -> None:
+            threads.add(threading.current_thread().name)
+            time.sleep(0.02)  # a real one writes the whole profile
+            seen.append(key)
+
+    app.session = Session()
+    for key in (0, 0, 5, 5):
+        MacroKeyApp._on_device_event(app, RecordRequest(key=key))
+
+    deadline = time.monotonic() + 3.0
+    while len(seen) < 4 and time.monotonic() < deadline:
+        time.sleep(0.01)
+
+    assert seen == [0, 0, 5, 5]
+    assert len(threads) == 1

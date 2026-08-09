@@ -19,9 +19,15 @@ typedef void (*MkKeyReportFn)(uint8_t key, uint8_t gesture, uint8_t layer, bool 
 // Fired for ACT_HOST. No HID was sent; the desktop app is expected to act.
 typedef void (*MkHostActionFn)(uint8_t token, uint8_t key, uint8_t layer);
 
-typedef void (*MkChordReportFn)(uint8_t mask, uint8_t layer);
 //: The pad asking the host to start or finish recording into this key.
 typedef void (*MkRecordRequestFn)(uint8_t key);
+
+// Called while a macro is replaying, roughly every few milliseconds. A macro
+// runs inside loop(), so without this the pixel freezes on whatever it was
+// showing for as long as the macro lasts. Deliberately not a serial pump: the
+// host writes profiles, and letting one land while a macro is reading EEPROM
+// would change the steps out from under it.
+typedef void (*MkMacroYieldFn)();
 
 class KeyEngine {
  public:
@@ -29,8 +35,9 @@ class KeyEngine {
   void update(uint32_t now);
 
   void setRecordCallback(MkRecordRequestFn onRecord) { onRecord_ = onRecord; }
+  void setMacroYield(MkMacroYieldFn onYield) { onYield_ = onYield; }
 
-  void setReportCallbacks(MkKeyReportFn key, MkHostActionFn host, MkChordReportFn chord);
+  void setReportCallbacks(MkKeyReportFn key, MkHostActionFn host);
 
   uint8_t activeLayer() const;
   void setBaseLayer(uint8_t layer);
@@ -40,7 +47,6 @@ class KeyEngine {
 
  private:
   void handleEvent(const KeyEvent &event, uint32_t now);
-  void checkChords(uint32_t now);
   void serviceRepeat(uint32_t now);
   void refreshDoubleTapMask();
 
@@ -48,6 +54,10 @@ class KeyEngine {
   void dispatch(const Action &action, uint8_t key, uint32_t now);
   void dispatchKey(const Action &action);
   void runMacro(uint8_t slot, uint32_t now);
+  // Types one text run. Returns the record index just past it.
+  uint8_t runText(uint16_t base, uint8_t header, uint8_t length, uint8_t count);
+  // delay(), but the pixel keeps moving.
+  void macroWait(uint16_t milliseconds);
 
   Profile *profile_ = NULL;
   ButtonInput *input_ = NULL;
@@ -55,8 +65,8 @@ class KeyEngine {
 
   MkKeyReportFn onKey_ = NULL;
   MkHostActionFn onHost_ = NULL;
-  MkChordReportFn onChord_ = NULL;
   MkRecordRequestFn onRecord_ = NULL;
+  MkMacroYieldFn onYield_ = NULL;
 
   uint8_t baseLayer_ = 0;
   uint8_t momentaryLayer_ = 0;
@@ -72,6 +82,5 @@ class KeyEngine {
   int8_t repeatKey_ = -1;
   uint32_t repeatNextAt_ = 0;
 
-  uint8_t chordFiredMask_ = 0;
   bool hidEnabled_ = false;
 };

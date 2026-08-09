@@ -54,12 +54,20 @@ static void reportHost(uint8_t token, uint8_t key, uint8_t layer) {
   gSerial.sendHostAction(token, key, layer);
 }
 
-static void reportChord(uint8_t mask, uint8_t layer) {
-  gSerial.sendChord(mask, layer);
-}
-
 static void reportRecordRequest(uint8_t key) {
   gSerial.sendRecordRequest(key);
+}
+
+// Called from inside a replaying macro. A macro runs in loop(), so without this
+// the pixel holds whatever it was showing for the whole replay -- and replaying
+// the pauses is the point, so that can be seconds of a pad that looks dead.
+//
+// LEDs and the board LEDs only. Serial is deliberately left queued: the host
+// writes profiles, and committing one while a macro is reading its records out
+// of EEPROM would change the steps out from under it.
+static void macroYield() {
+  quietBoardLeds();
+  gLeds.update(millis());
 }
 
 void setup() {
@@ -69,8 +77,9 @@ void setup() {
   bool profileValid = gProfile.begin();
   gLeds.begin(&gProfile);
   gEngine.begin(&gProfile, &gInput, &gLeds);
-  gEngine.setReportCallbacks(reportKey, reportHost, reportChord);
+  gEngine.setReportCallbacks(reportKey, reportHost);
   gEngine.setRecordCallback(reportRecordRequest);
+  gEngine.setMacroYield(macroYield);
   gSerial.begin(&gProfile, &gEngine, &gLeds);
 
   // Announce ourselves unconditionally: a host that opens the port later will

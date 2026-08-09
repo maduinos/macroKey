@@ -69,6 +69,10 @@ class Settings:
     agentpet_enabled: bool = False
     agentpet_socket: str = ""  # empty means the AgentPet default location
     recorder_min_gap_ms: int = 40
+    #: Clicks and the wheel, not pointer positions. On by default because
+    #: hold-to-record is the only way in now, and it has no checkbox to offer:
+    #: someone recording a drag-and-drop gets nothing back and no reason why.
+    recorder_capture_mouse: bool = True
     theme: str = "system"
 
     @classmethod
@@ -108,7 +112,12 @@ def load_profile() -> Profile:
     if path.exists():
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
-            return Profile.from_dict(migrate(data))
+            profile = Profile.from_dict(migrate(data))
+            # Repairs a profile that leaked storage before slots were reclaimed
+            # on re-record. Done on the way in rather than in ``__post_init__``
+            # so that decoding a device blob stays a faithful round trip.
+            profile.reclaim_storage()
+            return profile
         except (OSError, json.JSONDecodeError, ValueError, KeyError, TypeError) as exc:
             # Falling straight back to defaults loses the file on the next save:
             # the app starts up looking factory fresh, writes that over the

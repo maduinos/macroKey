@@ -20,17 +20,31 @@ LED_COUNT = 1
 # mode that was invisible and a way in that had to be remembered, and the keymap
 # they cost is EEPROM that macro steps use instead.
 LAYER_COUNT = 1
-CHORD_SLOTS = 8
 MACRO_SLOTS = 16
-MACRO_STEP_CAPACITY = 245  # (768 - 32 index bytes) // 3 bytes per step
+#: Three-byte records the macro region holds across every slot: the ATmega32u4's
+#: whole 1 KB EEPROM, less the header, keymap and palette, less one count byte
+#: per slot. `binary` asserts it against the layout it actually builds.
+#:
+#: A *record* is not a step. A typed run costs one header record plus one record
+#: per three characters, so 308 records is roughly 900 characters of text -- the
+#: old layout stored one 3 byte key action per character and managed 273.
+MACRO_RECORD_CAPACITY = 308
+#: The most records any one macro may use: a slot's count is a single byte.
+MACRO_MAX_RECORDS = 255
+#: The most characters one text record run may carry, for the same reason.
+TEXT_RUN_MAX = 255
 
 GESTURES = ("tap", "double", "hold")
 
-#: What the editor offers. The same three: eight keys carrying 96 slots is the
-#: reason the pad is worth having, and hold is how the upper layers are reached.
-EDITABLE_GESTURES = GESTURES
+#: What the editor offers. Hold is missing on purpose: holding a key alone for
+#: three seconds is how recording starts and stops, and the firmware reports the
+#: hold gesture on its way there. A key with both would fire its hold binding at
+#: 400 ms and then open the recorder at 3 s -- one press, two unrelated things,
+#: neither of them asked for. Hold belongs to recording; tap and double are the
+#: two the pad can bind without ambiguity.
+EDITABLE_GESTURES = ("tap", "double")
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 # Action type ids, shared with ActionTypes.h.
 ACTION_TYPE_IDS: dict[str, int] = {
@@ -46,10 +60,20 @@ ACTION_TYPE_IDS: dict[str, int] = {
     "host": 9,
     "led_scene": 10,
     "delay": 11,
+    #: Macro records only. Carries its characters in the records that follow it
+    #: rather than one 3 byte key action each, which is what makes a recording
+    #: of real typed text fit on the pad at all.
+    "text": 12,
 }
 
 KEYF_REPEAT = 0x01
 KEYF_STICKY = 0x02
+
+#: `Action.mode` for kind="mouse_button", stored in the record's `b` byte.
+#: A press that is never released is what a drag is made of, so the button is
+#: not implicitly let go the way a click does it.
+MOUSE_MODES: dict[str, int] = {"click": 0, "press": 1, "release": 2}
+ID_TO_MOUSE_MODE = {value: key for key, value in MOUSE_MODES.items()}
 
 
 class ProfileError(ValueError):
@@ -73,7 +97,8 @@ class Action:
     hotkey: str = ""       # kind="key"
     usage: str = ""        # kind="consumer"
     button: str = "left"   # kind="mouse_button"
-    clicks: int = 1
+    mode: str = "click"    # click, press or release -- press is half a drag
+    text: str = ""         # kind="text", macro records only
     dx: int = 0            # kind="mouse_move"
     dy: int = 0
     delta: int = 0         # kind="mouse_wheel"
@@ -88,10 +113,48 @@ class Action:
     def __post_init__(self) -> None:
         if self.kind not in ACTION_TYPE_IDS:
             raise ProfileError(f"unknown action kind: {self.kind!r}")
+        if self.kind == "mouse_button" and self.mode not in MOUSE_MODES:
+            raise ProfileError(f"unknown mouse mode: {self.mode!r}")
+        if self.kind == "text":
+            if not self.text:
+                raise ProfileError("a text action needs text")
+            if len(self.text) > TEXT_RUN_MAX:
+                raise ProfileError(
+                    f"a text run is at most {TEXT_RUN_MAX} characters, got {len(self.text)}"
+                )
+            if not self.text.isascii() or not all(0x20 <= ord(c) <= 0x7E for c in self.text):
+                raise ProfileError("device text must be printable ASCII")
 
     @property
     def is_empty(self) -> bool:
         return self.kind == "none"
+
+    # ----------------------------------------------------------- records --
+
+    def records(self) -> list[tuple[int, int, int]]:
+        """The 3-byte macro records this action occupies, in order.
+
+        Almost every action is one record. Text is the exception: a header
+        carrying the length, then its characters packed three to a record. That
+        is the whole reason a recording of typed text fits -- as one key action
+        per character it cost three bytes a letter and a single sentence filled
+        the pad.
+        """
+        if self.kind == "text":
+            payload = self.text.encode("ascii")
+            records = [(ACTION_TYPE_IDS["text"], len(payload), 0)]
+            for offset in range(0, len(payload), 3):
+                chunk = payload[offset : offset + 3].ljust(3, b"\0")
+                records.append((chunk[0], chunk[1], chunk[2]))
+            return records
+        type_id, a, b, _flags = self.encode()
+        return [(type_id, a, b)]
+
+    def record_count(self) -> int:
+        """How many records `records()` will produce, without building them."""
+        if self.kind == "text":
+            return 1 + (len(self.text) + 2) // 3
+        return 1
 
     def encode(self) -> tuple[int, int, int, int]:
         """Packs into the four bytes the firmware stores per slot."""
@@ -109,7 +172,11 @@ class Action:
             mask = keycodes.MOUSE_BUTTONS.get(self.button)
             if mask is None:
                 raise ProfileError(f"unknown mouse button: {self.button!r}")
-            return type_id, mask, _clamp(self.clicks, 1, 5), 0
+            return type_id, mask, MOUSE_MODES[self.mode], 0
+        if self.kind == "text":
+            # The header only. `records()` is what emits the characters, and a
+            # text action cannot be bound to a key -- it exists inside macros.
+            return type_id, len(self.text), 0, 0
         if self.kind == "mouse_move":
             return type_id, _clamp(self.dx, -127, 127) & 0xFF, _clamp(self.dy, -127, 127) & 0xFF, 0
         if self.kind == "mouse_wheel":
@@ -142,7 +209,7 @@ class Action:
             return cls(kind="consumer", usage=name)
         if kind == "mouse_button":
             name = next((k for k, v in keycodes.MOUSE_BUTTONS.items() if v == a), "left")
-            return cls(kind="mouse_button", button=name, clicks=max(1, b))
+            return cls(kind="mouse_button", button=name, mode=ID_TO_MOUSE_MODE.get(b, "click"))
         if kind == "mouse_move":
             return cls(kind="mouse_move", dx=_signed(a), dy=_signed(b))
         if kind == "mouse_wheel":
@@ -167,7 +234,11 @@ class Action:
         if self.kind == "consumer":
             return f"media: {self.usage}"
         if self.kind == "mouse_button":
-            return f"mouse {self.button} x{self.clicks}"
+            verb = {"click": "click", "press": "hold down", "release": "let go of"}[self.mode]
+            return f"{verb} {self.button} mouse button"
+        if self.kind == "text":
+            preview = self.text if len(self.text) <= 30 else self.text[:27] + "..."
+            return f"type {preview!r}"
         if self.kind == "mouse_move":
             return f"mouse move {self.dx:+d},{self.dy:+d}"
         if self.kind == "mouse_wheel":
@@ -261,28 +332,13 @@ class Layer:
         return cls(name=str(data.get("name", "")), keys=keys)
 
 
-@dataclass
-class Chord:
-    keys: list[int] = field(default_factory=list)
-    action: Action = field(default_factory=Action)
+def macro_records(macro: list[Action]) -> int:
+    """How many 3-byte records a compiled macro occupies on the device.
 
-    @property
-    def mask(self) -> int:
-        mask = 0
-        for index in self.keys:
-            if 0 <= index < KEY_COUNT:
-                mask |= 1 << index
-        return mask
-
-    def to_dict(self) -> dict[str, Any]:
-        return {"keys": list(self.keys), "action": self.action.to_dict()}
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> Chord:
-        return cls(
-            keys=[int(value) for value in data.get("keys", [])],
-            action=Action.from_dict(data.get("action")),
-        )
+    Not ``len(macro)``: a text action spans a header plus its packed
+    characters, and it is records, not actions, that the region runs out of.
+    """
+    return sum(action.record_count() for action in macro)
 
 
 @dataclass
@@ -315,7 +371,9 @@ class Profile:
     brightness: int = 64
     base_layer: int = 0
     layers: list[Layer] = field(default_factory=list)
-    chords: list[Chord] = field(default_factory=list)
+    # No chords. They were eight EEPROM slots the editor never offered a way to
+    # fill and the defaults left empty, so the region only ever held zeroes --
+    # forty bytes that macro records now use instead.
     # Token -> action run on the PC. Keys are ints, matching `EV t=host id=`.
     host_actions: dict[int, HostAction] = field(default_factory=dict)
     device_macros: list[list[Action]] = field(default_factory=list)
@@ -329,41 +387,116 @@ class Profile:
             self.base_layer = 0
 
     def _drop_unreachable_layer_actions(self) -> None:
-        """Clears bindings that switch to a layer this build does not have.
+        """Clears bindings this build can no longer honour.
 
-        A profile written when there were four layers still holds actions
-        pointing at layers 1 to 3. Leaving them would mean a key bound to a
-        switch that cannot happen -- and anything reading the target's name
+        Two kinds. A profile written when there were four layers still holds
+        actions pointing at layers 1 to 3; leaving them would mean a key bound
+        to a switch that cannot happen, and anything reading the target's name
         indexes off the end of the list.
+
+        The other is any binding on hold, which is now how recording starts.
+        The editor stopped offering it, but profiles from before it did still
+        carry one, and a hold binding fires on the way to the recorder -- so it
+        has to be cleared here rather than merely hidden.
         """
         for index, layer in enumerate(self.layers):
             keys = []
             for slot in layer.keys:
                 for gesture in GESTURES:
                     action = slot.gesture(gesture)
-                    if (
+                    unreachable_layer = (
                         action.kind in ("layer_momentary", "layer_toggle")
                         and action.layer >= LAYER_COUNT
-                    ):
+                    )
+                    reserved_for_recording = gesture not in EDITABLE_GESTURES
+                    if unreachable_layer or (reserved_for_recording and action.kind != "none"):
                         slot = slot.with_gesture(gesture, Action())
                 keys.append(slot)
             self.layers[index] = replace(layer, keys=keys)
 
     def slot(self, layer: int, key: int) -> KeySlot:
-        return self.layers[layer].keys[key]
+        # Checked rather than indexed straight through. A negative key is a
+        # perfectly good Python index and means "counting from the end", so a
+        # key that arrived as -1 read and wrote the *last* key without anything
+        # going wrong anywhere -- the recording simply appeared on key 8. An
+        # index this far off is a bug upstream, and it should say so here.
+        if not 0 <= layer < len(self.layers):
+            raise ProfileError(f"layer {layer} is out of range")
+        keys = self.layers[layer].keys
+        if not 0 <= key < len(keys):
+            raise ProfileError(f"key {key} is out of range (0..{len(keys) - 1})")
+        return keys[key]
 
     def action(self, layer: int, key: int, gesture: str) -> Action:
         return self.slot(layer, key).gesture(gesture)
 
     def set_action(self, layer: int, key: int, gesture: str, action: Action) -> None:
-        self.layers[layer].keys[key] = self.slot(layer, key).with_gesture(gesture, action)
+        # Refused here, not merely hidden in the editor. Hold is how recording
+        # starts, and the firmware still reports the gesture at 400 ms on the
+        # way there -- a binding on it would fire then, and the recorder would
+        # open at 3 s: one press, two unrelated things. Clearing it in
+        # ``__post_init__`` only catches it on the next load, by which time the
+        # binding has already been written to the pad.
+        if gesture not in EDITABLE_GESTURES and not action.is_empty:
+            raise ProfileError(
+                f"{gesture!r} is reserved: holding a key is how recording starts. "
+                f"Bind one of {', '.join(EDITABLE_GESTURES)} instead."
+            )
+        updated = self.slot(layer, key).with_gesture(gesture, action)  # validates both
+        self.layers[layer].keys[key] = updated
 
     def next_host_token(self) -> int:
-        """Lowest unused token. 200+ is reserved for chords and system hooks."""
+        """Lowest unused token. 200+ is reserved for system hooks."""
         for token in range(200):
             if token not in self.host_actions:
                 return token
         raise ProfileError("no free host action token")
+
+    # ------------------------------------------------------------- storage --
+
+    def referenced_storage(self) -> tuple[set[int], set[int]]:
+        """``(macro slots, host tokens)`` some binding still points at."""
+        slots: set[int] = set()
+        tokens: set[int] = set()
+        for layer in self.layers:
+            for key in layer.keys:
+                for gesture in GESTURES:
+                    action = key.gesture(gesture)
+                    if action.kind == "sequence":
+                        slots.add(action.slot)
+                    elif action.kind == "host":
+                        tokens.add(action.token)
+        return slots, tokens
+
+    def reclaim_storage(self) -> tuple[int, int]:
+        """Empties macro slots and host actions nothing points at any more.
+
+        Recording into a key that already held one is the ordinary case -- it is
+        how a macro gets corrected -- and every time it happened the old slot was
+        left full. Sixteen corrections to a single key filled all sixteen slots
+        with unreachable steps, and from then on every recording fell back to a
+        host action: the pad quietly stopped working with the app closed, which
+        is the one thing it exists to do.
+
+        Sweeping by reference rather than freeing the slot being replaced is
+        what also repairs a profile that already leaked, and it stays correct if
+        two bindings ever share a slot.
+
+        Returns ``(slots freed, tokens freed)``.
+        """
+        slots, tokens = self.referenced_storage()
+
+        freed_slots = 0
+        for index, macro in enumerate(self.device_macros):
+            if macro and index not in slots:
+                self.device_macros[index] = []
+                freed_slots += 1
+
+        stale = [token for token in self.host_actions if token not in tokens]
+        for token in stale:
+            del self.host_actions[token]
+
+        return freed_slots, len(stale)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -372,7 +505,6 @@ class Profile:
             "brightness": self.brightness,
             "base_layer": self.base_layer,
             "layers": [layer.to_dict() for layer in self.layers],
-            "chords": [chord.to_dict() for chord in self.chords],
             "host_actions": {
                 str(token): action.to_dict() for token, action in sorted(self.host_actions.items())
             },
@@ -389,7 +521,6 @@ class Profile:
             brightness=_clamp(int(data.get("brightness", 64)), 0, 255),
             base_layer=_clamp(int(data.get("base_layer", 0)), 0, LAYER_COUNT - 1),
             layers=[Layer.from_dict(item) for item in data.get("layers", [])],
-            chords=[Chord.from_dict(item) for item in data.get("chords", [])],
             host_actions={
                 int(token): HostAction.from_dict(value)
                 for token, value in data.get("host_actions", {}).items()
@@ -427,9 +558,7 @@ def default_profile() -> Profile:
     for key in range(KEY_COUNT):
         profile.set_action(0, key, "tap", Action(kind="key", hotkey=f"ctrl+alt+shift+{key + 1}"))
 
-    # No host actions and no chord by default. The tokens that used to be here
-    # pointed at nothing, so three keys on layer 1 did nothing at all and the
-    # chord asked a daemon that is not running to stop a job that never started.
-    profile.chords = []
+    # No host actions by default. The tokens that used to be here pointed at
+    # nothing, so three keys did nothing at all.
     profile.host_actions = {}
     return profile

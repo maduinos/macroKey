@@ -151,43 +151,39 @@ class RecordRequest:
     uptime_ms: int = 0
 
 
-@dataclass
-class ChordEvent:
-    keys: list[int]
-    layer: int
+def _field(message: Message, key: str, default: int) -> int:
+    """`message.int` with the None folded away -- and without `or`.
+
+    `message.int("k", -1) or -1` reads as a default and is not one: k=0 is
+    falsy, so the first key on the pad parsed as -1. Every use of that index
+    then silently meant "the last key", because that is what a negative index
+    means to a Python list. Holding key 1 to record stored the macro on key 8.
+    """
+    value = message.int(key, default)
+    return default if value is None else value
 
 
-def parse_event(message: Message) -> KeyEvent | HostEvent | ChordEvent | RecordRequest | None:
+def parse_event(message: Message) -> KeyEvent | HostEvent | RecordRequest | None:
     if message.verb != "EV":
         return None
     kind = message.get("t")
     if kind == "key":
         return KeyEvent(
-            key=message.int("k", -1) or -1,
+            key=_field(message, "k", -1),
             gesture=message.get("g", "?") or "?",
-            layer=message.int("l", 0) or 0,
-            uptime_ms=message.int("ms", 0) or 0,
+            layer=_field(message, "l", 0),
+            uptime_ms=_field(message, "ms", 0),
         )
     if kind == "host":
         return HostEvent(
             # `tok`, not `id`: `id` is reserved for request/response correlation.
-            token=message.int("tok", -1) or -1,
-            key=message.int("k", -1) or -1,
-            layer=message.int("l", 0) or 0,
+            token=_field(message, "tok", -1),
+            key=_field(message, "k", -1),
+            layer=_field(message, "l", 0),
         )
     if kind == "record":
         return RecordRequest(
-            key=message.int("k", -1) or -1,
-            uptime_ms=message.int("ms", 0) or 0,
-        )
-    if kind == "chord":
-        mask_text = message.get("m", "0") or "0"
-        try:
-            mask = int(mask_text, 16)
-        except ValueError:
-            mask = 0
-        return ChordEvent(
-            keys=[bit for bit in range(8) if mask & (1 << bit)],
-            layer=message.int("l", 0) or 0,
+            key=_field(message, "k", -1),
+            uptime_ms=_field(message, "ms", 0),
         )
     return None

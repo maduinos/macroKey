@@ -7,16 +7,16 @@ If that header changes, this module changes with it and ``SCHEMA`` goes up.
 from __future__ import annotations
 
 from .model import (
-    CHORD_SLOTS,
-    GESTURES,
+    ACTION_TYPE_IDS,
+    EDITABLE_GESTURES,
     KEY_COUNT,
     LAYER_COLORS,
     LAYER_COUNT,
     LED_COUNT,
+    MACRO_MAX_RECORDS,
+    MACRO_RECORD_CAPACITY,
     MACRO_SLOTS,
-    MACRO_STEP_CAPACITY,
     Action,
-    Chord,
     KeySlot,
     Layer,
     Profile,
@@ -24,21 +24,42 @@ from .model import (
 )
 
 MAGIC = b"MKEY"
-SCHEMA = 1
+#: Bumped from 1 with the layout below. The blob is the same 1024 bytes either
+#: way, so without this a pad holding the old arrangement would decode as
+#: nonsense rather than be recognised as out of date.
+SCHEMA = 2
 
 HEADER_SIZE = 16
 KEYMAP_OFFSET = HEADER_SIZE
-KEYMAP_SIZE = LAYER_COUNT * KEY_COUNT * len(GESTURES) * 4
-CHORD_OFFSET = KEYMAP_OFFSET + KEYMAP_SIZE
-CHORD_ENTRY_SIZE = 5
-CHORD_SIZE = CHORD_SLOTS * CHORD_ENTRY_SIZE
-PALETTE_OFFSET = CHORD_OFFSET + CHORD_SIZE
+#: Only the gestures that can be bound are stored. Hold is how recording starts,
+#: so its slot held nothing but zeroes on every key -- 32 bytes of them.
+KEYMAP_GESTURES = EDITABLE_GESTURES
+KEYMAP_SIZE = LAYER_COUNT * KEY_COUNT * len(KEYMAP_GESTURES) * 4
+#: No chord region. Eight slots at five bytes that nothing could fill: the
+#: editor never offered them and the defaults left them empty.
+PALETTE_OFFSET = KEYMAP_OFFSET + KEYMAP_SIZE
 PALETTE_SIZE = LAYER_COUNT * LED_COUNT * 3
 MACRO_OFFSET = PALETTE_OFFSET + PALETTE_SIZE
-MACRO_INDEX_SIZE = MACRO_SLOTS * 2
-# Must match MK_MACRO_REGION_SIZE. Grown when layers were removed.
-MACRO_REGION_SIZE = 768
+#: One byte per slot: how many records it uses. There is no stored offset --
+#: slots are packed in order, so a slot's start is the sum of the counts before
+#: it. That is 32 bytes back, and it retires a whole class of bug: an index and
+#: a region that disagreed about where a macro began.
+MACRO_INDEX_SIZE = MACRO_SLOTS
+#: The ATmega32u4's whole EEPROM. Must match MK_EEPROM_SIZE.
+EEPROM_SIZE = 1024
+#: Everything the fixed regions do not use. Must match MK_MACRO_REGION_SIZE.
+MACRO_REGION_SIZE = EEPROM_SIZE - MACRO_OFFSET
 PROFILE_SIZE = MACRO_OFFSET + MACRO_REGION_SIZE
+RECORD_SIZE = 3
+#: What the region actually holds. `MACRO_RECORD_CAPACITY` in the model is this
+#: number; the assert is what keeps the two from drifting apart.
+_RECORD_CAPACITY = (MACRO_REGION_SIZE - MACRO_INDEX_SIZE) // RECORD_SIZE
+assert _RECORD_CAPACITY == MACRO_RECORD_CAPACITY, (
+    f"model says {MACRO_RECORD_CAPACITY} records, the layout holds {_RECORD_CAPACITY}"
+)
+assert PROFILE_SIZE == EEPROM_SIZE, "the profile is meant to be the whole EEPROM"
+
+_TEXT_TYPE = ACTION_TYPE_IDS["text"]
 
 CHUNK_BYTES = 48  # 48 raw bytes -> 64 base64 chars, inside the 96 byte line cap
 
@@ -54,7 +75,7 @@ def crc16(data: bytes) -> int:
 
 
 def _keymap_address(layer: int, key: int, gesture: int) -> int:
-    index = (layer * KEY_COUNT + key) * len(GESTURES) + gesture
+    index = (layer * KEY_COUNT + key) * len(KEYMAP_GESTURES) + gesture
     return KEYMAP_OFFSET + index * 4
 
 
@@ -76,14 +97,14 @@ def encode_profile(profile: Profile) -> bytes:
     blob[4] = SCHEMA
     blob[5] = LAYER_COUNT
     blob[6] = KEY_COUNT
-    blob[7] = len(GESTURES)
+    blob[7] = len(KEYMAP_GESTURES)
     blob[8] = profile.brightness & 0xFF
     blob[9] = profile.base_layer & 0xFF
     blob[10] = 0
 
     for layer_index, layer in enumerate(profile.layers[:LAYER_COUNT]):
         for key_index, slot in enumerate(layer.keys[:KEY_COUNT]):
-            for gesture_index, gesture in enumerate(GESTURES):
+            for gesture_index, gesture in enumerate(KEYMAP_GESTURES):
                 address = _keymap_address(layer_index, key_index, gesture_index)
                 blob[address : address + 4] = bytes(slot.gesture(gesture).encode())
 
@@ -95,11 +116,6 @@ def encode_profile(profile: Profile) -> bytes:
                 palette = PALETTE_OFFSET + (layer_index * LED_COUNT + key_index) * 3
                 blob[palette : palette + 3] = bytes((red, green, blue))
 
-    for chord_index, chord in enumerate(profile.chords[:CHORD_SLOTS]):
-        address = CHORD_OFFSET + chord_index * CHORD_ENTRY_SIZE
-        blob[address] = chord.mask
-        blob[address + 1 : address + 5] = bytes(chord.action.encode())
-
     _encode_macros(blob, profile)
 
     crc = crc16(bytes(blob[HEADER_SIZE:]))
@@ -109,24 +125,29 @@ def encode_profile(profile: Profile) -> bytes:
 
 
 def _encode_macros(blob: bytearray, profile: Profile) -> None:
-    steps_base = MACRO_OFFSET + MACRO_INDEX_SIZE
+    """Packs every slot's records back to back, counts only in the index."""
+    records_base = MACRO_OFFSET + MACRO_INDEX_SIZE
     cursor = 0
     for slot_index, macro in enumerate(profile.device_macros[:MACRO_SLOTS]):
-        steps = macro[:255]
-        if cursor + len(steps) > MACRO_STEP_CAPACITY:
+        records: list[tuple[int, int, int]] = []
+        for action in macro:
+            records.extend(action.records())
+        if len(records) > MACRO_MAX_RECORDS:
+            raise ProfileError(
+                f"macro slot {slot_index} needs {len(records)} records; "
+                f"a slot holds at most {MACRO_MAX_RECORDS}."
+            )
+        if cursor + len(records) > MACRO_RECORD_CAPACITY:
             raise ProfileError(
                 f"device macro storage exhausted at slot {slot_index}: "
-                f"{MACRO_STEP_CAPACITY} steps available. "
+                f"{MACRO_RECORD_CAPACITY} records available. "
                 "Move the longer macros to host actions."
             )
-        index = MACRO_OFFSET + slot_index * 2
-        blob[index] = cursor
-        blob[index + 1] = len(steps)
-        for step_index, step in enumerate(steps):
-            type_id, a, b, _ = step.encode()
-            address = steps_base + (cursor + step_index) * 3
-            blob[address : address + 3] = bytes((type_id, a, b))
-        cursor += len(steps)
+        blob[MACRO_OFFSET + slot_index] = len(records)
+        for record_index, record in enumerate(records):
+            address = records_base + (cursor + record_index) * RECORD_SIZE
+            blob[address : address + RECORD_SIZE] = bytes(record)
+        cursor += len(records)
 
 
 def decode_profile(blob: bytes, *, name: str = "device") -> Profile:
@@ -135,14 +156,17 @@ def decode_profile(blob: bytes, *, name: str = "device") -> Profile:
     if bytes(blob[0:4]) != MAGIC:
         raise ProfileError("bad magic: this is not a macroKey profile")
     if blob[4] != SCHEMA:
-        raise ProfileError(f"unsupported device profile schema {blob[4]}")
+        raise ProfileError(
+            f"device profile is schema {blob[4]}, this app builds {SCHEMA}. "
+            "Firmware and app are out of step -- re-flash the pad."
+        )
 
     layers: list[Layer] = []
     for layer_index in range(LAYER_COUNT):
         slots: list[KeySlot] = []
         for key_index in range(KEY_COUNT):
             actions = {}
-            for gesture_index, gesture in enumerate(GESTURES):
+            for gesture_index, gesture in enumerate(KEYMAP_GESTURES):
                 address = _keymap_address(layer_index, key_index, gesture_index)
                 actions[gesture] = Action.decode(*blob[address : address + 4])
             if key_index < LED_COUNT:
@@ -153,28 +177,13 @@ def decode_profile(blob: bytes, *, name: str = "device") -> Profile:
             slots.append(KeySlot(color=color, **actions))
         layers.append(Layer(name=f"Layer {layer_index}", keys=slots))
 
-    chords: list[Chord] = []
-    for chord_index in range(CHORD_SLOTS):
-        address = CHORD_OFFSET + chord_index * CHORD_ENTRY_SIZE
-        mask = blob[address]
-        action = Action.decode(*blob[address + 1 : address + 5])
-        if mask == 0 or action.is_empty:
-            continue
-        keys = [bit for bit in range(KEY_COUNT) if mask & (1 << bit)]
-        chords.append(Chord(keys=keys, action=action))
-
     macros: list[list[Action]] = []
-    steps_base = MACRO_OFFSET + MACRO_INDEX_SIZE
+    records_base = MACRO_OFFSET + MACRO_INDEX_SIZE
+    cursor = 0  # slots are packed in order, so this is each slot's start
     for slot_index in range(MACRO_SLOTS):
-        index = MACRO_OFFSET + slot_index * 2
-        offset, count = blob[index], blob[index + 1]
-        steps = []
-        for step_index in range(count):
-            address = steps_base + (offset + step_index) * 3
-            if address + 3 > PROFILE_SIZE:
-                break
-            steps.append(Action.decode(blob[address], blob[address + 1], blob[address + 2], 0))
-        macros.append(steps)
+        count = blob[MACRO_OFFSET + slot_index]
+        macros.append(_decode_macro(blob, records_base, cursor, count))
+        cursor += count
     # Trailing empty slots carry no information; drop them so a decoded profile
     # compares equal to the one that produced it.
     while macros and not macros[-1]:
@@ -185,9 +194,42 @@ def decode_profile(blob: bytes, *, name: str = "device") -> Profile:
         brightness=blob[8],
         base_layer=blob[9] if blob[9] < LAYER_COUNT else 0,
         layers=layers,
-        chords=chords,
         device_macros=macros,
     )
+
+
+def _decode_macro(blob: bytes, base: int, start: int, count: int) -> list[Action]:
+    """Reads one slot back, folding text payload records into their run.
+
+    A text header says how many characters follow, packed three to a record.
+    Those records are not actions and must not be decoded as any -- their bytes
+    are ASCII, and read as action types they would be nonsense.
+    """
+    steps: list[Action] = []
+    index = 0
+    while index < count:
+        address = base + (start + index) * RECORD_SIZE
+        if address + RECORD_SIZE > PROFILE_SIZE:
+            break
+        type_id, a, b = blob[address], blob[address + 1], blob[address + 2]
+
+        if type_id != _TEXT_TYPE:
+            steps.append(Action.decode(type_id, a, b, 0))
+            index += 1
+            continue
+
+        payload_records = (a + 2) // 3
+        if index + 1 + payload_records > count:
+            break  # truncated run: better to stop than invent characters
+        raw = bytearray()
+        for record in range(payload_records):
+            at = base + (start + index + 1 + record) * RECORD_SIZE
+            raw += blob[at : at + RECORD_SIZE]
+        text = raw[:a].decode("ascii", errors="replace")
+        if text:
+            steps.append(Action(kind="text", text=text))
+        index += 1 + payload_records
+    return steps
 
 
 def blob_crc(blob: bytes) -> int:

@@ -24,7 +24,8 @@ class ButtonInput {
   uint32_t lastPressEdgeAt() const { return lastPressEdgeAt_; }
 
   // Swallows every gesture from these keys until they are released. Used when
-  // a chord claims the keys so the individual taps do not also fire.
+  // a record request claims the key, so letting go does not also fire its
+  // binding: the person is programming the key, not using it.
   void suppressUntilRelease(uint8_t mask);
 
   // Keys whose current layer has a DOUBLE binding. Only these pay the double-tap

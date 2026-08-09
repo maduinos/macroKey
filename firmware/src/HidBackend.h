@@ -55,12 +55,28 @@ inline void mkReleaseModifiers(uint8_t mask) {
 
 inline void mkKeyboardReleaseAll() { Keyboard.releaseAll(); }
 
-inline void mkMouseClick(uint8_t mask, uint8_t count) {
-  if (count == 0) count = 1;
-  for (uint8_t i = 0; i < count; i++) {
-    Mouse.click(mask);
-    if (i + 1 < count) delay(40);  // double clicks need a gap to register
+inline void mkMouseButton(uint8_t mask, uint8_t mode) {
+  switch (mode) {
+    case MB_MODE_PRESS: Mouse.press(mask); break;
+    case MB_MODE_RELEASE: Mouse.release(mask); break;
+    default: Mouse.click(mask); break;
   }
+}
+
+// Everything down, unconditionally. A macro cut short between a press and its
+// release would otherwise leave the button held with nothing left to let go.
+inline void mkMouseReleaseAll() {
+  Mouse.release(MB_LEFT);
+  Mouse.release(MB_RIGHT);
+  Mouse.release(MB_MIDDLE);
+}
+
+// One character of a text run. Printable ASCII only: Keyboard.write maps it to
+// a keycode and shift state, and anything else is either a control code we
+// never stored or padding at the end of the last record.
+inline void mkTypeChar(uint8_t character) {
+  if (character < 0x20 || character > 0x7E) return;
+  Keyboard.write(character);
 }
 
 inline void mkMouseMove(int8_t dx, int8_t dy) { Mouse.move(dx, dy, 0); }

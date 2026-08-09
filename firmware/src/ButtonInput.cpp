@@ -3,7 +3,10 @@
 void ButtonInput::begin() {
   for (uint8_t key = 0; key < MK_KEY_COUNT; key++) {
     pinMode(MK_KEY_PINS[key], INPUT_PULLUP);
-    keys_[key] = KeyState{0, 0, 0, PH_IDLE, false, false, false, false};
+    // Value-initialised, so a field added to KeyState starts zeroed instead of
+    // holding whatever the listed initialisers ran out before reaching.
+    keys_[key] = KeyState{};
+    keys_[key].phase = PH_IDLE;
   }
 }
 
