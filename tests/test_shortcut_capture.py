@@ -17,7 +17,7 @@ from PySide6.QtGui import QKeyEvent  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from macrokey.config import Action  # noqa: E402
-from macrokey.ui.app import ShortcutEdit  # noqa: E402
+from macrokey.ui.widgets import ShortcutEdit  # noqa: E402
 
 
 @pytest.fixture(scope="module")

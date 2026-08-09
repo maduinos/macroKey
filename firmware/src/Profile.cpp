@@ -36,9 +36,8 @@ Action makeKey(uint8_t modifiers, uint8_t keycode, uint8_t flags = KEYF_NONE) {
 
 }  // namespace
 
-uint16_t Profile::keymapAddress(uint8_t layer, uint8_t key, uint8_t gesture) const {
-  uint16_t index = ((uint16_t)layer * MK_KEY_COUNT + key) * MK_KEYMAP_GESTURES + gesture;
-  return MK_KEYMAP_OFFSET + index * sizeof(Action);
+uint16_t Profile::keymapAddress(uint8_t key, uint8_t gesture) const {
+  return MK_KEYMAP_OFFSET + ((uint16_t)key * MK_KEYMAP_GESTURES + gesture) * sizeof(Action);
 }
 
 bool Profile::begin() {
@@ -47,7 +46,6 @@ bool Profile::begin() {
                EEPROM.read(MK_HEADER_OFFSET + H_MAGIC + 2) == MK_PROFILE_MAGIC2 &&
                EEPROM.read(MK_HEADER_OFFSET + H_MAGIC + 3) == MK_PROFILE_MAGIC3 &&
                EEPROM.read(MK_HEADER_OFFSET + H_SCHEMA) == MK_PROFILE_SCHEMA &&
-               EEPROM.read(MK_HEADER_OFFSET + H_LAYERS) == MK_LAYER_COUNT &&
                EEPROM.read(MK_HEADER_OFFSET + H_KEYS) == MK_KEY_COUNT &&
                EEPROM.read(MK_HEADER_OFFSET + H_GESTURES) == MK_KEYMAP_GESTURES;
 
@@ -63,21 +61,17 @@ bool Profile::begin() {
   }
 
   brightness_ = EEPROM.read(MK_HEADER_OFFSET + H_BRIGHTNESS);
-  baseLayer_ = EEPROM.read(MK_HEADER_OFFSET + H_BASE_LAYER);
   flags_ = EEPROM.read(MK_HEADER_OFFSET + H_FLAGS);
-  if (baseLayer_ >= MK_LAYER_COUNT) baseLayer_ = 0;
   return true;
 }
 
-Action Profile::action(uint8_t layer, uint8_t key, uint8_t gesture) const {
+Action Profile::action(uint8_t key, uint8_t gesture) const {
   Action result = {ACT_NONE, 0, 0, 0};
   // GESTURE_HOLD is past the end of the keymap on purpose: it is how recording
   // starts, so it is reported but never bound, and asking for it reads as the
   // empty action rather than off the end of the region.
-  if (layer >= MK_LAYER_COUNT || key >= MK_KEY_COUNT || gesture >= MK_KEYMAP_GESTURES) {
-    return result;
-  }
-  uint16_t address = keymapAddress(layer, key, gesture);
+  if (key >= MK_KEY_COUNT || gesture >= MK_KEYMAP_GESTURES) return result;
+  uint16_t address = keymapAddress(key, gesture);
   result.type = EEPROM.read(address + 0);
   result.a = EEPROM.read(address + 1);
   result.b = EEPROM.read(address + 2);
@@ -86,10 +80,10 @@ Action Profile::action(uint8_t layer, uint8_t key, uint8_t gesture) const {
   return result;
 }
 
-Rgb Profile::paletteColor(uint8_t layer, uint8_t led) const {
+Rgb Profile::paletteColor(uint8_t led) const {
   Rgb color = {0, 0, 0};
-  if (layer >= MK_LAYER_COUNT || led >= MK_LED_COUNT) return color;
-  uint16_t address = MK_PALETTE_OFFSET + ((uint16_t)layer * MK_LED_COUNT + led) * 3;
+  if (led >= MK_LED_COUNT) return color;
+  uint16_t address = MK_PALETTE_OFFSET + (uint16_t)led * 3;
   color.r = EEPROM.read(address + 0);
   color.g = EEPROM.read(address + 1);
   color.b = EEPROM.read(address + 2);
@@ -145,11 +139,11 @@ void Profile::writeHeaderFields(uint16_t crc) {
   EEPROM.update(MK_HEADER_OFFSET + H_MAGIC + 2, MK_PROFILE_MAGIC2);
   EEPROM.update(MK_HEADER_OFFSET + H_MAGIC + 3, MK_PROFILE_MAGIC3);
   EEPROM.update(MK_HEADER_OFFSET + H_SCHEMA, MK_PROFILE_SCHEMA);
-  EEPROM.update(MK_HEADER_OFFSET + H_LAYERS, MK_LAYER_COUNT);
+  EEPROM.update(MK_HEADER_OFFSET + H_LAYERS, 1);      // retired, kept for layout
   EEPROM.update(MK_HEADER_OFFSET + H_KEYS, MK_KEY_COUNT);
   EEPROM.update(MK_HEADER_OFFSET + H_GESTURES, MK_KEYMAP_GESTURES);
   EEPROM.update(MK_HEADER_OFFSET + H_BRIGHTNESS, brightness_);
-  EEPROM.update(MK_HEADER_OFFSET + H_BASE_LAYER, baseLayer_);
+  EEPROM.update(MK_HEADER_OFFSET + H_BASE_LAYER, 0);  // retired, kept for layout
   EEPROM.update(MK_HEADER_OFFSET + H_FLAGS, flags_);
   EEPROM.update(MK_HEADER_OFFSET + H_RESERVED, 0);
   EEPROM.update(MK_HEADER_OFFSET + H_CRC_LO, (uint8_t)(crc & 0xFF));
@@ -170,7 +164,7 @@ void Profile::writeDefaults() {
   // fights an application shortcut.
   const uint8_t hyper = MOD_CTRL | MOD_ALT | MOD_SHIFT;
   for (uint8_t key = 0; key < MK_KEY_COUNT; key++) {
-    writeAction(keymapAddress(0, key, GESTURE_TAP), makeKey(hyper, '1' + key));
+    writeAction(keymapAddress(key, GESTURE_TAP), makeKey(hyper, '1' + key));
   }
 
   // No layer switching: eight keys that each do one thing, and everything else
@@ -188,7 +182,6 @@ void Profile::writeDefaults() {
   }
 
   brightness_ = MK_LED_DEFAULT_BRIGHTNESS;
-  baseLayer_ = 0;
   flags_ = 0;
   writeHeaderFields(bodyCrc());
 }
@@ -227,8 +220,6 @@ bool Profile::stageCommit() {
     }
     // The staged header carries the tunables; magic and CRC are ours to write.
     brightness_ = stage_[MK_HEADER_OFFSET + H_BRIGHTNESS];
-    baseLayer_ = stage_[MK_HEADER_OFFSET + H_BASE_LAYER];
-    if (baseLayer_ >= MK_LAYER_COUNT) baseLayer_ = 0;
     flags_ = stage_[MK_HEADER_OFFSET + H_FLAGS];
     writeHeaderFields(stageCrc_);
   }

@@ -14,10 +14,10 @@
 
 // Fired for every gesture, purely informational: the HID report has already
 // gone out. The host uses these for logging, app-aware layers and LED reactions.
-typedef void (*MkKeyReportFn)(uint8_t key, uint8_t gesture, uint8_t layer, bool released);
+typedef void (*MkKeyReportFn)(uint8_t key, uint8_t gesture, bool released);
 
 // Fired for ACT_HOST. No HID was sent; the desktop app is expected to act.
-typedef void (*MkHostActionFn)(uint8_t token, uint8_t key, uint8_t layer);
+typedef void (*MkHostActionFn)(uint8_t token, uint8_t key);
 
 //: The pad asking the host to start or finish recording into this key.
 //: `gesture` is which slot: GESTURE_TAP for a plain hold, GESTURE_DOUBLE when
@@ -40,9 +40,6 @@ class KeyEngine {
   void setMacroYield(MkMacroYieldFn onYield) { onYield_ = onYield; }
 
   void setReportCallbacks(MkKeyReportFn key, MkHostActionFn host);
-
-  uint8_t activeLayer() const;
-  void setBaseLayer(uint8_t layer);
 
   // True once the boot grace window has passed and HID output is allowed.
   bool hidEnabled() const { return hidEnabled_; }
@@ -70,10 +67,8 @@ class KeyEngine {
   MkRecordRequestFn onRecord_ = NULL;
   MkMacroYieldFn onYield_ = NULL;
 
-  uint8_t baseLayer_ = 0;
-  uint8_t momentaryLayer_ = 0;
-  int8_t momentaryKey_ = -1;
-  uint8_t lastMaskedLayer_ = 0xFF;  // forces a double-tap mask refresh on boot
+  //: Whether the double-tap mask has been built yet.
+  bool doubleTapMaskReady_ = false;
 
   // One-shot modifiers armed by a KEYF_STICKY action, consumed by the next key.
   uint8_t stickyModifiers_ = 0;

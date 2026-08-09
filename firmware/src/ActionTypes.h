@@ -12,8 +12,11 @@ enum ActionType : uint8_t {
   ACT_MOUSE_BUTTON,    // a = button mask, b = MouseMode
   ACT_MOUSE_MOVE,      // a = dx (int8), b = dy (int8), c = repeat
   ACT_MOUSE_WHEEL,     // a = delta (int8), c = repeat
-  ACT_LAYER_MOMENTARY, // a = layer
-  ACT_LAYER_TOGGLE,    // a = layer
+  // 6 and 7 were ACT_LAYER_MOMENTARY and ACT_LAYER_TOGGLE. The numbers stay
+  // reserved rather than being reused: an id is a wire format, and shuffling
+  // the ones above would turn every stored macro into a different macro.
+  ACT_RESERVED_6,
+  ACT_RESERVED_7,
   ACT_SEQUENCE,        // a = macro slot
   ACT_HOST,            // a = host token id, executed by the desktop app
   ACT_LED_SCENE,       // a = palette/scene index
@@ -82,10 +85,6 @@ struct KeyEvent {
   uint8_t gesture;
   bool released;  // true when a hold ends, so momentary layers can unwind
 };
-
-inline bool actionIsLayer(uint8_t type) {
-  return type == ACT_LAYER_MOMENTARY || type == ACT_LAYER_TOGGLE;
-}
 
 inline const char *gestureName(uint8_t gesture) {
   switch (gesture) {

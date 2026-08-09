@@ -57,16 +57,12 @@ void SerialProtocol::sendHello() {
   Serial.print(MK_KEY_COUNT);
   Serial.print(F(" leds="));
   Serial.print(MK_LED_COUNT);
-  Serial.print(F(" layers="));
-  Serial.print(MK_LAYER_COUNT);
   Serial.print(F(" bytes="));
   Serial.println(MK_PROFILE_SIZE);
 }
 
 void SerialProtocol::sendState() {
-  Serial.print(F("STATE layer="));
-  Serial.print(engine_->activeLayer());
-  Serial.print(F(" bright="));
+  Serial.print(F("STATE bright="));
   Serial.print(leds_->brightness());
   Serial.print(F(" ledmode="));
   Serial.print(leds_->hostMode() ? F("host") : F("local"));
@@ -85,25 +81,20 @@ void SerialProtocol::sendRecordRequest(uint8_t key, uint8_t gesture) {
   Serial.println(millis());
 }
 
-void SerialProtocol::sendKeyEvent(uint8_t key, uint8_t gesture, uint8_t layer,
-                                  bool released) {
+void SerialProtocol::sendKeyEvent(uint8_t key, uint8_t gesture, bool released) {
   Serial.print(F("EV t=key k="));
   Serial.print(key);
   Serial.print(F(" g="));
   Serial.print(released ? "holdend" : gestureName(gesture));
-  Serial.print(F(" l="));
-  Serial.print(layer);
   Serial.print(F(" ms="));
   Serial.println(millis());
 }
 
-void SerialProtocol::sendHostAction(uint8_t token, uint8_t key, uint8_t layer) {
+void SerialProtocol::sendHostAction(uint8_t token, uint8_t key) {
   Serial.print(F("EV t=host tok="));
   Serial.print(token);
   Serial.print(F(" k="));
-  Serial.print(key);
-  Serial.print(F(" l="));
-  Serial.println(layer);
+  Serial.println(key);
 }
 
 void SerialProtocol::sendLog(char level, const char *message) {
@@ -300,20 +291,6 @@ void SerialProtocol::cmdLed(uint32_t now) {
   sendErr("arg");
 }
 
-void SerialProtocol::cmdLayer() {
-  uint32_t number;
-  if (argUInt("set", &number) || argUInt("base", &number)) {
-    if (number >= MK_LAYER_COUNT) {
-      sendErr("range");
-      return;
-    }
-    engine_->setBaseLayer((uint8_t)number);
-    sendOk();
-    return;
-  }
-  sendErr("arg");
-}
-
 void SerialProtocol::profileDump() {
   uint8_t buffer[MK_PROFILE_CHUNK_BYTES];
   char encoded[((MK_PROFILE_CHUNK_BYTES + 2) / 3) * 4 + 1];
@@ -427,8 +404,6 @@ void SerialProtocol::handleLine(uint32_t now) {
     sendState();
   } else if (strcmp(verb_, "LED") == 0) {
     cmdLed(now);
-  } else if (strcmp(verb_, "LAYER") == 0) {
-    cmdLayer();
   } else if (strcmp(verb_, "PROF") == 0) {
     cmdProfile(now);
   } else if (strcmp(verb_, "SAVE") == 0) {

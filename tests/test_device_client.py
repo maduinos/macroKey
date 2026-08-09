@@ -13,7 +13,7 @@ import time
 import pytest
 
 from macrokey.config import binary
-from macrokey.config.model import KEY_COUNT, LAYER_COUNT, LED_COUNT
+from macrokey.config.model import KEY_COUNT, LED_COUNT
 from macrokey.device import protocol
 from macrokey.device.client import DeviceClient, DeviceError
 
@@ -58,7 +58,7 @@ class FakeSerial:
         # claiming a profile size the app no longer speaks.
         reply = (
             f"HELLO proto=1 fw=0.3.0 board=promicro keys={KEY_COUNT} "
-            f"leds={LED_COUNT} layers={LAYER_COUNT} bytes={binary.PROFILE_SIZE}\r\n"
+            f"leds={LED_COUNT} bytes={binary.PROFILE_SIZE}\r\n"
         ).encode()
         if verb != "IDENT":
             reply = b"OK\r\n"
@@ -126,7 +126,7 @@ def test_connect_rejects_a_protocol_it_does_not_speak(monkeypatch) -> None:
         if line.startswith("IDENT"):
             reply = (
                 f"HELLO proto=99 fw=9.9.9 board=x keys={KEY_COUNT} leds={LED_COUNT} "
-                f"layers={LAYER_COUNT} bytes={binary.PROFILE_SIZE}\r\n"
+                f"bytes={binary.PROFILE_SIZE}\r\n"
             ).encode()
         fake._pending.extend(reply)
         return len(data)
@@ -202,11 +202,11 @@ def test_a_missing_index_is_still_reported_as_absent() -> None:
     assert event.key == -1
 
 
-def test_layer_and_uptime_zero_are_not_swallowed() -> None:
+def test_uptime_zero_is_not_swallowed() -> None:
     from macrokey.device import protocol
 
-    event = protocol.parse_event(protocol.parse("EV t=key k=3 g=tap l=0 ms=0"))
-    assert event.layer == 0
+    event = protocol.parse_event(protocol.parse("EV t=key k=3 g=tap ms=0"))
+    assert event.key == 3
     assert event.uptime_ms == 0
 
 
@@ -229,6 +229,6 @@ def test_an_out_of_range_key_is_refused_rather_than_wrapped() -> None:
     profile = default_profile()
     for bad in (-1, 8, 99):
         with pytest.raises(ProfileError):
-            profile.set_action(0, bad, "tap", Action(kind="key", hotkey="a"))
+            profile.set_action(bad, "tap", Action(kind="key", hotkey="a"))
         with pytest.raises(ProfileError):
-            profile.action(0, bad, "tap")
+            profile.action(bad, "tap")

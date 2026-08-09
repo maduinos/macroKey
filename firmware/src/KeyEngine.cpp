@@ -6,8 +6,6 @@ void KeyEngine::begin(Profile *profile, ButtonInput *input, LedController *leds)
   profile_ = profile;
   input_ = input;
   leds_ = leds;
-  baseLayer_ = profile->baseLayer();
-  momentaryKey_ = -1;
   mkHidBegin();
   refreshDoubleTapMask();
 }
@@ -17,27 +15,17 @@ void KeyEngine::setReportCallbacks(MkKeyReportFn key, MkHostActionFn host) {
   onHost_ = host;
 }
 
-uint8_t KeyEngine::activeLayer() const {
-  return momentaryKey_ >= 0 ? momentaryLayer_ : baseLayer_;
-}
-
-void KeyEngine::setBaseLayer(uint8_t layer) {
-  if (layer >= MK_LAYER_COUNT) return;
-  baseLayer_ = layer;
-}
-
-// Only keys that actually have a double-tap binding on the current layer pay
-// the detection delay; everything else stays instant on release.
+// Only keys that actually have a double-tap binding pay the detection delay;
+// everything else stays instant on release.
 void KeyEngine::refreshDoubleTapMask() {
-  uint8_t layer = activeLayer();
   uint8_t mask = 0;
   for (uint8_t key = 0; key < MK_KEY_COUNT; key++) {
-    if (profile_->action(layer, key, GESTURE_DOUBLE).type != ACT_NONE) {
+    if (profile_->action(key, GESTURE_DOUBLE).type != ACT_NONE) {
       mask |= (uint8_t)(1 << key);
     }
   }
   input_->setDoubleTapMask(mask);
-  lastMaskedLayer_ = layer;
+  doubleTapMaskReady_ = true;
 }
 
 void KeyEngine::dispatchKey(const Action &action) {
@@ -60,10 +48,9 @@ void KeyEngine::dispatchKey(const Action &action) {
 }
 
 void KeyEngine::dispatch(const Action &action, uint8_t key, uint32_t now) {
-  if (!hidEnabled_ && action.type != ACT_HOST && action.type != ACT_LAYER_MOMENTARY &&
-      action.type != ACT_LAYER_TOGGLE) {
-    return;  // boot grace window: no HID output yet
-  }
+  // Boot grace window: no HID output yet. A host action sends none, so it is
+  // the one kind that may still run.
+  if (!hidEnabled_ && action.type != ACT_HOST) return;
 
   switch (action.type) {
     case ACT_KEY:
@@ -91,27 +78,12 @@ void KeyEngine::dispatch(const Action &action, uint8_t key, uint32_t now) {
       mkMouseWheel((int8_t)action.a);
       break;
 
-    case ACT_LAYER_MOMENTARY:
-      if (action.a < MK_LAYER_COUNT) {
-        momentaryLayer_ = action.a;
-        momentaryKey_ = (int8_t)key;
-        refreshDoubleTapMask();
-      }
-      break;
-
-    case ACT_LAYER_TOGGLE:
-      if (action.a < MK_LAYER_COUNT) {
-        baseLayer_ = baseLayer_ == action.a ? 0 : action.a;
-        refreshDoubleTapMask();
-      }
-      break;
-
     case ACT_SEQUENCE:
       runMacro(action.a, now);
       break;
 
     case ACT_HOST:
-      if (onHost_ != NULL) onHost_(action.a, key, activeLayer());
+      if (onHost_ != NULL) onHost_(action.a, key);
       break;
 
     case ACT_LED_SCENE:
@@ -199,19 +171,13 @@ void KeyEngine::runMacro(uint8_t slot, uint32_t now) {
 }
 
 void KeyEngine::handleEvent(const KeyEvent &event, uint32_t now) {
-  uint8_t layer = activeLayer();
-
   if (event.released) {
-    // End of a hold. Unwind a momentary layer and stop any auto-repeat.
-    if (momentaryKey_ == (int8_t)event.key) {
-      momentaryKey_ = -1;
-      refreshDoubleTapMask();
-    }
+    // End of a hold. Stop any auto-repeat it armed.
     if (repeatKey_ == (int8_t)event.key) {
       repeatKey_ = -1;
       repeatAction_.type = ACT_NONE;
     }
-    if (onKey_ != NULL) onKey_(event.key, event.gesture, layer, true);
+    if (onKey_ != NULL) onKey_(event.key, event.gesture, true);
     return;
   }
 
@@ -225,23 +191,36 @@ void KeyEngine::handleEvent(const KeyEvent &event, uint32_t now) {
     // person is being asked to keep holding. This is the cue that means
     // "registered, keep going".
     leds_->noteHold(event.key, now);
-    if (onKey_ != NULL) onKey_(event.key, event.gesture, layer, false);
+    if (onKey_ != NULL) onKey_(event.key, event.gesture, false);
     return;
   }
   leds_->notePress(event.key, now);
 
-  Action action = profile_->action(layer, event.key, event.gesture);
+  Action action = profile_->action(event.key, event.gesture);
 
   if (action.type == ACT_NONE) {
     leds_->noteUnbound(event.key, now);
   }
 
   dispatch(action, event.key, now);
-  if (onKey_ != NULL) onKey_(event.key, event.gesture, layer, false);
+  if (onKey_ != NULL) onKey_(event.key, event.gesture, false);
 }
 
 void KeyEngine::serviceRepeat(uint32_t now) {
   if (repeatKey_ < 0 || repeatAction_.type != ACT_KEY) return;
+
+  // Disarmed from the physical state, not from a release event. Only a hold is
+  // reported with `released` set -- a tap is pushed with released=false and a
+  // suppressed key emits nothing at all -- so a repeating action armed by a tap
+  // was never disarmed, and the pad went on sending that keystroke eight times
+  // a second for ever. From the host that is indistinguishable from the
+  // keyboard having died.
+  if ((input_->pressedMask() & (uint8_t)(1 << repeatKey_)) == 0) {
+    repeatKey_ = -1;
+    repeatAction_.type = ACT_NONE;
+    return;
+  }
+
   if ((int32_t)(now - repeatNextAt_) < 0) return;
   repeatNextAt_ = now + MK_HOLD_REPEAT_MS;
   Action once = repeatAction_;
@@ -268,7 +247,5 @@ void KeyEngine::update(uint32_t now) {
   }
 
   serviceRepeat(now);
-  leds_->setActiveLayer(activeLayer());
-
-  if (lastMaskedLayer_ != activeLayer()) refreshDoubleTapMask();
+  if (!doubleTapMaskReady_) refreshDoubleTapMask();
 }

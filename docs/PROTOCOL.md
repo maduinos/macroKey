@@ -35,7 +35,7 @@ HID 입력과 시리얼은 완전히 독립입니다. 시리얼을 아무도 열
 부팅 직후 한 번, 그리고 `IDENT` 요청마다 보냅니다.
 
 ```
-HELLO proto=1 fw=0.3.0 board=leonardo keys=8 leds=8 layers=4 uid=A1B2C3D4
+HELLO proto=1 fw=0.3.0 board=promicro keys=8 leds=1 bytes=1024
 ```
 
 호스트는 `proto`가 자신이 아는 버전보다 크면 연결을 거부하고 사용자에게 앱 업데이트를
@@ -44,12 +44,12 @@ HELLO proto=1 fw=0.3.0 board=leonardo keys=8 leds=8 layers=4 uid=A1B2C3D4
 ### `EV` — 입력 이벤트
 
 ```
-EV t=key    k=<0..7> g=<tap|double|hold|holdend> l=<layer> ms=<millis>
-EV t=host   tok=<0..255> k=<0..7> l=<layer>
+EV t=key    k=<0..7> g=<tap|double|hold|holdend> ms=<millis>
+EV t=host   tok=<0..255> k=<0..7>
 EV t=record k=<0..7> g=<tap|double> ms=<millis>
 ```
 
-- `t=key`는 **알림용**입니다. 장치는 이미 HID를 보냈고, 호스트는 로깅·앱별 레이어 전환·
+- `t=key`는 **알림용**입니다. 장치는 이미 HID를 보냈고, 호스트는 로깅과
   LED 반응에 씁니다. 호스트가 안 듣고 있어도 문제 없습니다.
 - `t=host`는 **행동 요청**입니다. 장치는 아무 HID도 보내지 않았고, `tok` 토큰에 묶인 호스트
   액션이 실행되기를 기다립니다. 호스트가 없으면 아무 일도 일어나지 않습니다.
@@ -79,7 +79,7 @@ EV t=record k=<0..7> g=<tap|double> ms=<millis>
 ### `STATE` — 현재 상태
 
 ```
-STATE layer=1 bright=64 ledmode=host up=123456
+STATE bright=64 ledmode=host hid=1 up=123456
 ```
 
 ### `OK` / `ERR`
@@ -124,13 +124,6 @@ LOG lvl=<d|i|w|e> msg=<base64>
 `frame=`은 호스트가 모든 픽셀을 직접 그리는 모드이고, `fx=`는 장치가 애니메이션을 돌리는
 모드입니다. **효과를 장치에 맡기면 링크가 잠깐 끊겨도 애니메이션이 끊기지 않습니다.**
 호스트 CPU를 아끼려면 `fx=`를, 복잡한 그라디언트가 필요하면 `frame=`을 쓰세요.
-
-### 레이어
-
-```
-LAYER set=<0..3>
-LAYER base=<0..3>     # momentary 해제 시 돌아갈 기본 레이어
-```
 
 ### 프로필 전송
 

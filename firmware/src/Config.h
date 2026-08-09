@@ -14,10 +14,10 @@
 
 #define MK_KEY_COUNT 8
 #define MK_LED_COUNT 1
-// One layer. Eight keys that each do one thing is the whole product; layers
+// No layers. Eight keys that each do one thing is the whole product; layers
 // added a mode nobody could see and a shortcut nobody could remember, and the
-// keymap they cost is 288 bytes of EEPROM that macro steps now use instead.
-#define MK_LAYER_COUNT 1
+// keymap they cost is EEPROM that macro records use instead. What survived the
+// first cut was a `layer` argument on every call that was always zero.
 // Gestures the scanner can report. Hold is one of them, but it is not stored:
 // see MK_KEYMAP_GESTURES.
 #define MK_GESTURE_COUNT 3

@@ -189,7 +189,7 @@ class RecordingSession:
             return
 
         try:
-            where = self.app.assign_recording(steps, 0, key, self.active_gesture)
+            where = self.app.assign_recording(steps, key, self.active_gesture)
         except Exception as exc:  # noqa: BLE001 - a full profile must not crash the pad
             self.last_outcome = RecordOutcome(key, len(steps), "", False, error=str(exc))
             self.app.status(f"Could not store the recording: {exc}")

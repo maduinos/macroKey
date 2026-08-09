@@ -121,7 +121,7 @@ def cmd_info(args: argparse.Namespace) -> int:
         hello = app.device.connect(args.port)
         print(f"firmware   {hello.firmware} on {hello.board}")
         print(f"protocol   v{hello.protocol}")
-        print(f"topology   {hello.keys} keys, {hello.leds} leds, {hello.layers} layers")
+        print(f"topology   {hello.keys} keys, {hello.leds} led(s)")
         print(f"profile    {hello.profile_bytes} bytes")
         same = app.device_matches_host()
         print(f"in sync    {'yes' if same else 'no -- run: macrokey push'}")
@@ -206,7 +206,7 @@ def cmd_record(args: argparse.Namespace) -> int:
             print("discarded")
             return 1
 
-        where = app.assign_recording(steps, 0, key_index, args.gesture, args.name)
+        where = app.assign_recording(steps, key_index, args.gesture, args.name)
         app.save()
         print(f"bound as {where}")
         print("run `macrokey push` to write it to the device")

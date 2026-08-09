@@ -51,14 +51,14 @@ def test_a_plain_hold_records_into_tap() -> None:
     app, session, _ = session_for()
     session.handle_request(3, "tap")
     session.handle_request(3, "tap")
-    assert (app.assigned[2], app.assigned[3]) == (3, "tap")
+    assert (app.assigned[1], app.assigned[2]) == (3, "tap")
 
 
 def test_tap_tap_hold_records_into_double() -> None:
     app, session, _ = session_for()
     session.handle_request(3, "double")
     session.handle_request(3, "double")
-    assert (app.assigned[2], app.assigned[3]) == (3, "double")
+    assert (app.assigned[1], app.assigned[2]) == (3, "double")
 
 
 def test_the_slot_is_decided_when_recording_starts() -> None:
@@ -69,17 +69,17 @@ def test_the_slot_is_decided_when_recording_starts() -> None:
     app, session, _ = session_for()
     session.handle_request(3, "tap")
     session.handle_request(3, "double")  # sloppy finish, same key
-    assert (app.assigned[2], app.assigned[3]) == (3, "tap")
+    assert (app.assigned[1], app.assigned[2]) == (3, "tap")
 
 
 def test_the_two_slots_of_one_key_are_independent() -> None:
     app, session, _ = session_for()
     session.handle_request(5, "tap")
     session.handle_request(5, "tap")
-    assert (app.assigned[2], app.assigned[3]) == (5, "tap")
+    assert (app.assigned[1], app.assigned[2]) == (5, "tap")
     session.handle_request(5, "double")
     session.handle_request(5, "double")
-    assert (app.assigned[2], app.assigned[3]) == (5, "double")
+    assert (app.assigned[1], app.assigned[2]) == (5, "double")
 
 
 def test_a_different_key_is_still_refused_mid_recording() -> None:

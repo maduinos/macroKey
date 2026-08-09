@@ -46,12 +46,12 @@ static inline void quietBoardLeds() {}
 
 // KeyEngine reports through plain function pointers so it carries no dependency
 // on the serial layer. These trampolines are the only place the two meet.
-static void reportKey(uint8_t key, uint8_t gesture, uint8_t layer, bool released) {
-  gSerial.sendKeyEvent(key, gesture, layer, released);
+static void reportKey(uint8_t key, uint8_t gesture, bool released) {
+  gSerial.sendKeyEvent(key, gesture, released);
 }
 
-static void reportHost(uint8_t token, uint8_t key, uint8_t layer) {
-  gSerial.sendHostAction(token, key, layer);
+static void reportHost(uint8_t token, uint8_t key) {
+  gSerial.sendHostAction(token, key);
 }
 
 static void reportRecordRequest(uint8_t key, uint8_t gesture) {

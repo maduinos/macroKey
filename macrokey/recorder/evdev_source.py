@@ -26,6 +26,7 @@ import threading
 import time
 from collections.abc import Callable
 
+from ..device import discovery
 from .events import KEY_DOWN, KEY_UP, MOUSE_CLICK, MOUSE_MOVE, MOUSE_RELEASE, SCROLL, RawEvent
 
 try:  # pragma: no cover - import guard, exercised by absence
@@ -82,6 +83,10 @@ _SHIFTED = {
 }
 
 _BUTTONS = {"BTN_LEFT": "left", "BTN_RIGHT": "right", "BTN_MIDDLE": "middle"}
+
+#: USB vendors whose input nodes are the keypad itself, never a source to
+#: record from. Shared with port discovery so there is one list to keep true.
+KEYPAD_VENDORS = frozenset(discovery.KNOWN_VENDORS)
 
 #: Motion this still or stiller is a hand resting on the mouse, not a gesture.
 MOTION_DEAD_ZONE = 6
@@ -166,6 +171,16 @@ class EvdevRecorder:
                 device = evdev.InputDevice(path)
             except OSError:
                 continue
+            # The keypad is itself a USB keyboard and a USB mouse, so it turns
+            # up here like any other. Reading it means recording the pad's own
+            # HID output -- the macro eats its own tail -- and the workaround
+            # for that was to drop *every* event for 150 ms after any pad press,
+            # which threw away whatever was really being typed at the time.
+            # Skipping the node is the honest version and costs nothing.
+            if device.info.vendor in KEYPAD_VENDORS:
+                device.close()
+                continue
+
             capabilities = device.capabilities()
             keys = set(capabilities.get(ecodes.EV_KEY, ()))
             # A keyboard has letter keys; a mouse has BTN_LEFT. Grabbing every

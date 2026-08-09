@@ -10,15 +10,12 @@ from .model import (
     ACTION_TYPE_IDS,
     EDITABLE_GESTURES,
     KEY_COUNT,
-    LAYER_COLORS,
-    LAYER_COUNT,
     LED_COUNT,
     MACRO_MAX_RECORDS,
     MACRO_RECORD_CAPACITY,
     MACRO_SLOTS,
     Action,
     KeySlot,
-    Layer,
     Profile,
     ProfileError,
 )
@@ -34,11 +31,11 @@ KEYMAP_OFFSET = HEADER_SIZE
 #: Only the gestures that can be bound are stored. Hold is how recording starts,
 #: so its slot held nothing but zeroes on every key -- 32 bytes of them.
 KEYMAP_GESTURES = EDITABLE_GESTURES
-KEYMAP_SIZE = LAYER_COUNT * KEY_COUNT * len(KEYMAP_GESTURES) * 4
+KEYMAP_SIZE = KEY_COUNT * len(KEYMAP_GESTURES) * 4
 #: No chord region. Eight slots at five bytes that nothing could fill: the
 #: editor never offered them and the defaults left them empty.
 PALETTE_OFFSET = KEYMAP_OFFSET + KEYMAP_SIZE
-PALETTE_SIZE = LAYER_COUNT * LED_COUNT * 3
+PALETTE_SIZE = LED_COUNT * 3
 MACRO_OFFSET = PALETTE_OFFSET + PALETTE_SIZE
 #: One byte per slot: how many records it uses. There is no stored offset --
 #: slots are packed in order, so a slot's start is the sum of the counts before
@@ -74,9 +71,8 @@ def crc16(data: bytes) -> int:
     return crc
 
 
-def _keymap_address(layer: int, key: int, gesture: int) -> int:
-    index = (layer * KEY_COUNT + key) * len(KEYMAP_GESTURES) + gesture
-    return KEYMAP_OFFSET + index * 4
+def _keymap_address(key: int, gesture: int) -> int:
+    return KEYMAP_OFFSET + (key * len(KEYMAP_GESTURES) + gesture) * 4
 
 
 def _parse_color(text: str) -> tuple[int, int, int]:
@@ -95,26 +91,24 @@ def encode_profile(profile: Profile) -> bytes:
 
     blob[0:4] = MAGIC
     blob[4] = SCHEMA
-    blob[5] = LAYER_COUNT
+    # Byte 5 was the layer count and byte 9 the base layer. Both are written as
+    # the constants they became rather than reused: the firmware validates the
+    # topology bytes on boot, so moving anything here would reject every pad.
+    blob[5] = 1
     blob[6] = KEY_COUNT
     blob[7] = len(KEYMAP_GESTURES)
     blob[8] = profile.brightness & 0xFF
-    blob[9] = profile.base_layer & 0xFF
+    blob[9] = 0
     blob[10] = 0
 
-    for layer_index, layer in enumerate(profile.layers[:LAYER_COUNT]):
-        for key_index, slot in enumerate(layer.keys[:KEY_COUNT]):
-            for gesture_index, gesture in enumerate(KEYMAP_GESTURES):
-                address = _keymap_address(layer_index, key_index, gesture_index)
-                blob[address : address + 4] = bytes(slot.gesture(gesture).encode())
+    for key_index, slot in enumerate(profile.keys[:KEY_COUNT]):
+        for gesture_index, gesture in enumerate(KEYMAP_GESTURES):
+            address = _keymap_address(key_index, gesture_index)
+            blob[address : address + 4] = bytes(slot.gesture(gesture).encode())
 
-            # The palette has one entry per pixel, not per key. With fewer
-            # pixels than keys only the leading slots have somewhere to go;
-            # writing the rest would run over the following layer.
-            if key_index < LED_COUNT:
-                red, green, blue = _parse_color(slot.color)
-                palette = PALETTE_OFFSET + (layer_index * LED_COUNT + key_index) * 3
-                blob[palette : palette + 3] = bytes((red, green, blue))
+    # One palette entry per pixel. The pad rests at this colour.
+    red, green, blue = _parse_color(profile.resting_color)
+    blob[PALETTE_OFFSET : PALETTE_OFFSET + 3] = bytes((red, green, blue))
 
     _encode_macros(blob, profile)
 
@@ -161,21 +155,13 @@ def decode_profile(blob: bytes, *, name: str = "device") -> Profile:
             "Firmware and app are out of step -- re-flash the pad."
         )
 
-    layers: list[Layer] = []
-    for layer_index in range(LAYER_COUNT):
-        slots: list[KeySlot] = []
-        for key_index in range(KEY_COUNT):
-            actions = {}
-            for gesture_index, gesture in enumerate(KEYMAP_GESTURES):
-                address = _keymap_address(layer_index, key_index, gesture_index)
-                actions[gesture] = Action.decode(*blob[address : address + 4])
-            if key_index < LED_COUNT:
-                palette = PALETTE_OFFSET + (layer_index * LED_COUNT + key_index) * 3
-                color = bytes(blob[palette : palette + 3]).hex()
-            else:
-                color = LAYER_COLORS[layer_index % len(LAYER_COLORS)]
-            slots.append(KeySlot(color=color, **actions))
-        layers.append(Layer(name=f"Layer {layer_index}", keys=slots))
+    keys: list[KeySlot] = []
+    for key_index in range(KEY_COUNT):
+        actions = {}
+        for gesture_index, gesture in enumerate(KEYMAP_GESTURES):
+            address = _keymap_address(key_index, gesture_index)
+            actions[gesture] = Action.decode(*blob[address : address + 4])
+        keys.append(KeySlot(**actions))
 
     macros: list[list[Action]] = []
     records_base = MACRO_OFFSET + MACRO_INDEX_SIZE
@@ -192,8 +178,8 @@ def decode_profile(blob: bytes, *, name: str = "device") -> Profile:
     return Profile(
         name=name,
         brightness=blob[8],
-        base_layer=blob[9] if blob[9] < LAYER_COUNT else 0,
-        layers=layers,
+        resting_color=bytes(blob[PALETTE_OFFSET : PALETTE_OFFSET + 3]).hex(),
+        keys=keys,
         device_macros=macros,
     )
 
