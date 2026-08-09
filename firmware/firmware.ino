@@ -58,13 +58,9 @@ static void reportRecordRequest(uint8_t key, uint8_t gesture) {
   gSerial.sendRecordRequest(key, gesture);
 }
 
-// Called from inside a replaying macro. A macro runs in loop(), so without this
-// the pixel holds whatever it was showing for the whole replay -- and replaying
-// the pauses is the point, so that can be seconds of a pad that looks dead.
-//
-// LEDs and the board LEDs only. Serial is deliberately left queued: the host
-// writes profiles, and committing one while a macro is reading its records out
-// of EEPROM would change the steps out from under it.
+// Called from inside a replaying macro, which blocks loop(). Lights only: the
+// engine services the button scanner itself, and serial is deliberately left
+// queued (see KeyEngine::macroWait).
 static void macroYield() {
   quietBoardLeds();
   gLeds.update(millis());

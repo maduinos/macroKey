@@ -171,8 +171,25 @@ def test_which_slot_a_hold_programs(harness) -> None:
         "tap_then_hold": "double",       # double-click, then keep holding
         "tap_pause_hold": "tap",         # too slow to be a pair
         "short_hold": "none",            # 500 ms is not a request
+        # Re-recording a double macro goes through the tap-deferral path, which
+        # is only armed once the slot is full -- a different branch entirely.
+        "tap_then_hold_when_double_is_bound": "double",
         "hold_just_after_boot": "tap",   # releasedAt starts at zero
     }
+
+
+def test_the_buttons_are_still_scanned_while_a_macro_replays(harness) -> None:
+    """A macro blocks loop(). If the scan stops with it, the second press of a
+    double-record gesture is timestamped after the macro finishes -- seconds
+    past the pair window -- so recording into the double slot was impossible on
+    any key that already had a macro to replay.
+
+    Slot 0, because it types and pauses and so lasts long enough for a press to
+    debounce. Slot 1 is a drag with no pause in it: over in a few milliseconds,
+    which is both too short to register a press and too short to matter.
+    """
+    lines = run(harness, "replay", "0", blob=binary.encode_profile(sample_profile()))
+    assert "scanned-during-replay 1" in lines
 
 
 # ------------------------------------------------------------------- replay --

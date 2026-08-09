@@ -97,18 +97,29 @@ void KeyEngine::dispatch(const Action &action, uint8_t key, uint32_t now) {
 }
 
 void KeyEngine::macroWait(uint16_t milliseconds) {
-  // delay() with the pixel kept alive. A macro runs inside loop(), so a plain
-  // delay freezes the LED for as long as the macro lasts -- and replaying real
-  // thinking-time is the point, so that can be seconds of a pad that looks
-  // dead in the middle of doing exactly what was asked.
-  if (onYield_ == NULL) {
-    delay(milliseconds);  // nothing to pump; let the core's delay do it
-    return;
-  }
+  // delay(), but the pad stays awake. A macro runs inside loop(), so a plain
+  // delay stops everything for as long as the macro lasts -- and replaying real
+  // thinking-time is the point, so that can be seconds.
+  //
+  // The button scan is the part that must not stop, and it is not obvious why.
+  // Recording into the double slot means tapping a key and pressing it again
+  // inside MK_DOUBLE_TAP_MS. That first tap fires whatever the key is bound to;
+  // if that is a macro, the scan used to stop until the macro finished, so the
+  // second press was timestamped seconds late and read as an ordinary hold.
+  // Double recording was therefore impossible on exactly the keys that already
+  // had a macro on them -- which is every key worth re-recording.
+  //
+  // `onYield_` is the rest: the pixel, and whatever else the sketch wants kept
+  // alive. Serial is deliberately not in it -- the host writes profiles, and
+  // committing one while this macro is reading its records out of EEPROM would
+  // change the steps out from under it.
   uint32_t until = millis() + milliseconds;
-  while ((int32_t)(millis() - until) < 0) {
-    onYield_();
-  }
+  while ((int32_t)(millis() - until) < 0) macroPump();
+}
+
+void KeyEngine::macroPump() {
+  input_->update(millis());
+  if (onYield_ != NULL) onYield_();
 }
 
 uint8_t KeyEngine::runText(uint16_t base, uint8_t header, uint8_t length, uint8_t count) {
@@ -140,6 +151,10 @@ void KeyEngine::runMacro(uint8_t slot, uint32_t now) {
 
   uint8_t index = 0;
   while (index < count) {
+    // Every record, not only the pauses: a macro with no delay in it -- a drag
+    // is exactly that -- would otherwise never yield at all.
+    macroPump();
+
     // A macro runs inline, so both a record count and a wall-clock ceiling
     // guard against a corrupt slot locking the firmware out of its scan loop.
     if (millis() - now > MK_MACRO_MAX_RUN_MS) break;
