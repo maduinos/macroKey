@@ -34,17 +34,46 @@ def _produces_a_step(event: RawEvent) -> bool:
     return True
 
 
-def _mouse_modes(events: list[RawEvent]) -> dict[int, str]:
-    """Classifies each mouse button event as a click, or as half of a drag.
+#: How far the pointer must travel between a press and its release before the
+#: pair is a drag rather than a click, in whatever counts the mouse reports.
+#:
+#: Not zero, and this is the whole point. Nobody holds a mouse perfectly still
+#: while clicking it, and a gaming mouse at 3200 dpi turns a hand tremor into
+#: dozens of counts -- so "the pointer moved at all" classified essentially
+#: every click as a drag, and the macro then held the button down and hauled
+#: whatever was under it across the screen.
+DRAG_MIN_TRAVEL = 48
 
-    A press whose release follows with nothing in between is a click, and is
-    worth storing as one step. A press with pointer movement before its release
-    is a drag: both halves have to survive, because the button must still be
-    down while the pointer travels. Collapsing every press and release into a
-    click is what made drag-and-drop impossible to record.
+
+def _mouse_modes(events: list[RawEvent]) -> tuple[dict[int, str], set[int]]:
+    """Classifies each mouse button event, and finds the wobble to discard.
+
+    A press and release with the pointer essentially still between them is a
+    click, and is worth storing as one step. A press with real travel before its
+    release is a drag: both halves have to survive, because the button must be
+    down while the pointer moves. Collapsing every pair into a click made
+    drag-and-drop impossible to record; treating any movement at all as a drag
+    made every ordinary click into one.
+
+    Returns the button modes and the indices of pointer moves that happened
+    during a click -- the hand shaking on the button. Replaying those would
+    shift everything after them by however far the hand drifted.
     """
     modes: dict[int, str] = {}
+    wobble: set[int] = set()
     open_presses: dict[str, int] = {}
+
+    def is_drag(start: int, end: int) -> bool:
+        travel = 0
+        for between in events[start + 1 : end]:
+            if between.kind == MOUSE_MOVE:
+                travel += abs(between.data[0] if between.data else 0)
+                travel += abs(between.data[1] if len(between.data) > 1 else 0)
+            elif _produces_a_step(between):
+                # A keystroke, another button, the wheel. Deliberate, and it
+                # only makes sense with the button still held.
+                return True
+        return travel >= DRAG_MIN_TRAVEL
 
     for index, event in enumerate(events):
         if event.kind == MOUSE_CLICK:
@@ -54,18 +83,23 @@ def _mouse_modes(events: list[RawEvent]) -> dict[int, str]:
             start = open_presses.pop(event.token, None)
             if start is None:
                 modes[index] = "skip"  # a release for a press from before capture
-            elif any(_produces_a_step(between) for between in events[start + 1 : index]):
+            elif is_drag(start, index):
                 modes[index] = "release"
             else:
                 modes[start] = "click"
                 modes[index] = "skip"
+                wobble.update(
+                    position
+                    for position in range(start + 1, index)
+                    if events[position].kind == MOUSE_MOVE
+                )
 
     # A press whose release never arrived -- the recording ended mid-drag, or
     # the release was the click that stopped it. Replaying it as a press would
     # leave the button held down for good, with no macro step to let it go.
     for index in open_presses.values():
         modes[index] = "click"
-    return modes
+    return modes, wobble
 
 
 def normalize(
@@ -79,7 +113,7 @@ def normalize(
     held: list[str] = []
     text = ""
     last_at: float | None = None
-    mouse_modes = _mouse_modes(events)
+    mouse_modes, wobble = _mouse_modes(events)
 
     def flush_text() -> None:
         nonlocal text
@@ -157,6 +191,8 @@ def normalize(
             continue
 
         if event.kind == MOUSE_MOVE:
+            if position in wobble:
+                continue  # the hand shaking on a button, not a gesture
             dx = event.data[0] if event.data else 0
             dy = event.data[1] if len(event.data) > 1 else 0
             if not dx and not dy:
