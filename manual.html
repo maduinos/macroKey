@@ -85,7 +85,7 @@ a { color:var(--accent); }
 <header>
   <h1>macroKey 사용 설명서</h1>
   <p class="lede">
-    버튼 8 × 제스처 3 × 레이어 4 = 96 슬롯. 호스트 앱 0.3.0.
+    버튼 8 × 바인딩 가능한 제스처 2 = 16 슬롯. 펌웨어 · 호스트 앱 0.4.0.
     배선은 <a href="wiring.html">wiring.html</a>을 보세요.
   </p>
 </header>
@@ -127,7 +127,7 @@ macrokey monitor  # 키를 누르면 이벤트가 찍힘 — 조립 직후 배�
   <tbody>
     <tr><td class="k">TAP</td><td>짧게 눌렀다 뗌</td><td>뗄 때 즉시</td><td>기본 단축키</td></tr>
     <tr><td class="k">DOUBLE</td><td>250 ms 안에 두 번</td><td>두 번째 탭</td><td>되돌리기 어려운 동작</td></tr>
-    <tr><td class="k">HOLD</td><td>400 ms 넘게 유지</td><td>임계 시간 도달</td><td>레이어 전환, 반복</td></tr>
+    <tr><td class="k">HOLD</td><td>3초 단독 유지</td><td>3초 도달</td><td><b>바인딩 불가 — 녹음 진입점</b></td></tr>
   </tbody>
 </table>
 </div>
@@ -137,25 +137,27 @@ macrokey monitor  # 키를 누르면 이벤트가 찍힘 — 조립 직후 배�
   떼는 즉시 내보내고, 채워져 있을 때만 250 ms를 기다립니다. <b>자주 쓰는 키에는 DOUBLE을 비워 두세요.</b></p>
 </div>
 
-<p>HOLD 슬롯에 레이어 액션이 들어 있으면 <b>누르고 있는 동안만</b> 유효한 momentary 레이어가 되고,
-그 외 액션이면 400 ms에 한 번 발화합니다. 레이어는 momentary · toggle · 호스트가 내려보내는
-세 가지 방식으로 바뀝니다. 레이어가 0이 아니면 <b>LED가 그 레이어 색으로 물듭니다</b> —
-픽셀 하나짜리 이 키패드에서 LED의 가장 중요한 역할입니다.</p>
+<p><b>HOLD에는 아무것도 바인딩할 수 없습니다.</b> 키 하나를 단독으로 3초 누르는 것이
+<b>녹음을 여는 방법</b>이기 때문입니다. 그래서 바인딩 가능한 슬롯은 키당 TAP · DOUBLE
+두 개, 전부 16개입니다.</p>
 
-<p><b>코드(chord)</b>는 40 ms 안에 함께 눌린 두 키입니다. 코드가 잡히면 개별 키의 TAP은
-취소됩니다. 기본값 <b>1번+2번 = 실행 중인 호스트 액션 중지</b>가 비상 정지입니다.</p>
+<div class="note">
+  <p><b>녹음은 패드에서 시작하고 끝냅니다.</b> 키를 단독으로 3초 누르면 픽셀이 빨갛게
+  맥동하며 녹음이 시작되고, <b>같은 키를 다시 3초</b> 누르면 저장됩니다. 탭한 뒤 곧바로
+  다시 눌러 3초 유지하면 <b>DOUBLE 슬롯</b>에 녹음되고 픽셀은 분홍입니다.</p>
+</div>
+
+<p>레이어와 코드(chord)는 제거되었습니다. 레이어는 보이지 않는 모드와 외워야 하는 진입
+방법을 만들었고, 코드는 편집 수단이 없어 채울 방법이 없었습니다. 두 영역이 쓰던 EEPROM은
+지금 매크로 레코드가 씁니다.</p>
 
 <h3>기본으로 들어 있는 것</h3>
 <div class="scroll">
 <table>
-  <thead><tr><th>레이어</th><th>키 · 제스처</th><th>동작</th></tr></thead>
+  <thead><tr><th>키 · 제스처</th><th>동작</th></tr></thead>
   <tbody>
-    <tr><td class="k">0 Base</td><td>1–8 TAP</td><td>ctrl+alt+shift+1 … 8</td></tr>
-    <tr><td class="k">0 Base</td><td>8 HOLD</td><td>누르고 있는 동안 레이어 1</td></tr>
-    <tr><td class="k">1 Media</td><td>1–4 TAP</td><td>볼륨 −, 볼륨 +, 음소거, 재생/일시정지</td></tr>
-    <tr><td class="k">1 Media</td><td>5–7 TAP</td><td>호스트 액션 토큰 0 · 1 · 2 <span class="muted">(비어 있음)</span></td></tr>
-    <tr><td class="k">—</td><td>1+2 동시</td><td>실행 중인 호스트 액션 중지</td></tr>
-    <tr><td class="k">2, 3</td><td>전부</td><td>비어 있음</td></tr>
+    <tr><td class="k">1–8 TAP</td><td>ctrl+alt+shift+1 … 8</td></tr>
+    <tr><td class="k">1–8 DOUBLE</td><td>비어 있음 — 탭 후 3초 홀드로 녹음해 채웁니다</td></tr>
   </tbody>
 </table>
 </div>
@@ -169,18 +171,16 @@ macrokey monitor  # 키를 누르면 이벤트가 찍힘 — 조립 직후 배�
 
 <h2><span class="n">03</span>키 설정하기</h2>
 
-<p><code>macrokey</code>를 인자 없이 실행하면 편집기가 열립니다. <b>레이어 탭 4개</b> × <b>키 8행 ×
-제스처 3열</b> 격자로 96슬롯이 그대로 화면에 있습니다. 칸을 클릭 → Action 선택 → Value 입력.
+<p><code>macrokey</code>를 인자 없이 실행하면 편집기가 열립니다. <b>키 8행 × 제스처 2열</b>
+격자로 16슬롯이 그대로 화면에 있습니다. 칸을 클릭 → 단축키를 누르거나 녹음.
 값은 OK를 누르는 순간 검증됩니다.</p>
 
-<div class="note warn">
-  <p><b>Save와 Write to device는 다릅니다.</b> Save는 PC의 <code>profile.json</code>에만 씁니다.
-  키패드에 반영하려면 <b>Write to device</b>(또는 <code>macrokey push</code>)를 눌러야 합니다.
-  바꿨는데 반영이 안 된다면 십중팔구 이겁니다.</p>
+<div class="note">
+  <p><b>Save도 Write도 없습니다.</b> 편집이나 녹음이 끝나면 그 자리에서 저장되고 키패드에
+  기록됩니다. 연결할 때도 장치와 대조해 다르면 맞춥니다. 눌러야 반영되는 버튼이 있으면
+  누르는 걸 잊었을 때 화면과 키가 서로 다른 말을 하게 되므로 전부 없앴습니다.
+  <code>macrokey push</code> · <code>macrokey pull</code>은 남아 있습니다.</p>
 </div>
-
-<p class="small"><b>Read from device</b>는 장치 프로필을 편집기로 가져옵니다. 이때 호스트 액션은
-덮어쓰지 않습니다 — 장치는 토큰 번호만 갖고 있고 실제 동작은 PC에만 있기 때문입니다.</p>
 
 <div class="scroll">
 <table>
@@ -189,8 +189,7 @@ macrokey monitor  # 키를 누르면 이벤트가 찍힘 — 조립 직후 배�
     <tr><td class="k">key</td><td>단축키 문자열</td><td>장치</td><td><code>ctrl+shift+p</code></td></tr>
     <tr><td class="k">consumer</td><td>미디어 키 이름</td><td>장치</td><td><code>volume_up</code></td></tr>
     <tr><td class="k">mouse_button</td><td>left · right · middle</td><td>장치</td><td><code>middle</code></td></tr>
-    <tr><td class="k">layer_momentary</td><td>레이어 0–3</td><td>장치</td><td><code>1</code></td></tr>
-    <tr><td class="k">layer_toggle</td><td>레이어 0–3</td><td>장치</td><td><code>2</code></td></tr>
+    <tr><td class="k">sequence</td><td>매크로 슬롯</td><td>장치</td><td class="muted">녹음이 만듦</td></tr>
     <tr><td class="k">host</td><td>토큰 0–255</td><td><b>PC</b></td><td><code>7</code></td></tr>
     <tr><td class="k">none</td><td>—</td><td>—</td><td class="muted">비우기</td></tr>
   </tbody>
@@ -207,16 +206,45 @@ next_track prev_track brightness_up brightness_down</code></p>
 
 <h2><span class="n">04</span>매크로 녹화</h2>
 
-<p>편집 창의 <b>Record…</b> 또는 <code>macrokey record --key 3 --gesture hold --name "빌드"</code>.
-녹화 중에는 <b>LED가 빨강으로 맥동</b>합니다. <span class="kbd">Esc</span>로 멈춥니다.</p>
+<p><b>패드에서 직접 합니다.</b> 키 하나를 단독으로 3초 누르면 녹음이 시작되고, 같은 키를 다시
+3초 누르면 저장됩니다. 앱은 켜져 있어야 하지만(캡처는 PC가 합니다) 창을 볼 필요는 없습니다.
+편집 창의 <b>Record…</b>와 <code>macrokey record --key 3</code>도 그대로 있습니다.</p>
+
+<div class="scroll">
+<table>
+  <thead><tr><th>동작</th><th>들어가는 슬롯</th><th>픽셀</th></tr></thead>
+  <tbody>
+    <tr><td class="k">홀드 3초</td><td>TAP</td><td>빨강 맥동</td></tr>
+    <tr><td class="k">탭 → 홀드 3초</td><td>DOUBLE</td><td>분홍 맥동</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>저장되면 픽셀이 결과를 알려줍니다 — <b>초록</b>은 키패드에 저장(앱을 꺼도 동작),
+<b>주황</b>은 호스트 액션(이 PC가 켜져 있어야 동작), <b>빨강</b>은 저장 안 됨.
+캡처된 스텝은 창에 목록으로 뜨고 <code>~/.config/macrokey/macrokey.log</code>에도 남습니다.</p>
 
 <p>앱이 자동으로 정리합니다: <b>수식키 접기</b>(<code>ctrl↓ c↓ c↑ ctrl↑</code> →
 <code>hotkey ctrl+c</code>) · <b>지연 양자화</b>(10 ms 단위, 40 ms 미만 버림) ·
-<b>연속 문자 병합</b>(낱개 타자 → <code>text</code> 하나) · <b>자기 입력 제외</b>.
-정리 결과를 사람이 읽을 수 있는 목록으로 보여주고 확인을 받습니다.</p>
+<b>연속 문자 병합</b>(낱개 타자 → <code>text</code> 하나) · <b>패드 자신의 입력 제외</b> ·
+<b>비밀번호로 보이는 구간 제거</b>(sudo 등을 실행하고 Enter를 친 직후의 텍스트).</p>
 
-<p class="small muted">장치 액션 하나로 표현되면 EEPROM에 굽고, 아니면 호스트 액션으로 저장한 뒤
-슬롯에는 토큰만 넣습니다. 이 배치는 앱이 알아서 합니다. 마지막에 <code>macrokey push</code>.</p>
+<div class="note">
+  <p><b>재생은 녹음보다 빠릅니다.</b> 연속으로 친 글자는 타이핑 속도를 기록하지 않고
+  <code>text</code> 하나로 합쳐지며, 패드는 그것을 글자당 5 ms로 다시 칩니다 — 2.7초 걸려 친
+  15글자가 0.075초에 재생됩니다. 2초를 넘는 멈춤도 2초로 잘립니다. 사람 손 속도를 그대로
+  재현하는 건 대개 원하는 바가 아니라서 그렇지만, 받는 쪽이 준비될 시간이 필요하면
+  녹음할 때 그만큼 더 기다렸다가 다음 동작을 하세요.</p>
+</div>
+
+<p><b>마우스가 든 녹음은 커서를 화면 좌상단으로 보내고 시작합니다.</b> 커널은 마우스 이동을
+상대값으로만 알려주기 때문에, 기준점이 없으면 재생할 때 커서가 있던 자리에서 움직여 엉뚱한
+곳을 클릭합니다. 녹음도 재생도 같은 구석에서 출발하면 같은 픽셀에 떨어집니다. 커서를 옮기는
+건 패드 자신입니다 — 진짜 USB 마우스라서 Wayland에서도 동작합니다.</p>
+
+<p class="small muted">장치 액션 하나로 표현되면 EEPROM에 굽고, 시퀀스로 컴파일되면 매크로
+슬롯에, 장치가 재생할 수 없는 것(클립보드·셸·한글)만 호스트 액션이 됩니다. 이 배치는 앱이
+알아서 합니다.</p>
 
 <h2><span class="n">05</span>호스트 액션</h2>
 
@@ -238,7 +266,6 @@ PC가 합니다. <b>앱이 꺼져 있으면 아무 일도 일어나지 않습니
     <tr><td class="k">clipboard_image</td><td>이미지를 클립보드에 넣고 붙여넣기</td><td>path, paste, press_enter</td></tr>
     <tr><td class="k">shell</td><td>명령 실행 (기다리지 않음)</td><td>command, cwd</td></tr>
     <tr><td class="k">delay</td><td>대기</td><td>ms</td></tr>
-    <tr><td class="k">layer</td><td>장치 레이어 전환</td><td>layer</td></tr>
     <tr><td class="k">sequence</td><td>여러 액션을 순서대로</td><td>steps</td></tr>
     <tr><td class="k">stop</td><td>실행 중인 호스트 액션 중지</td><td>—</td></tr>
     <tr><td class="k">noop</td><td>아무것도 안 함</td><td>—</td></tr>
@@ -246,8 +273,9 @@ PC가 합니다. <b>앱이 꺼져 있으면 아무 일도 일어나지 않습니
 </table>
 </div>
 
-<p>기본 프로필에서 레이어 1의 5·6·7번 키가 토큰 0·1·2를 가리키고 있으므로, 아래처럼 채우면
-바로 동작합니다.</p>
+<p>기본 프로필에는 호스트 액션이 없습니다. 녹음이 장치에 안 들어갈 때 앱이 토큰을 만들어
+주고, 직접 쓰려면 <code>profile.json</code>의 <code>host_actions</code>에 아래처럼 넣은 뒤
+그 토큰을 키에 바인딩합니다.</p>
 
 <pre><code>"host_actions": {
   "0": {
@@ -301,8 +329,8 @@ PC가 합니다. <b>앱이 꺼져 있으면 아무 일도 일어나지 않습니
 
 <h2><span class="n">07</span>LED로 상태 보기</h2>
 
-<p>픽셀 하나가 네 소스를 우선순위로 합성합니다: <b>1</b> 키 누름(흰색 120 ms, 어느 키든 동일) →
-<b>2</b> 레이어 색(가장 유용한 용도) → <b>3</b> 호스트 앰비언트 → <b>4</b> 기본 씬.</p>
+<p>픽셀 하나가 세 소스를 우선순위로 합성합니다: <b>1</b> 키 누름(흰색 120 ms, 어느 키든 동일) →
+<b>2</b> 호스트 앰비언트(녹음 중 빨강 · 분홍, 저장 결과 초록 · 주황 · 빨강) → <b>3</b> 기본 씬.</p>
 
 <pre><code>macrokey daemon &amp;
 macrokey state running --progress 0.5
@@ -358,18 +386,19 @@ macrokey state error --severity critical</code></pre>
 <table>
   <thead><tr><th>기능</th><th>현재 상태</th></tr></thead>
   <tbody>
-    <tr><td>앱별 자동 레이어 전환</td><td>백엔드와 <code>set_app_layer_rules()</code>는 있지만 <b>아무 데서도 호출하지 않음</b></td></tr>
-    <tr><td>호스트 액션 편집 GUI</td><td>토큰 지정만 가능. 내용은 <code>profile.json</code> 직접 편집</td></tr>
+    <tr><td>호스트 액션 편집 GUI</td><td>녹음이 만들어 주는 것 외에는 <code>profile.json</code> 직접 편집</td></tr>
     <tr><td>미디어 키 (consumer)</td><td><code>MK_USE_HID_PROJECT=1</code>로 다시 빌드해야 동작</td></tr>
-    <tr><td>마우스 이동 · 휠</td><td>펌웨어에는 있지만 편집기에서 고를 수 없음</td></tr>
-    <tr><td>장치 매크로 (sequence)</td><td>EEPROM 480 B는 배정돼 있으나 만드는 화면 없음</td></tr>
+    <tr><td>마우스 이동 · 휠 · 드래그</td><td>녹음으로만 들어갑니다. 편집기에서 직접 고를 수는 없음</td></tr>
+    <tr><td>절대 좌표 마우스</td><td>USB 상대 마우스라 불가. 대신 재생 전에 커서를 좌상단으로 보냄</td></tr>
+    <tr><td>타이핑 속도 재현</td><td>연속 타자는 <code>text</code> 하나로 합쳐져 글자당 5 ms로 재생</td></tr>
+    <tr><td>PC 단축키로 매크로 실행</td><td>트리거는 패드뿐. 호스트 전용 매크로는 없음</td></tr>
     <tr><td>진행률 바</td><td>픽셀 1개라 밝기 변조로 대체</td></tr>
   </tbody>
 </table>
 </div>
 
 <footer>
-  macroKey · 사용 설명서 · 호스트 앱 0.3.0 — 배선은 <a href="wiring.html">wiring.html</a>,
+  macroKey · 사용 설명서 · 펌웨어 · 호스트 앱 0.4.0 — 배선은 <a href="wiring.html">wiring.html</a>,
   설계 배경은 <code>docs/ARCHITECTURE.md</code>, 프로토콜은 <code>docs/PROTOCOL.md</code>.
 </footer>
 

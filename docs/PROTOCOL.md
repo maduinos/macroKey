@@ -35,7 +35,7 @@ HID 입력과 시리얼은 완전히 독립입니다. 시리얼을 아무도 열
 부팅 직후 한 번, 그리고 `IDENT` 요청마다 보냅니다.
 
 ```
-HELLO proto=1 fw=0.3.0 board=promicro keys=8 leds=1 bytes=1024
+HELLO proto=1 fw=0.4.0 board=promicro keys=8 leds=1 bytes=1024
 ```
 
 호스트는 `proto`가 자신이 아는 버전보다 크면 연결을 거부하고 사용자에게 앱 업데이트를

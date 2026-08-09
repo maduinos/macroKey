@@ -6,7 +6,7 @@
 
 #include <Arduino.h>
 
-#define MK_FIRMWARE_VERSION "0.3.0"
+#define MK_FIRMWARE_VERSION "0.4.0"
 #define MK_PROTOCOL_VERSION 1
 #define MK_BOARD_NAME "promicro"
 
