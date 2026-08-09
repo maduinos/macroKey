@@ -18,6 +18,7 @@ class FakeDevice:
     def __init__(self, fail: bool = False) -> None:
         self.fail = fail
         self.connected = True
+        self.homed = 0
         self.colors: list[tuple[int, int, int]] = []
         self.modes: list[bool] = []
 
@@ -30,6 +31,13 @@ class FakeDevice:
         if self.fail:
             raise DeviceError("no link")
         self.colors.append(tuple(color))
+
+    def home_pointer(self) -> None:
+        """The session parks the pointer before capture so that the movement
+        it records is measured from a known origin."""
+        if self.fail:
+            raise DeviceError("no link")
+        self.homed += 1
 
 
 class FakeApp:
@@ -51,6 +59,8 @@ class FakeApp:
 
     #: The session writes every captured step to the log, so it needs this.
     class recorder:  # noqa: N801 - stands in for the real Recorder
+        capture_mouse = True
+
         @staticmethod
         def summary(steps):
             from macrokey.recorder.normalize import summarize

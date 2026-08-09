@@ -425,7 +425,20 @@ def reduce_to_device_macro(
         # Clipboard and shell still need the host.
         return None
 
-    if not compiled or macro_records(compiled) > max_records:
+    if not compiled:
+        return None
+
+    # A macro that moves the pointer has to start from somewhere known. The
+    # movement captured is relative -- the kernel reports nothing else -- so
+    # replaying it from wherever the cursor happens to be lands an unknown
+    # distance from where it was recorded, and every click in the macro then
+    # hits whatever is there instead. The recording was made from the corner
+    # (the session parks the pointer there when it starts), so replaying from
+    # the corner puts it back on the same pixels.
+    if any(action.kind in ("mouse_move", "mouse_button") for action in compiled):
+        compiled.insert(0, Action(kind="mouse_home"))
+
+    if macro_records(compiled) > max_records:
         return None
     return compiled
 

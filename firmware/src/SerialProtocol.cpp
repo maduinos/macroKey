@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "HidBackend.h"
 #include "Util.h"
 
 namespace {
@@ -407,6 +408,16 @@ void SerialProtocol::handleLine(uint32_t now) {
     cmdLed(now);
   } else if (strcmp(verb_, "PROF") == 0) {
     cmdProfile(now);
+  } else if (strcmp(verb_, "MOUSE") == 0 && sub_ != NULL && strcmp(sub_, "home") == 0) {
+    // Asked for when a recording starts. Everything the recorder then sees is
+    // measured from the corner, which is what lets a replayed macro land where
+    // it was recorded rather than an unknown distance away from it.
+    if (!engine_->hidEnabled()) {
+      sendErr("busy");  // still inside the boot grace window
+    } else {
+      mkMouseHome();
+      sendOk();
+    }
   } else if (strcmp(verb_, "SAVE") == 0) {
     profile_->saveHeader();
     sendOk();

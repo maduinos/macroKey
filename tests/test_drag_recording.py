@@ -97,9 +97,11 @@ def test_a_drag_compiles_to_device_records() -> None:
     macro = reduce_to_device_macro(steps)
     assert macro is not None
     kinds = [action.kind for action in macro]
-    assert kinds[0] == "mouse_button" and kinds[-1] == "mouse_button"
-    assert macro[0].mode == "press"
-    assert macro[-1].mode == "release"
+    # The pointer is sent to the corner first: the movement was recorded from
+    # there, so replaying from there puts the drag back on the same pixels.
+    assert kinds[0] == "mouse_home"
+    buttons = [a for a in macro if a.kind == "mouse_button"]
+    assert [a.mode for a in buttons] == ["press", "release"]
     assert "mouse_move" in kinds
 
 
@@ -137,6 +139,7 @@ def test_a_split_move_really_does_travel_in_a_straight_line() -> None:
     whatever it is dragged across, so the path is the gesture."""
     macro = reduce_to_device_macro([{"type": "mouse_move", "params": {"dx": 300, "dy": -200}}])
     assert macro is not None
+    macro = [step for step in macro if step.kind == "mouse_move"]
     assert sum(step.dx for step in macro) == 300
     assert sum(step.dy for step in macro) == -200
     for step in macro:

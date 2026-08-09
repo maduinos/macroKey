@@ -70,7 +70,17 @@ def test_a_mouse_recording_still_fits_on_the_keypad() -> None:
     """Buttons and wheel are firmware actions, so this needs no host."""
     macro = reduce_to_device_macro(normalize([click("left", 1.0), scroll(-2, 1.5)]))
     assert macro is not None
-    assert [action.kind for action in macro] == ["mouse_button", "delay", "mouse_wheel"]
+    assert [action.kind for action in macro] == [
+        "mouse_home", "mouse_button", "delay", "mouse_wheel",
+    ]
+
+
+def test_a_keyboard_only_recording_does_not_move_the_pointer() -> None:
+    """Homing is for macros that click somewhere. A keyboard macro that threw
+    the cursor into a corner on every press would be its own bug."""
+    macro = reduce_to_device_macro([{"type": "text", "params": {"text": "ls"}}])
+    assert macro is not None
+    assert all(action.kind != "mouse_home" for action in macro)
 
 
 def test_a_big_scroll_is_split_to_fit_one_signed_byte() -> None:
@@ -90,7 +100,10 @@ def test_short_typed_text_mixed_with_mouse_fits_on_the_device() -> None:
     assert any(step["type"] == "text" for step in recording)
     macro = reduce_to_device_macro(recording)
     assert macro is not None
-    assert [action.kind for action in macro] == ["text", "delay", "mouse_button"]
+    # `mouse_home` leads: the click has to land where it landed when recorded.
+    assert [action.kind for action in macro] == [
+        "mouse_home", "text", "delay", "mouse_button",
+    ]
 
 
 def test_text_the_keypad_has_no_keys_for_still_needs_the_host() -> None:
@@ -242,7 +255,8 @@ def test_a_long_move_is_split_into_signed_byte_steps() -> None:
         [{"type": "mouse_move", "params": {"dx": 300, "dy": -200}}]
     )
     assert macro is not None
-    assert all(isinstance(step, Action) and step.kind == "mouse_move" for step in macro)
+    macro = [step for step in macro if step.kind == "mouse_move"]
+    assert all(isinstance(step, Action) for step in macro)
     assert sum(step.dx for step in macro) == 300
     assert sum(step.dy for step in macro) == -200
     for step in macro:
@@ -256,7 +270,7 @@ def test_a_split_move_travels_in_a_straight_line() -> None:
 
     macro = reduce_to_device_macro([{"type": "mouse_move", "params": {"dx": 254, "dy": 254}}])
     assert macro is not None
-    assert all(step.dx and step.dy for step in macro)
+    assert all(step.dx and step.dy for step in macro if step.kind == "mouse_move")
 
 
 def test_a_move_survives_the_binary_round_trip() -> None:

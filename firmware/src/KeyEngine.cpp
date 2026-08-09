@@ -78,6 +78,10 @@ void KeyEngine::dispatch(const Action &action, uint8_t key, uint32_t now) {
       mkMouseWheel((int8_t)action.a);
       break;
 
+    case ACT_MOUSE_HOME:
+      mkMouseHome();
+      break;
+
     case ACT_SEQUENCE:
       runMacro(action.a, now);
       break;

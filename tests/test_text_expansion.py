@@ -141,4 +141,6 @@ def test_text_does_not_disturb_the_other_step_kinds() -> None:
         [text("hi"), {"type": "mouse_button", "params": {"button": "left"}}, key("enter")]
     )
     assert macro is not None
-    assert [action.kind for action in macro] == ["text", "mouse_button", "key"]
+    # `mouse_home` leads because the macro touches the pointer: replaying a
+    # click from wherever the cursor happens to be clicks whatever is there.
+    assert [action.kind for action in macro] == ["mouse_home", "text", "mouse_button", "key"]

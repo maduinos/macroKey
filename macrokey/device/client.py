@@ -342,6 +342,17 @@ class DeviceClient:
 
     # ----------------------------------------------------------------- misc --
 
+    def home_pointer(self) -> None:
+        """Drives the pointer into the top-left corner, from the pad itself.
+
+        The pad is a real USB mouse, so this works where synthesising a move
+        from the host does not -- under Wayland nothing outside the compositor
+        may place the cursor. Asked for when a recording starts, so that the
+        relative movement captured from then on is measured from a known origin
+        and the macro can be replayed back to the same place.
+        """
+        self.request(protocol.encode("MOUSE", "home"))
+
     def ping(self) -> None:
         self.request(protocol.encode("PING"))
 

@@ -59,6 +59,7 @@ class RecordOutcome:
     steps: int
     where: str
     on_device: bool
+    gesture: str = "tap"
     dropped_secrets: int = 0
     error: str = ""
 
@@ -80,6 +81,9 @@ class RecordingSession:
         #: ending a tap recording with a tap-tap-hold must not silently move it.
         self.active_gesture: str = "tap"
         self.last_outcome: RecordOutcome | None = None
+        #: The last recording's normalised steps, kept so a window can show what
+        #: was caught. Authoring happens with no screen in front of you.
+        self.last_steps: list[dict] = []
         self._started_at = 0.0
         self._watch_stop = threading.Event()
 
@@ -120,6 +124,22 @@ class RecordingSession:
     # ---------------------------------------------------------------- internals --
 
     def _start(self, key: int, gesture: str = "tap") -> None:
+        # Before capture, not after: everything the recorder sees from here is
+        # measured from the corner, which is what lets the macro be replayed
+        # back onto the same pixels. Done by the pad, because it is a real USB
+        # mouse -- under Wayland nothing outside the compositor may move the
+        # cursor, so the host cannot do this itself.
+        #
+        # Failure is not fatal. A keyboard-only recording does not care where
+        # the pointer is, and refusing to record at all because the cursor
+        # could not be parked would be worse than a mouse macro that needs
+        # doing again.
+        if self.app.recorder.capture_mouse:
+            try:
+                self.app.device.home_pointer()
+            except DeviceError:
+                log.debug("could not park the pointer before recording", exc_info=True)
+
         try:
             self.app.start_recording()
         except Exception as exc:  # noqa: BLE001 - capture backends fail environmentally
@@ -184,11 +204,14 @@ class RecordingSession:
         # so the only way to see that what was captured is not what was done is
         # to be told. "It moved on its own" is what this is for: the answer is
         # in here, and without it the only move is to guess.
+        self.last_steps = steps
         for line in self.app.recorder.summary(steps):
             log.info("  captured: %s", line)
 
         if not steps:
-            self.last_outcome = RecordOutcome(key, 0, "", False, error="nothing was captured")
+            self.last_outcome = RecordOutcome(
+                key, 0, "", False, gesture=self.active_gesture, error="nothing was captured"
+            )
             self.app.status(
                 f"Nothing was captured, so key {key + 1} ({self.active_gesture}) is unchanged"
             )
@@ -199,7 +222,9 @@ class RecordingSession:
         try:
             where = self.app.assign_recording(steps, key, self.active_gesture)
         except Exception as exc:  # noqa: BLE001 - a full profile must not crash the pad
-            self.last_outcome = RecordOutcome(key, len(steps), "", False, error=str(exc))
+            self.last_outcome = RecordOutcome(
+                key, len(steps), "", False, gesture=self.active_gesture, error=str(exc)
+            )
             self.app.status(f"Could not store the recording: {exc}")
             self._flash(REJECTED_COLOR)
             self._on_change()
@@ -211,6 +236,7 @@ class RecordingSession:
             steps=len(steps),
             where=where,
             on_device=on_device,
+            gesture=self.active_gesture,
             dropped_secrets=getattr(self.app, "last_redacted", 0),
         )
 

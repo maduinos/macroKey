@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QHBoxLayout,
     QLabel,
+    QListWidget,
     QMainWindow,
     QMessageBox,
     QPushButton,
@@ -77,6 +78,7 @@ class MainWindow(QMainWindow):
         hint.setWordWrap(True)
         hint.setStyleSheet("color: palette(mid); padding: 2px 8px;")
         layout.addWidget(hint)
+        layout.addWidget(self._build_capture())
         self.setCentralWidget(central)
 
         self.record_banner = QLabel("  ● RECORDING - hold the same key again to finish  ")
@@ -179,6 +181,28 @@ class MainWindow(QMainWindow):
         row.addSpacing(12)
         row.addWidget(version)
         return bar
+
+    def _build_capture(self) -> QWidget:
+        """Where the last recording is listed, step by step.
+
+        Hidden until there is one. It is the answer to "that is not what I
+        did", and until it existed there was no way to ask that question except
+        by guessing.
+        """
+        self.capture_box = QWidget()
+        column = QVBoxLayout(self.capture_box)
+        column.setContentsMargins(8, 0, 8, 4)
+
+        self.capture_title = QLabel()
+        self.capture_title.setStyleSheet("font-weight: 600;")
+        self.capture_list = QListWidget()
+        self.capture_list.setMaximumHeight(140)
+        self.capture_list.setStyleSheet("font-family: monospace;")
+
+        column.addWidget(self.capture_title)
+        column.addWidget(self.capture_list)
+        self.capture_box.setVisible(False)
+        return self.capture_box
 
     def _build_keys(self) -> QWidget:
         """The eight keys, and nothing wrapped around them.
@@ -494,7 +518,23 @@ class MainWindow(QMainWindow):
         outcome = session.last_outcome
         if outcome is not None and not session.recording:
             self._refresh_all()
+            self._show_capture(outcome)
         self.record_banner.setVisible(session.recording)
+
+    def _show_capture(self, outcome) -> None:
+        """Lists what the last recording actually caught.
+
+        A recording is authored blind: the pad has no screen and the window need
+        not even be open. When what was captured is not what was done there was
+        nothing to look at, so the only move was to guess -- and "it moved on
+        its own" is not a thing anyone can debug from a status bar.
+        """
+        steps = self.app.recorder.summary(self.session.last_steps)
+        where = outcome.where or outcome.error or "nothing was captured"
+        self.capture_title.setText(f"Key {outcome.key + 1} {outcome.gesture} - {where}")
+        self.capture_list.clear()
+        self.capture_list.addItems(steps or ["(nothing)"])
+        self.capture_box.setVisible(True)
 
     def _push(self) -> None:
         """Writes the profile to the device, in the background.
