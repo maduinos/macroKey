@@ -37,6 +37,34 @@ def test_a_press_and_release_with_nothing_between_is_one_click() -> None:
     assert modes(steps) == ["click"]
 
 
+def test_a_hand_shaking_on_the_button_is_still_a_click() -> None:
+    """Nobody holds a mouse still while clicking it, and a gaming mouse at
+    3200 dpi turns a tremor into dozens of counts. Treating any movement as a
+    drag made the macro hold the button down and haul whatever was under it
+    across the screen -- for a click the person never meant as a drag."""
+    steps = normalize([press("left", 1.0), move(12, 8, 1.02), release("left", 1.08)])
+    assert modes(steps) == ["click"]
+
+
+def test_the_shake_itself_is_not_replayed() -> None:
+    """Replaying the drift would shift everything after it by however far the
+    hand wandered while the button was down."""
+    steps = normalize([press("left", 1.0), move(12, 8, 1.02), release("left", 1.08)])
+    assert [step["type"] for step in steps] == ["mouse_button"]
+
+
+def test_travel_past_the_threshold_is_a_drag() -> None:
+    steps = normalize([press("left", 1.0), move(300, 100, 1.2), release("left", 1.5)])
+    assert modes(steps) == ["press", "release"]
+
+
+def test_the_threshold_sits_between_a_tremor_and_a_gesture() -> None:
+    """A number that classified every click as a drag is the bug this guards."""
+    from macrokey.recorder.normalize import DRAG_MIN_TRAVEL
+
+    assert 24 <= DRAG_MIN_TRAVEL <= 120
+
+
 def test_a_press_movement_release_is_a_drag() -> None:
     steps = normalize([press("left", 1.0), move(200, 60, 1.2), release("left", 1.5)])
     assert [step["type"] for step in steps] == [
