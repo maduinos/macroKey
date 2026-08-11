@@ -21,6 +21,24 @@ class ActionError(RuntimeError):
     """Raised when a host action cannot run or fails partway."""
 
 
+@dataclass(frozen=True)
+class Param:
+    """One editable parameter of a host action.
+
+    Handlers declare these so an editor can build a form without knowing what
+    any particular action is. Adding an action stays a single ``@register``
+    class; the UI picks up its fields for free.
+    """
+
+    key: str
+    label: str
+    #: How to edit it: "text", "int", "bool" or "json" (a nested structure).
+    kind: str = "text"
+    default: Any = ""
+    #: Example or explanation, shown next to the field.
+    hint: str = ""
+
+
 @dataclass
 class ActionContext:
     """Everything a handler is allowed to touch."""
@@ -57,6 +75,8 @@ class HostActionHandler(ABC):
     type_name = ""
     #: Shown in the UI picker.
     label = ""
+    #: Editable parameters, in the order an editor should show them.
+    param_spec: tuple[Param, ...] = ()
 
     def __init__(self, params: dict[str, Any]) -> None:
         self.params = params
@@ -99,6 +119,12 @@ def register(type_name: str, label: str = "") -> Callable[[type], type]:
 def registered_types() -> dict[str, str]:
     """``{type_name: label}`` for every registered handler."""
     return {name: handler.label for name, handler in sorted(_REGISTRY.items())}
+
+
+def handler_class(type_name: str) -> type[HostActionHandler] | None:
+    """The handler registered under `type_name`, for callers that want its
+    :attr:`~HostActionHandler.param_spec` without instantiating anything."""
+    return _REGISTRY.get(type_name)
 
 
 def create(spec: HostAction) -> HostActionHandler:
