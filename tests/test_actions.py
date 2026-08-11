@@ -51,7 +51,6 @@ class TestParamSpec:
             "delay": {"ms"},
             "clipboard_image": {"path", "paste", "press_enter"},
             "shell": {"command", "cwd"},
-            "layer": {"layer"},
             "sequence": {"steps"},
         }
         for type_name, params in expected.items():
