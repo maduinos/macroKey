@@ -5,7 +5,9 @@ from .base import (
     ActionContext,
     ActionError,
     HostActionHandler,
+    Param,
     create,
+    handler_class,
     register,
     registered_types,
 )
@@ -16,7 +18,9 @@ __all__ = [
     "ActionError",
     "HostActionHandler",
     "HostActionRunner",
+    "Param",
     "create",
+    "handler_class",
     "register",
     "registered_types",
 ]
