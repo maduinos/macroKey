@@ -6,7 +6,7 @@
 
 #include <Arduino.h>
 
-#define MK_FIRMWARE_VERSION "0.4.1"
+#define MK_FIRMWARE_VERSION "0.5.0"
 #define MK_PROTOCOL_VERSION 1
 #define MK_BOARD_NAME "promicro"
 
@@ -104,6 +104,15 @@ static const uint8_t MK_KEY_PINS[MK_KEY_COUNT] = {3, 4, 5, 6, 7, 8, 9, 10};
 // and there was simply nothing to run.
 #define MK_LED_UNBOUND_FLASH_MS 180
 #define MK_LED_UNBOUND_FLASH_AMOUNT 255
+
+// Sequence macros block loop() for as long as they run. The busy colour says
+// "still working"; the done flash says "finished" so a long typed line is not
+// mistaken for a stuck pad. Distinct from recording red and the unbound dim red.
+#define MK_LED_MACRO_BUSY_PERIOD_MS 500
+#define MK_LED_MACRO_BUSY_AMOUNT 200
+#define MK_LED_MACRO_DONE_MS 350
+#define MK_LED_MACRO_DONE_AMOUNT 230
+
 // Host ambient control lapses back to the local scene after this much silence,
 // so closing the desktop app never freezes the strip on its last colour. A host
 // that knows it will be quiet for longer -- one sitting on a colour picker, or

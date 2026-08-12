@@ -140,7 +140,7 @@ def _encode_macros(blob: bytearray, profile: Profile) -> None:
             raise ProfileError(
                 f"device macro storage exhausted at slot {slot_index}: "
                 f"{MACRO_RECORD_CAPACITY} records available. "
-                "Move the longer macros to host actions."
+                "Shorten a macro or clear unused keys."
             )
         blob[MACRO_OFFSET + slot_index] = len(records)
         for record_index, record in enumerate(records):

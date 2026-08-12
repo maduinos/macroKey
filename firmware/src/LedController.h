@@ -28,6 +28,10 @@ class LedController {
   void noteHold(uint8_t key, uint32_t now);
   //: The key was received but nothing is bound to it.
   void noteUnbound(uint8_t key, uint32_t now);
+  //: A sequence macro is running (stays until noteMacroDone).
+  void noteMacroBusy(uint8_t key, uint32_t now);
+  //: The sequence finished -- clears busy and flashes confirmation.
+  void noteMacroDone(uint8_t key, uint32_t now);
 
   // ---- host controlled ambient --------------------------------------------
   // `timeoutMs` is how long the host promises to be worth waiting for. The
@@ -75,6 +79,13 @@ class LedController {
   AmbientPixel ambient_[MK_LED_COUNT];
   Cue cue_[MK_LED_COUNT];
   Rgb lastShown_[MK_LED_COUNT];
+
+  // Sticky overlay while a sequence macro is mid-run. Cleared by noteMacroDone.
+  // Separate from Cue because a cue is timed; a long typed line would otherwise
+  // fade out mid-macro and look idle.
+  bool macroBusy_ = false;
+  uint8_t macroBusyIndex_ = 0;
+  uint32_t macroBusyStartedAt_ = 0;
 
   // Cross-fade state. `lastScene_`/`lastEffect_` are what the fade is compared
   // against, and `lastBase_` is the colour actually lit last frame, which is

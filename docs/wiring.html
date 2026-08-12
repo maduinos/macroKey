@@ -435,18 +435,21 @@ arduino-cli core update-index
 arduino-cli core install SparkFun:avr
 arduino-cli lib install "Adafruit NeoPixel"
 
-arduino-cli compile --fqbn SparkFun:avr:promicro:cpu=16MHzatmega32U4 firmware
-arduino-cli upload  --fqbn SparkFun:avr:promicro:cpu=16MHzatmega32U4 -p /dev/ttyACM0 firmware</code></pre>
+arduino-cli lib install "Keyboard"
+arduino-cli lib install "Mouse"
+arduino-cli compile --upload --fqbn SparkFun:avr:promicro:cpu=16MHzatmega32U4 \
+  -p /dev/ttyACM0 firmware</code></pre>
 
 <div class="note warn">
   <p><b>업로드는 타이밍 싸움입니다.</b> Pro Micro는 리셋 버튼이 없고 부트로더가 8초만 떠 있습니다.
   <code>RST</code>–<code>GND</code>를 빠르게 두 번 단락시킨 <b>직후에</b> upload를 실행하세요.
   부트로더 모드에서는 포트 번호가 바뀌는 경우가 많으니 <code>arduino-cli board list</code> 또는
-  <code>macrokey ports</code>로 확인하세요.</p>
+  <code>arduino-cli board list</code> 또는 <code>python -m macrokey ports</code>로 확인하세요.</p>
 </div>
 
-<p class="small muted"><code>Keyboard</code>와 <code>Mouse</code>는 AVR 코어에 포함돼 있어 따로
-설치하지 않습니다. 배선이 맞는지는 <code>macrokey monitor</code>로 확인하는 것이 가장 빠릅니다 —
+<p class="small muted"><code>Keyboard</code>와 <code>Mouse</code>는 AVR 코어에 없으므로
+별도 설치가 필요합니다(위 명령). 배선 확인은
+<code>python -m macrokey monitor</code>가 빠릅니다 —
 키를 누르면 <code>EV t=key k=0 g=tap</code> 같은 줄이 찍힙니다.</p>
 
 <h2><span class="n">06</span>안 될 때</h2>
@@ -496,7 +499,7 @@ arduino-cli upload  --fqbn SparkFun:avr:promicro:cpu=16MHzatmega32U4 -p /dev/tty
 
 <footer>
   macroKey · 배선 가이드 · 펌웨어 0.3.0 — 핀 정의의 출처는 <code>firmware/src/Config.h</code>.
-  사용법은 <a href="manual.html">manual.html</a>, 설계 배경은 <code>docs/ARCHITECTURE.md</code>.
+  사용법은 <a href="manual.html">manual.html</a>, 설계 배경은 <code>ARCHITECTURE.md</code>.
 </footer>
 
 </div>

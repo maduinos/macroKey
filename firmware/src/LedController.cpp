@@ -61,6 +61,21 @@ void LedController::noteUnbound(uint8_t key, uint32_t now) {
   startCue(key, Rgb{110, 0, 0}, MK_LED_UNBOUND_FLASH_MS, MK_LED_UNBOUND_FLASH_AMOUNT, now);
 }
 
+void LedController::noteMacroBusy(uint8_t key, uint32_t now) {
+  uint8_t index = key < MK_LED_COUNT ? key : MK_LED_COUNT - 1;
+  macroBusy_ = true;
+  macroBusyIndex_ = index;
+  macroBusyStartedAt_ = now == 0 ? 1 : now;
+  dirty_ = true;
+}
+
+void LedController::noteMacroDone(uint8_t key, uint32_t now) {
+  macroBusy_ = false;
+  // Green: same family as a successful profile write on the host path, so
+  // "stored / finished" reads as one language on the pad.
+  startCue(key, Rgb{0, 255, 60}, MK_LED_MACRO_DONE_MS, MK_LED_MACRO_DONE_AMOUNT, now);
+}
+
 void LedController::setHostMode(bool enabled, uint32_t now, uint16_t timeoutMs) {
   hostMode_ = enabled;
   lastHostAt_ = now;
@@ -172,6 +187,20 @@ void LedController::render(uint32_t now) {
     // Recorded before the press flash: the flash is transient feedback, not the
     // scene, so a fade starting mid-flash must not inherit the white.
     lastBase_[i] = color;
+
+    // Macro-in-progress sits above the scene and below the done flash. Cyan so
+    // it cannot be confused with recording red or the white tap cue.
+    if (macroBusy_ && i == macroBusyIndex_) {
+      uint16_t period = MK_LED_MACRO_BUSY_PERIOD_MS;
+      if (period == 0) period = 1;
+      uint32_t phase = (now - macroBusyStartedAt_) % period;
+      // Triangle 0..255..0 for a soft pulse without a sine table.
+      uint16_t wave = phase < period / 2
+                          ? (uint16_t)(phase * 510 / period)
+                          : (uint16_t)((period - phase) * 510 / period);
+      uint8_t amount = (uint8_t)((wave * MK_LED_MACRO_BUSY_AMOUNT) / 255);
+      color = blendToward(color, Rgb{0, 180, 255}, amount);
+    }
 
     const Cue &cue = cue_[i];
     uint32_t sinceCue = now - cue.startedAt;

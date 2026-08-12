@@ -6,6 +6,7 @@ keeps every other module in the package runnable headless.
 
 from __future__ import annotations
 
+import os
 import sys
 import threading
 
@@ -30,7 +31,7 @@ from PySide6.QtWidgets import (
 
 from .. import __version__
 from ..app import MacroKeyApp
-from ..config import KEY_COUNT
+from ..config import KEY_COUNT, ProfileError
 from ..config.model import EDITABLE_GESTURES, MAX_TEXT_SPEED_MS
 from ..device import DeviceError, candidates
 from ..session import RecordingSession
@@ -51,6 +52,7 @@ class MainWindow(QMainWindow):
     connectionChanged = Signal()
     pushFinished = Signal()
     recordingChanged = Signal()
+    profileMismatch = Signal()
 
     def __init__(self, port: str = "") -> None:
         super().__init__()
@@ -74,7 +76,8 @@ class MainWindow(QMainWindow):
         # suggests that holding one opens a recorder. One line, stated once.
         hint = QLabel(
             "Hold any key on its own for 3 seconds to record into it - the pixel "
-            "turns red. Hold the same key again to store what you did."
+            "turns red. Hold the same key again to store what you did. "
+            "After setup you can quit this app; the pad keeps working as a keyboard."
         )
         hint.setWordWrap(True)
         hint.setStyleSheet("color: palette(mid); padding: 2px 8px;")
@@ -95,6 +98,7 @@ class MainWindow(QMainWindow):
         self.pushFinished.connect(self._on_push_finished)
         self.failed.connect(self._show_error)
         self.connectionChanged.connect(self._refresh_connection)
+        self.profileMismatch.connect(self._resolve_profile_mismatch)
 
         # The link can drop without anyone clicking, so poll the device rather
         # than trusting whatever the last click implied.
@@ -116,6 +120,10 @@ class MainWindow(QMainWindow):
         # Connect straight away rather than making someone press a button to
         # reach a device that is already plugged in and already identified.
         QTimer.singleShot(0, self._autoconnect)
+        # Recording under Wayland needs a package and /dev/input access. Offer
+        # the one-click fix once the window is up, not before connect: the pad
+        # works without it, and a modal during splash feels like a failure.
+        QTimer.singleShot(400, self._maybe_fix_capture)
 
     # ------------------------------------------------------------------ build --
 
@@ -368,21 +376,18 @@ class MainWindow(QMainWindow):
         for (key, gesture), button in self.buttons.items():
             action = self.app.profile.action(key, gesture)
             button.setText(describe_binding(self.app.profile, action))
-            # Anything that needs this computer running is worth flagging on the
-            # grid, not just in the dialog: it is the difference between a pad
-            # that works when unplugged from this machine and one that does not.
-            needs_host = action.kind == "host"
-            button.setStyleSheet(
-                "text-align: left; padding: 4px 8px;"
-                + ("color: palette(link);" if needs_host else "")
-            )
+            button.setStyleSheet("text-align: left; padding: 4px 8px;")
 
     def _edit(self, key: int, gesture: str) -> None:
         dialog = SlotDialog(self, self.app, key, gesture)
         if dialog.exec() != QDialog.Accepted:
             return
         if dialog.recorded_steps:
-            where = self.app.assign_recording(dialog.recorded_steps, key, gesture)
+            try:
+                where = self.app.assign_recording(dialog.recorded_steps, key, gesture)
+            except ProfileError as exc:
+                QMessageBox.warning(self, "Could not store recording", str(exc))
+                return
             self._refresh_all()
             self._apply(f"Key {key + 1} {gesture} ({where})")
             return
@@ -463,13 +468,12 @@ class MainWindow(QMainWindow):
                 self.app.connect(port)
                 self.app.settings.port = self.app.device.port
                 self.app.settings.save()
-                # Anything edited while unplugged is still only on disk. Sending
-                # it now is what lets the Write button go: without this, editing
-                # offline and plugging in left the pad running the old profile
-                # with nothing on screen admitting it.
+                # Never silent-overwrite. PROTOCOL requires asking which side wins
+                # when the stored profile and the pad disagree.
                 if not self.app.device_matches_host():
-                    self.app.push_profile()
-                    self.statusMessage.emit("Keypad brought up to date")
+                    self.profileMismatch.emit()
+                else:
+                    self.statusMessage.emit("Connected")
             except DeviceError as exc:
                 if quiet:
                     self.statusMessage.emit(f"No keypad found: {exc.args[0].splitlines()[0]}")
@@ -477,11 +481,50 @@ class MainWindow(QMainWindow):
                     self.failed.emit("Connect failed", str(exc))
             except (ValueError, OSError) as exc:
                 self.statusMessage.emit(f"Could not update the keypad: {exc}")
+            except RuntimeError:
+                # Window closed while the worker was still connecting.
+                return
             finally:
                 self._connecting = False
-                self.connectionChanged.emit()
+                try:
+                    self.connectionChanged.emit()
+                except RuntimeError:
+                    pass
 
         self._in_background(worker)
+
+    def _resolve_profile_mismatch(self) -> None:
+        """Ask which profile wins when this computer and the pad disagree."""
+        if not self.app.device.connected:
+            return
+        box = QMessageBox(self)
+        box.setWindowTitle("Profile differs")
+        box.setText(
+            "This computer and the keypad have different profiles.\n\n"
+            "Pull: use what is on the keypad.\n"
+            "Push: overwrite the keypad with this computer's profile.\n"
+            "Cancel: leave both as they are."
+        )
+        pull = box.addButton("Pull from keypad", QMessageBox.AcceptRole)
+        push = box.addButton("Push to keypad", QMessageBox.DestructiveRole)
+        box.addButton("Cancel", QMessageBox.RejectRole)
+        box.exec()
+        clicked = box.clickedButton()
+        try:
+            if clicked is pull:
+                self.app.profile = self.app.pull_profile()
+                self.app.save()
+                self._refresh_all()
+                self.statusBar().showMessage("Adopted the keypad profile")
+            elif clicked is push:
+                self.app.push_profile()
+                self.statusBar().showMessage("Keypad updated from this computer")
+            else:
+                self.statusBar().showMessage(
+                    "Connected — profiles still differ (use Pull/Push when ready)"
+                )
+        except (DeviceError, ValueError, OSError) as exc:
+            QMessageBox.critical(self, "Sync failed", str(exc))
 
     def _disconnect(self) -> None:
         self.app.disconnect()
@@ -536,11 +579,96 @@ class MainWindow(QMainWindow):
             return
         self._toggle_connection(quiet=True)
 
+    def _maybe_fix_capture(self) -> None:
+        """First-run (and later) prep so hold-to-record can actually capture.
+
+        Fully silent setup is impossible on Linux: device nodes need root once.
+        What we can do is install the Python package without asking, then offer
+        a single administrator prompt for ``input`` access.
+        """
+        from ..capture_setup import fix_capture, needs_linux_capture_fix, status
+
+        if not needs_linux_capture_fix():
+            return
+        if self.app.settings.capture_setup_declined:
+            return
+
+        before = status()
+        # Package install is unprivileged when running from source. Frozen
+        # builds already bundle evdev; this step is then a no-op or a rebuild hint.
+        if not before.package_ok:
+            self.statusMessage.emit("Installing recording support (evdev)...")
+            ok, message = fix_capture(grant_devices=False)
+            if ok:
+                self.statusMessage.emit("Recording is ready")
+                return
+            if "restart" in message.lower() or "reinstall" in message.lower() or "build" in message.lower():
+                QMessageBox.information(
+                    self,
+                    "Recording support",
+                    message if "build" in message.lower() or "reinstall" in message.lower()
+                    else (
+                        "Recording support was installed. Quit and open macroKey "
+                        "again, then it can finish setup."
+                    ),
+                )
+                return
+
+        after = status()
+        if after.ok:
+            return
+
+        detail = after.reason or "Recording cannot see the keyboard on this session."
+        answer = QMessageBox.question(
+            self,
+            "Enable recording?",
+            f"{detail}\n\n"
+            "Allow macroKey to set this up? You will be asked for your "
+            "administrator password once. The keypad still works as a "
+            "keyboard either way — only recording needs this.",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.Yes,
+        )
+        if answer != QMessageBox.Yes:
+            self.app.settings.capture_setup_declined = True
+            self.app.settings.save()
+            self.statusMessage.emit("Recording setup skipped — hold-to-record will not capture")
+            return
+
+        self.statusMessage.emit("Waiting for administrator approval...")
+        ok, message = fix_capture(grant_devices=True)
+        if ok:
+            self.app.settings.capture_setup_declined = False
+            self.app.settings.save()
+            self.statusMessage.emit("Recording is ready")
+            QMessageBox.information(
+                self,
+                "Recording ready",
+                "Hold a key for 3 seconds to record. "
+                "If a brand-new keyboard appears after reboot and recording "
+                "fails again, log out and back in once so the input group applies.",
+            )
+            return
+
+        QMessageBox.warning(
+            self,
+            "Could not finish setup",
+            f"{message}\n\n"
+            "You can retry next launch, or run:\n"
+            f"  sudo usermod -aG input {os.environ.get('USER', '$USER')}\n"
+            "then log out and back in.",
+        )
+
     def _refresh_recording(self) -> None:
         session = self.session
         if session.recording:
+            key = session.active_key + 1
+            gesture = session.active_gesture
             self.statusBar().showMessage(
-                f"Recording into key {session.active_key + 1} - hold it again to finish"
+                f"Recording into key {key} ({gesture}) - hold it again to finish"
+            )
+            self.record_banner.setText(
+                f"  ● RECORDING key {key} · {gesture} — hold the same key again to finish  "
             )
         outcome = session.last_outcome
         if outcome is not None and not session.recording:
@@ -559,6 +687,28 @@ class MainWindow(QMainWindow):
         where = outcome.where or outcome.error or "nothing was captured"
         self.capture_title.setText(f"Key {outcome.key + 1} {outcome.gesture} - {where}")
 
+        self.capture_list.clear()
+        if outcome.dropped_secrets:
+            self.capture_list.addItem(
+                f"! {outcome.dropped_secrets} step(s) removed: looked like a password"
+            )
+
+        if outcome.error or not outcome.where:
+            # Empty / rejected: show the capture log when we have one, else the
+            # error (Wayland / input group hints live there).
+            lines = [
+                line
+                for line in self.app.recorder.summary(self.session.last_steps)
+            ] if self.session.last_steps else []
+            if lines:
+                self.capture_list.addItems(lines)
+            elif outcome.error:
+                self.capture_list.addItem(outcome.error)
+            else:
+                self.capture_list.addItem("(nothing)")
+            self.capture_box.setVisible(True)
+            return
+
         # What will actually run, read back out of the profile -- not the raw
         # capture. The two are not the same list and saying so matters: a macro
         # that touches the pointer gains a step that sends it to the corner
@@ -568,12 +718,9 @@ class MainWindow(QMainWindow):
         action = self.app.profile.action(outcome.key, outcome.gesture)
         if action.kind == "sequence" and action.slot < len(self.app.profile.device_macros):
             lines = [step.describe() for step in self.app.profile.device_macros[action.slot]]
-        elif action.kind == "host":
-            lines = self.app.recorder.summary(self.session.last_steps)
         else:
             lines = [action.describe()]
 
-        self.capture_list.clear()
         self.capture_list.addItems(lines or ["(nothing)"])
         self.capture_box.setVisible(True)
 

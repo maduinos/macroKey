@@ -1,8 +1,8 @@
 // macroKey firmware -- Arduino Leonardo / Micro / Pro Micro.
 //
-// Eight GPIO buttons and an eight pixel WS2812 strip presented as a USB HID
-// keyboard and mouse. The pad is fully usable with no software installed; the
-// desktop app adds recording, long macros and AgentPet-driven lighting.
+// Eight GPIO buttons and a WS2812 pixel presented as a USB HID keyboard and
+// mouse. The pad is fully usable with no software installed; the desktop app
+// is only for configuration and recording.
 //
 // docs/ARCHITECTURE.md  design and rationale
 // docs/PROTOCOL.md      serial wire format
@@ -50,10 +50,6 @@ static void reportKey(uint8_t key, uint8_t gesture, bool released) {
   gSerial.sendKeyEvent(key, gesture, released);
 }
 
-static void reportHost(uint8_t token, uint8_t key) {
-  gSerial.sendHostAction(token, key);
-}
-
 static void reportRecordRequest(uint8_t key, uint8_t gesture) {
   gSerial.sendRecordRequest(key, gesture);
 }
@@ -73,7 +69,7 @@ void setup() {
   bool profileValid = gProfile.begin();
   gLeds.begin(&gProfile);
   gEngine.begin(&gProfile, &gInput, &gLeds);
-  gEngine.setReportCallbacks(reportKey, reportHost);
+  gEngine.setReportCallback(reportKey);
   gEngine.setRecordCallback(reportRecordRequest);
   gEngine.setMacroYield(macroYield);
   gSerial.begin(&gProfile, &gEngine, &gLeds);

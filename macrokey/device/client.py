@@ -17,7 +17,7 @@ from typing import Any
 
 from ..config import binary
 from . import discovery, protocol
-from .protocol import Hello, HostEvent, KeyEvent, Message, ProtocolError
+from .protocol import Hello, KeyEvent, Message, ProtocolError, RecordRequest
 
 try:
     import serial
@@ -26,7 +26,7 @@ except ModuleNotFoundError:  # pragma: no cover - exercised only without pyseria
 
 log = logging.getLogger(__name__)
 
-DeviceEvent = KeyEvent | HostEvent
+DeviceEvent = KeyEvent | RecordRequest
 EventCallback = Callable[[DeviceEvent], None]
 StatusCallback = Callable[[str], None]
 

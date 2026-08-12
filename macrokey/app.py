@@ -1,8 +1,8 @@
 """Wires the pieces together. No UI toolkit is imported from here.
 
-Everything the GUI can do, this class can do headless: connect, sync, run host
-actions, drive the LEDs, record. The GUI is a view over this object, which is
-what keeps a daemon mode possible.
+Everything the GUI can do, this class can do headless: connect, sync, record.
+The GUI is a view over this object. After configuration the app can quit -- the
+pad runs as a USB HID device on its own.
 """
 
 from __future__ import annotations
@@ -12,17 +12,14 @@ import queue
 import threading
 from collections.abc import Callable
 
-from .actions import HostActionRunner
-from .config import Profile, Settings, binary, load_profile, save_profile
+from .config import Profile, ProfileError, Settings, binary, load_profile, save_profile
 from .device import (
     DeviceClient,
     DeviceError,
-    HostEvent,
     KeyEvent,
     RecordRequest,
     candidates,
 )
-from .led import LedService
 from .recorder import Recorder
 from .recorder.normalize import redact_secrets
 
@@ -46,8 +43,6 @@ class MacroKeyApp:
             self._status_callbacks.append(status)
 
         self.device = DeviceClient(on_event=self._on_device_event, on_status=self.status)
-        self.actions = HostActionRunner(self.profile, status=self.status, device=self.device)
-        self.leds: LedService | None = None
         self.recorder = Recorder(
             min_gap_ms=self.settings.recorder_min_gap_ms,
             capture_mouse=self.settings.recorder_capture_mouse,
@@ -93,19 +88,8 @@ class MacroKeyApp:
             self.status(f"{wanted} is gone; looking for the keypad")
             wanted = ""
         self.device.connect(wanted)
-        # The LED service is off unless something asks for it. It holds the pixel
-        # in host mode and refreshes it every second, which fights the recording
-        # colour and leaves the pad lit by this app rather than by its own
-        # profile -- and its reason for existing, feeding AgentPet state in, is
-        # not something this app does any more.
-        if self.settings.led_enabled and self.settings.agentpet_enabled:
-            self.leds = LedService(self.device, status=self.status)
-            self.leds.start(listen=True)
 
     def disconnect(self) -> None:
-        if self.leds is not None:
-            self.leds.stop()
-            self.leds = None
         self.device.disconnect()
 
     def close(self) -> None:
@@ -116,25 +100,27 @@ class MacroKeyApp:
     # ---------------------------------------------------------------- events --
 
     def _on_device_event(self, event: object) -> None:
-        if isinstance(event, HostEvent):
-            # Runs on its own thread: this callback is the serial reader.
-            self.actions.trigger(event.token)
-        elif isinstance(event, KeyEvent):
+        if isinstance(event, KeyEvent):
             # Tell the recorder so it drops the keypad's own HID echo.
             self.recorder.note_device_key()
         elif isinstance(event, RecordRequest):
             if self.session is None:
-                self.status(f"Key {event.key + 1} asked to record, but nothing is listening")
+                self.status(
+                    f"Key {event.key + 1} asked to record, but this app is not "
+                    "listening — open the editor (macrokey) to program the pad"
+                )
+                # Distinct from recording-red: the pad asked, nobody answered.
+                try:
+                    self.device.set_led_mode(True, timeout_ms=900)
+                    self.device.set_all((255, 140, 0), effect="flash", period=900)
+                except DeviceError:
+                    pass
             else:
                 # Not inline. This callback *is* the serial reader thread, and
                 # handling a record request means talking to the device: setting
                 # the LED, then writing the whole profile. Every one of those
                 # waits for a reply only the reader thread can deliver -- so
-                # running them here means waiting on ourselves. It never hung
-                # outright, which is what made it hard to see: each call just
-                # timed out after two seconds, so recording started with no red
-                # pixel and finishing ground through twenty timeouts before
-                # failing to save.
+                # running them here means waiting on ourselves.
                 self._queue_record_request(event.key, event.gesture)
 
         for callback in list(self._event_callbacks):
@@ -183,7 +169,6 @@ class MacroKeyApp:
 
     def save(self) -> None:
         save_profile(self.profile)
-        self.actions.set_profile(self.profile)
         self.status("Profile saved")
 
     def push_profile(self) -> None:
@@ -227,17 +212,17 @@ class MacroKeyApp:
         nothing looks identical to one that is working until it is stopped,
         which on Wayland is a common and confusing way to lose two minutes.
         """
+        if self.recorder.recording:
+            raise RuntimeError(
+                "a recording is already in progress — finish it before starting another"
+            )
         self.recorder._on_event = on_event
         self.recorder.start()
-        if self.leds is not None:
-            self.leds.show_recording(True)
         self.status("Recording.")
 
     def stop_recording(self) -> list[dict]:
         events = self.recorder.stop()
         self.recorder._on_event = None
-        if self.leds is not None:
-            self.leds.show_recording(False)
         steps = self.recorder.steps(events)
         # Before anything can look at it, let alone store it. Capture is
         # global, so a recording running while a sudo prompt was answered
@@ -250,74 +235,93 @@ class MacroKeyApp:
         self.status(f"Recorded {len(steps)} step(s)")
         return steps
 
-    def _claim_macro_slot(self, macro: list) -> int | None:
-        """Finds room for a device macro, or None when the profile is full.
+    def _macro_capacity_used(self, *, ignore_slot: int | None = None) -> int:
+        from .config.model import macro_records
 
-        Storage is shared across all sixteen slots, so a slot being free is not
-        enough -- the records have to fit the remaining bytes too. Returning None
-        rather than raising lets the caller fall back to a host action, which is
-        slower but unbounded.
+        total = 0
+        for index, existing in enumerate(self.profile.device_macros):
+            if ignore_slot is not None and index == ignore_slot:
+                continue
+            if existing:
+                total += macro_records(existing)
+        return total
+
+    def _find_macro_slot(
+        self, macro: list, *, also_free: int | None = None
+    ) -> int | None:
+        """Index that can hold `macro`, or None. Does not mutate the profile.
+
+        `also_free` is a slot that will be released when the binding that owns it
+        is replaced -- counted as empty for capacity and reuse.
         """
         from .config.model import MACRO_RECORD_CAPACITY, MACRO_SLOTS, macro_records
 
         macros = self.profile.device_macros
-        while len(macros) < MACRO_SLOTS:
-            macros.append([])
-
-        # Records, not actions: a text run is a header plus a record per three
-        # characters, and it is records the region runs out of.
-        used = sum(macro_records(existing) for existing in macros)
-        if used + macro_records(macro) > MACRO_RECORD_CAPACITY:
+        needed = macro_records(macro)
+        used = self._macro_capacity_used(ignore_slot=also_free)
+        if used + needed > MACRO_RECORD_CAPACITY:
             return None
-        for index, existing in enumerate(macros):
-            if not existing:
-                macros[index] = macro
+
+        limit = max(len(macros), MACRO_SLOTS)
+        for index in range(limit):
+            if also_free is not None and index == also_free:
                 return index
+            if index >= len(macros) or not macros[index]:
+                return index
+        if len(macros) < MACRO_SLOTS:
+            return len(macros)
         return None
+
+    def recording_fits(self, steps: list[dict], key: int, gesture: str) -> bool:
+        """True when `assign_recording` would succeed without changing the profile."""
+        if self.recorder.device_action(steps) is not None:
+            return True
+        macro = self.recorder.device_macro(steps)
+        if macro is None:
+            return False
+        previous = self.profile.action(key, gesture)
+        also_free = previous.slot if previous.kind == "sequence" else None
+        return self._find_macro_slot(macro, also_free=also_free) is not None
 
     def assign_recording(
         self, steps: list[dict], key: int, gesture: str, name: str = ""
     ) -> str:
-        """Stores a recording in a slot, device-side when it fits.
+        """Stores a recording on the pad. Raises if it will not fit.
 
-        Returns a short description of where it ended up.
+        The existing binding is left untouched until a device placement is known,
+        so a rejected recording cannot wipe a working key.
         """
-        from .config import Action, HostAction
-
-        # Clear the binding first, then sweep. Re-recording into a key is the
-        # ordinary case, and until this ran the macro being replaced kept its
-        # slot for good: sixteen corrections to one key filled all sixteen slots
-        # with steps nothing pointed at, after which every recording fell back
-        # to a host action and the pad stopped working with the app closed.
-        # Clearing before claiming is what lets the new recording reuse the
-        # storage the old one was holding.
-        self.profile.set_action(key, gesture, Action())
-        freed_slots, freed_tokens = self.profile.reclaim_storage()
-        if freed_slots or freed_tokens:
-            log.debug("reclaimed %d macro slot(s), %d host action(s)", freed_slots, freed_tokens)
+        from .config import Action
+        from .config.model import MACRO_SLOTS
 
         device_action = self.recorder.device_action(steps)
         if device_action is not None:
             self.profile.set_action(key, gesture, device_action)
+            freed = self.profile.reclaim_storage()
+            if freed:
+                log.debug("reclaimed %d macro slot(s)", freed)
             return f"on the keypad: {device_action.describe()}"
 
-        # A sequence the firmware can replay itself keeps the pad working with
-        # nothing installed, which is the whole point of the device-first split.
-        # This is tried before falling back to the host because the firmware has
-        # always had the sequence player -- nothing ever filled its slots.
         macro = self.recorder.device_macro(steps)
-        if macro is not None:
-            slot = self._claim_macro_slot(macro)
-            if slot is not None:
-                self.profile.set_action(key, gesture, Action(kind="sequence", slot=slot))
-                return f"on the keypad: {len(macro)} step macro"
+        previous = self.profile.action(key, gesture)
+        also_free = previous.slot if previous.kind == "sequence" else None
+        slot = self._find_macro_slot(macro, also_free=also_free) if macro is not None else None
+        if macro is None or slot is None:
+            raise ProfileError(
+                "recording does not fit on the keypad (too many steps or macros full). "
+                "Shorten it, or clear unused keys and try again."
+            )
 
-        token = self.profile.next_host_token()
-        spec = HostAction(
-            type="sequence",
-            name=name or f"Recording key {key + 1} {gesture}",
-            params={"steps": steps},
-        )
-        self.profile.host_actions[token] = spec
-        self.profile.set_action(key, gesture, Action(kind="host", token=token))
-        return f"host action #{token} ({len(steps)} steps)"
+        macros = self.profile.device_macros
+        while len(macros) < MACRO_SLOTS:
+            macros.append([])
+        while len(macros) <= slot:
+            macros.append([])
+        if also_free is not None and also_free != slot and also_free < len(macros):
+            macros[also_free] = []
+        macros[slot] = macro
+        self.profile.set_action(key, gesture, Action(kind="sequence", slot=slot))
+        freed = self.profile.reclaim_storage()
+        if freed:
+            log.debug("reclaimed %d macro slot(s)", freed)
+        return f"on the keypad: {len(macro)} step macro"

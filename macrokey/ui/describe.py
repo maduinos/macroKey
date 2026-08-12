@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 
 from ..config import Action, Profile
+from ..recorder.recorder import Recorder
 
 SECRET_TEXT_LENGTH = 12
 
@@ -28,8 +29,8 @@ def describe_binding(profile: Profile, action: Action) -> str:
     """What this key does, said the way someone using the pad would say it.
 
     The grid used to show `action.describe()`, which speaks in the wire format's
-    terms -- "host 3", "sequence 1" -- and told you nothing about what pressing
-    the key would produce.
+    terms -- "sequence 1" -- and told you nothing about what pressing the key
+    would produce.
     """
     if action.kind == "none":
         return "nothing"
@@ -48,53 +49,19 @@ def describe_binding(profile: Profile, action: Action) -> str:
             parts.append(f"{others} key{'s' if others != 1 else ''}")
         detail = " + ".join(parts) or "empty"
         return f"recording, {detail} (on the keypad)"
-    if action.kind == "host":
-        spec = profile.host_actions.get(action.token)
-        if spec is None:
-            return f"missing host action {action.token}"
-        return f"recording: {spec.describe()} (needs this computer)"
     return action.describe()
 
 
-
-def daemon_running() -> bool:
-    """Whether anything is actually listening on the daemon's state socket.
-
-    Existence is not enough: the socket file outlives the process that made it,
-    so a stopped daemon leaves one behind and a check on the path alone reports
-    a daemon that is not there. Connecting is the only answer that means
-    anything.
-    """
-    import socket as socket_module
-
-    from ..led import default_socket_path
-
-    if not hasattr(socket_module, "AF_UNIX"):
-        return False
-    try:
-        path = default_socket_path()
-        if not path.exists():
-            return False
-        with socket_module.socket(socket_module.AF_UNIX, socket_module.SOCK_STREAM) as probe:
-            probe.settimeout(0.2)
-            probe.connect(str(path))
-        return True
-    except OSError:
-        return False
-
-
 def nothing_captured_hint() -> str:
-    """Why a recording can come back empty, when that has a known cause.
-
-    pynput falls back to its X11 backend under Wayland, where it only sees
-    input going to XWayland clients. Typing into a native Wayland window is
-    invisible to it, and the recording ends up empty with no explanation.
-    """
+    """Why a recording can come back empty, when that has a known cause."""
+    usable, reason = Recorder.available()
+    if not usable:
+        return f"Nothing was captured. {reason}"
     if os.environ.get("XDG_SESSION_TYPE", "").lower() == "wayland":
         return (
-            "Nothing was captured. On Wayland, input capture only sees X11 "
-            "windows, so typing into most applications is invisible to it. "
-            "Recording into a terminal started under XWayland does work."
+            "Nothing was captured. On Wayland, prefer being in the `input` group "
+            "so capture uses evdev (every window). Without it, only X11 windows "
+            "are visible to the fallback recorder."
         )
     return "Nothing was captured. Press Start recording, do the thing, then Stop."
 

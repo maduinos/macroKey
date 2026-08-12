@@ -1,10 +1,9 @@
-"""macroKey host application.
+"""macroKey configuration application.
 
-Companion to the Pro Micro firmware in ``firmware/``. Everything
-here is optional: the keypad works on its own, and this app adds recording,
-long macros and state-driven lighting.
+Companion to the Pro Micro firmware in ``firmware/``. The keypad works as a
+USB HID device on its own; this app is for editing profiles and recording.
 """
 
-__version__ = "0.4.1"
+__version__ = "0.5.0"
 
 __all__ = ["__version__"]

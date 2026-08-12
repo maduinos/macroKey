@@ -1,26 +1,12 @@
 # Contributing
 
-This repository is a personal Arduino HID macro keypad and Python macro app lab.
+```bash
+python -m pip install -r requirements.txt
+pytest
+./build_release.sh --skip-tests
+```
 
-## Scope
+Bump version in `pyproject.toml`, `macrokey/__init__.py`, and `firmware/src/Config.h`
+together before a release. Flash with `compile --upload`.
 
-Good contributions include:
-
-- Documentation improvements.
-- Safer HID behavior.
-- Pin mapping clarification.
-- Arduino build maintenance.
-- Python GUI binding improvements.
-
-Out of scope:
-
-- Generated Arduino build artifacts.
-- Changes that assume a board without native USB HID keyboard support.
-- Changes that make the Python app write generated config into the repository tree.
-
-## Checklist
-
-- If `arduino-cli` is available, run
-  `arduino-cli compile --fqbn SparkFun:avr:promicro:cpu=16MHzatmega32U4 firmware`.
-- Run `python3 -m compileall -q macrokey`.
-- Confirm the sketch does not send unintended keyboard shortcuts during local verification.
+Do not commit `.build/`, `releases/`, or local `profile.json`.

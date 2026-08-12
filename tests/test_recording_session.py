@@ -131,7 +131,7 @@ def test_the_result_says_whether_the_pad_can_replay_it_alone() -> None:
     session.handle_request(0)
     assert session.last_outcome.on_device is True
 
-    _, session, _ = session_for(where="host action #3 (2 steps)")
+    _, session, _ = session_for(where="does not fit on the keypad")
     session.handle_request(0)
     session.handle_request(0)
     assert session.last_outcome.on_device is False
@@ -162,7 +162,7 @@ def test_capturing_nothing_leaves_the_key_alone() -> None:
     session.handle_request(3)
     session.handle_request(3)
     assert not hasattr(app, "assigned")
-    assert session.last_outcome.error == "nothing was captured"
+    assert "Nothing was captured" in session.last_outcome.error
     assert not app.saved
 
 
