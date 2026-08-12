@@ -210,13 +210,10 @@ def test_uptime_zero_is_not_swallowed() -> None:
     assert event.uptime_ms == 0
 
 
-def test_host_token_zero_is_a_real_token() -> None:
-    """Token 0 is the first one `next_host_token` hands out."""
+def test_retired_host_events_are_ignored() -> None:
     from macrokey.device import protocol
 
-    event = protocol.parse_event(protocol.parse("EV t=host tok=0 k=0 l=0"))
-    assert event.token == 0
-    assert event.key == 0
+    assert protocol.parse_event(protocol.parse("EV t=host tok=0 k=0")) is None
 
 
 def test_an_out_of_range_key_is_refused_rather_than_wrapped() -> None:

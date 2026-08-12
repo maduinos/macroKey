@@ -1,9 +1,7 @@
 """Wire format codec. Pure functions, so no device is needed to run these."""
 
-import pytest
-
 from macrokey.device import protocol
-from macrokey.device.protocol import Hello, HostEvent, KeyEvent, RecordRequest
+from macrokey.device.protocol import Hello, KeyEvent, RecordRequest
 
 
 class TestMessageInt:
@@ -20,17 +18,13 @@ class TestMessageInt:
 
 
 class TestParseEvent:
-    def test_host_token_zero(self):
-        event = protocol.parse_event(protocol.parse("EV t=host tok=0 k=4"))
-        assert event == HostEvent(token=0, key=4)
+    def test_host_token_is_ignored(self):
+        """Retired EV t=host: pad is HID-only; old pads may still emit it."""
+        assert protocol.parse_event(protocol.parse("EV t=host tok=0 k=4")) is None
 
     def test_key_zero(self):
         event = protocol.parse_event(protocol.parse("EV t=key k=0 g=tap ms=1200"))
         assert event == KeyEvent(key=0, gesture="tap", uptime_ms=1200)
-
-    def test_unparseable_token_is_negative(self):
-        event = protocol.parse_event(protocol.parse("EV t=host tok=zz k=1"))
-        assert event.token == -1
 
     def test_hold_release_keeps_its_own_gesture_name(self):
         event = protocol.parse_event(protocol.parse("EV t=key k=7 g=holdend ms=9"))
@@ -46,11 +40,11 @@ class TestParseEvent:
 
 class TestHello:
     def test_fields(self):
-        line = "HELLO proto=1 fw=0.4.0 board=promicro keys=8 leds=1 bytes=932"
+        line = "HELLO proto=1 fw=0.5.0 board=promicro keys=8 leds=1 bytes=1024"
         hello = Hello.from_message(protocol.parse(line))
         assert hello.protocol == 1
-        assert hello.firmware == "0.4.0"
+        assert hello.firmware == "0.5.0"
         assert hello.board == "promicro"
         assert hello.keys == 8
         assert hello.leds == 1
-        assert hello.profile_bytes == 932
+        assert hello.profile_bytes == 1024

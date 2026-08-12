@@ -1,7 +1,7 @@
 // Turns gestures into actions.
 //
-// The engine owns layer state and the dispatch table; it does not know about
-// pins (ButtonInput) or about the serial link (callbacks below).
+// The engine owns the dispatch table; it does not know about pins
+// (ButtonInput) or about the serial link (callbacks below).
 #pragma once
 
 #include <Arduino.h>
@@ -13,11 +13,8 @@
 #include "Profile.h"
 
 // Fired for every gesture, purely informational: the HID report has already
-// gone out. The host uses these for logging, app-aware layers and LED reactions.
+// gone out. The host uses these for logging and LED reactions.
 typedef void (*MkKeyReportFn)(uint8_t key, uint8_t gesture, bool released);
-
-// Fired for ACT_HOST. No HID was sent; the desktop app is expected to act.
-typedef void (*MkHostActionFn)(uint8_t token, uint8_t key);
 
 //: The pad asking the host to start or finish recording into this key.
 //: `gesture` is which slot: GESTURE_TAP for a plain hold, GESTURE_DOUBLE when
@@ -46,7 +43,7 @@ class KeyEngine {
   // pad was next unplugged.
   void noteProfileChanged() { doubleTapMaskReady_ = false; }
 
-  void setReportCallbacks(MkKeyReportFn key, MkHostActionFn host);
+  void setReportCallback(MkKeyReportFn key);
 
   // True once the boot grace window has passed and HID output is allowed.
   bool hidEnabled() const { return hidEnabled_; }
@@ -59,7 +56,7 @@ class KeyEngine {
   // Runs one action. `key` is only used for reporting.
   void dispatch(const Action &action, uint8_t key, uint32_t now);
   void dispatchKey(const Action &action);
-  void runMacro(uint8_t slot, uint32_t now);
+  void runMacro(uint8_t slot, uint8_t key, uint32_t now);
   // Types one text run. Returns the record index just past it.
   uint8_t runText(uint16_t base, uint8_t header, uint8_t length, uint8_t count);
   // delay(), but the pad stays awake.
@@ -72,7 +69,6 @@ class KeyEngine {
   LedController *leds_ = NULL;
 
   MkKeyReportFn onKey_ = NULL;
-  MkHostActionFn onHost_ = NULL;
   MkRecordRequestFn onRecord_ = NULL;
   MkMacroYieldFn onYield_ = NULL;
 

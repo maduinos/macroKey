@@ -129,14 +129,6 @@ class KeyEvent:
 
 
 @dataclass
-class HostEvent:
-    """``EV t=host`` -- the device did nothing and expects the app to act."""
-
-    token: int
-    key: int
-
-
-@dataclass
 class RecordRequest:
     """``EV t=record`` -- a key was held alone long enough to mean "program me".
 
@@ -167,7 +159,7 @@ def _field(message: Message, key: str, default: int) -> int:
     return default if value is None else value
 
 
-def parse_event(message: Message) -> KeyEvent | HostEvent | RecordRequest | None:
+def parse_event(message: Message) -> KeyEvent | RecordRequest | None:
     if message.verb != "EV":
         return None
     kind = message.get("t")
@@ -177,12 +169,6 @@ def parse_event(message: Message) -> KeyEvent | HostEvent | RecordRequest | None
             gesture=message.get("g", "?") or "?",
             uptime_ms=_field(message, "ms", 0),
         )
-    if kind == "host":
-        return HostEvent(
-            # `tok`, not `id`: `id` is reserved for request/response correlation.
-            token=_field(message, "tok", -1),
-            key=_field(message, "k", -1),
-        )
     if kind == "record":
         # Older firmware sends no `g`; tap is what it always meant.
         gesture = message.get("g", "tap") or "tap"
@@ -191,4 +177,5 @@ def parse_event(message: Message) -> KeyEvent | HostEvent | RecordRequest | None
             gesture=gesture if gesture in EDITABLE_GESTURES else "tap",
             uptime_ms=_field(message, "ms", 0),
         )
+    # Retired: EV t=host (desktop-run tokens). Ignore if an old pad still emits.
     return None

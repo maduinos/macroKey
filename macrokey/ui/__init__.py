@@ -1,11 +1,18 @@
 """PySide6 view. The only package that imports a UI toolkit."""
 
+from __future__ import annotations
+
 __all__ = ["MissingToolkit", "run_gui"]
 
 MISSING_QT = (
-    "The editor window needs PySide6, which is an optional dependency:\n"
-    '    python3 -m pip install --user "PySide6>=6.6"\n'
-    "Every other command works without it -- try `macrokey --help`."
+    "The editor window needs PySide6.\n"
+    "  • Preferred: ./build_release.sh → releases/linux/macrokey\n"
+    "  • Developers: python -m pip install -r requirements.txt && python main.py"
+)
+
+MISSING_QT_FROZEN = (
+    "This macroKey build was packaged without the editor toolkit. "
+    "Rebuild with ./build_release.sh."
 )
 
 
@@ -17,6 +24,8 @@ def run_gui(port: str = "") -> int:
     try:
         from .app import run_gui as _run_gui
     except ImportError as exc:  # PySide6 absent, or a broken Qt install
-        raise MissingToolkit(MISSING_QT) from exc
+        from ..runtime import frozen
+
+        raise MissingToolkit(MISSING_QT_FROZEN if frozen() else MISSING_QT) from exc
 
     return _run_gui(port=port)

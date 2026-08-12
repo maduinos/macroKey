@@ -21,7 +21,6 @@ class SerialProtocol {
   //: The pad asking the host to start or finish recording into this key.
   void sendRecordRequest(uint8_t key, uint8_t gesture);
   void sendKeyEvent(uint8_t key, uint8_t gesture, bool released);
-  void sendHostAction(uint8_t token, uint8_t key);
 
   // Diagnostics, off by default so the link stays quiet in normal use.
   bool debugEnabled() const { return debug_; }

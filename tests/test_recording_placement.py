@@ -1,8 +1,7 @@
 """Where a recording ends up decides whether the pad works away from this PC.
 
-The firmware has always had a sequence player -- sixteen slots, its own delay
-step -- and nothing ever put anything in it, so every recording longer than one
-shortcut became a host action and quietly depended on a daemon running.
+Everything that can be replayed must land on the pad. Steps the firmware cannot
+run simply do not compile -- there is no desktop fallback.
 """
 
 from __future__ import annotations
@@ -76,7 +75,7 @@ def test_every_compiled_step_encodes() -> None:
         action.encode()
 
 
-# --------------------------------------------------------------- host fallback --
+# --------------------------------------------------------------- cannot fit --
 
 
 @pytest.mark.parametrize(
@@ -88,8 +87,8 @@ def test_every_compiled_step_encodes() -> None:
     ],
     ids=["clipboard", "shell", "text with no keys for it"],
 )
-def test_steps_the_firmware_cannot_replay_stay_on_the_host(recording) -> None:
-    """Short ASCII text now expands to keys; these are what genuinely cannot."""
+def test_steps_the_firmware_cannot_replay_do_not_compile(recording) -> None:
+    """Short ASCII text expands to keys; these genuinely cannot go on the pad."""
     assert reduce_to_device_macro(recording) is None
 
 
@@ -101,7 +100,7 @@ def test_an_empty_recording_is_not_a_macro() -> None:
     assert reduce_to_device_macro([]) is None
 
 
-def test_a_recording_past_the_firmware_record_limit_stays_on_the_host() -> None:
+def test_a_recording_past_the_firmware_record_limit_does_not_compile() -> None:
     """MK_MACRO_MAX_RECORDS stops replay part way, worse than not trying."""
     too_long = steps(*(["ctrl+c"] * 40))
     assert reduce_to_device_macro(too_long, max_records=32) is None
@@ -114,11 +113,14 @@ class FakeApp:
     """Just the slot bookkeeping from MacroKeyApp."""
 
     def __init__(self) -> None:
+        from macrokey.app import MacroKeyApp
         from macrokey.config.model import default_profile
 
         self.profile = default_profile()
-
-    _claim_macro_slot = None  # bound below
+        self._macro_capacity_used = MacroKeyApp._macro_capacity_used.__get__(
+            self, FakeApp
+        )
+        self._find_macro_slot = MacroKeyApp._find_macro_slot.__get__(self, FakeApp)
 
 
 def _record() -> Action:
@@ -127,9 +129,14 @@ def _record() -> Action:
 
 
 def claim(app, macro):
-    from macrokey.app import MacroKeyApp
-
-    return MacroKeyApp._claim_macro_slot(app, macro)
+    slot = app._find_macro_slot(macro)
+    if slot is None:
+        return None
+    macros = app.profile.device_macros
+    while len(macros) <= slot:
+        macros.append([])
+    macros[slot] = macro
+    return slot
 
 
 def test_slots_are_handed_out_in_order() -> None:

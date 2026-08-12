@@ -74,7 +74,8 @@ ACTION_TYPE_IDS: dict[str, int] = {
     # rather than being reused: an id is a wire format, and shuffling the ones
     # above them would turn every stored macro into a different macro.
     "sequence": 8,
-    "host": 9,
+    # 9 was ACT_HOST (desktop-run tokens). Retired: the pad is HID-only and the
+    # PC app is config-only. The number stays reserved like 6 and 7.
     "led_scene": 10,
     "delay": 11,
     #: Macro records only. Carries its characters in the records that follow it
@@ -123,7 +124,6 @@ class Action:
     dy: int = 0
     delta: int = 0         # kind="mouse_wheel"
     slot: int = 0          # kind="sequence"
-    token: int = 0         # kind="host"
     scene: int = 0         # kind="led_scene"
     delay_ms: int = 0      # kind="delay", macro steps only
     repeat: bool = False
@@ -204,8 +204,6 @@ class Action:
             return type_id, _clamp(self.delta, -127, 127) & 0xFF, 0, 0
         if self.kind == "sequence":
             return type_id, _clamp(self.slot, 0, MACRO_SLOTS - 1), 0, 0
-        if self.kind == "host":
-            return type_id, _clamp(self.token, 0, 255), 0, 0
         if self.kind == "led_scene":
             return type_id, _clamp(self.scene, 0, 255), 0, 0
         if self.kind == "delay":
@@ -235,14 +233,13 @@ class Action:
             return cls(kind="mouse_wheel", delta=_signed(a))
         if kind == "sequence":
             return cls(kind="sequence", slot=a)
-        if kind == "host":
-            return cls(kind="host", token=a)
         if kind == "led_scene":
             return cls(kind="led_scene", scene=a)
         if kind == "mouse_home":
             return cls(kind="mouse_home")
         if kind == "delay":
             return cls(kind="delay", delay_ms=a * 10)
+        # Retired ids (layers 6/7, former host 9) decode as empty.
         return cls()
 
     def describe(self) -> str:
@@ -264,8 +261,6 @@ class Action:
             return f"wheel {self.delta:+d}"
         if self.kind == "sequence":
             return f"device macro #{self.slot}"
-        if self.kind == "host":
-            return f"host action #{self.token}"
         if self.kind == "led_scene":
             return f"led scene {self.scene}"
         if self.kind == "mouse_home":
@@ -299,7 +294,12 @@ class Action:
     def from_dict(cls, data: dict[str, Any] | None) -> Action:
         if not data:
             return cls()
+        # Former desktop-run tokens have no pad equivalent; clear the slot.
+        if data.get("kind") == "host":
+            return cls()
         known = {k: v for k, v in data.items() if k in cls.__dataclass_fields__}
+        # Drop fields retired with host actions (token) so old JSON still loads.
+        known.pop("token", None)
         return cls(**known)
 
 
@@ -348,29 +348,6 @@ def macro_records(macro: list[Action]) -> int:
 
 
 @dataclass
-class HostAction:
-    """A step executed by the desktop app rather than the firmware."""
-
-    type: str = "noop"
-    name: str = ""
-    params: dict[str, Any] = field(default_factory=dict)
-
-    def to_dict(self) -> dict[str, Any]:
-        return {"type": self.type, "name": self.name, "params": dict(self.params)}
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> HostAction:
-        return cls(
-            type=str(data.get("type", "noop")),
-            name=str(data.get("name", "")),
-            params=dict(data.get("params", {})),
-        )
-
-    def describe(self) -> str:
-        return self.name or self.type
-
-
-@dataclass
 class Profile:
     schema_version: int = SCHEMA_VERSION
     name: str = "default"
@@ -383,8 +360,6 @@ class Profile:
     # No chords. They were eight EEPROM slots the editor never offered a way to
     # fill and the defaults left empty, so the region only ever held zeroes --
     # forty bytes that macro records now use instead.
-    # Token -> action run on the PC. Keys are ints, matching `EV t=host id=`.
-    host_actions: dict[int, HostAction] = field(default_factory=dict)
     device_macros: list[list[Action]] = field(default_factory=list)
 
     def __post_init__(self) -> None:
@@ -399,8 +374,7 @@ class Profile:
         either still carry one, and a hold binding fires at 400 ms on the way to
         the recorder -- so it has to be cleared on the way in, not merely hidden.
 
-        Layer switches used to be cleared here too. Those action ids are retired
-        now, so they decode as nothing and need no special case.
+        Former ``host`` tokens are cleared too: the pad is HID-only now.
         """
         reserved = [gesture for gesture in GESTURES if gesture not in EDITABLE_GESTURES]
         for index, slot in enumerate(self.keys):
@@ -436,45 +410,29 @@ class Profile:
             )
         self.keys[key] = self.slot(key).with_gesture(gesture, action)  # validates both
 
-    def next_host_token(self) -> int:
-        """Lowest unused token. 200+ is reserved for system hooks."""
-        for token in range(200):
-            if token not in self.host_actions:
-                return token
-        raise ProfileError("no free host action token")
-
     # ------------------------------------------------------------- storage --
 
-    def referenced_storage(self) -> tuple[set[int], set[int]]:
-        """``(macro slots, host tokens)`` some binding still points at."""
+    def referenced_macro_slots(self) -> set[int]:
+        """Macro slots some binding still points at."""
         slots: set[int] = set()
-        tokens: set[int] = set()
         for key in self.keys:
             for gesture in GESTURES:
                 action = key.gesture(gesture)
                 if action.kind == "sequence":
                     slots.add(action.slot)
-                elif action.kind == "host":
-                    tokens.add(action.token)
-        return slots, tokens
+        return slots
 
-    def reclaim_storage(self) -> tuple[int, int]:
-        """Empties macro slots and host actions nothing points at any more.
+    def reclaim_storage(self) -> int:
+        """Empties macro slots nothing points at any more.
 
         Recording into a key that already held one is the ordinary case -- it is
         how a macro gets corrected -- and every time it happened the old slot was
         left full. Sixteen corrections to a single key filled all sixteen slots
-        with unreachable steps, and from then on every recording fell back to a
-        host action: the pad quietly stopped working with the app closed, which
-        is the one thing it exists to do.
+        with unreachable steps.
 
-        Sweeping by reference rather than freeing the slot being replaced is
-        what also repairs a profile that already leaked, and it stays correct if
-        two bindings ever share a slot.
-
-        Returns ``(slots freed, tokens freed)``.
+        Returns how many slots were freed.
         """
-        slots, tokens = self.referenced_storage()
+        slots = self.referenced_macro_slots()
 
         freed_slots = 0
         for index, macro in enumerate(self.device_macros):
@@ -482,11 +440,7 @@ class Profile:
                 self.device_macros[index] = []
                 freed_slots += 1
 
-        stale = [token for token in self.host_actions if token not in tokens]
-        for token in stale:
-            del self.host_actions[token]
-
-        return freed_slots, len(stale)
+        return freed_slots
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -496,9 +450,6 @@ class Profile:
             "resting_color": self.resting_color,
             "text_speed_ms": self.text_speed_ms,
             "keys": [key.to_dict() for key in self.keys],
-            "host_actions": {
-                str(token): action.to_dict() for token, action in sorted(self.host_actions.items())
-            },
             "device_macros": [
                 [step.to_dict() for step in macro] for macro in self.device_macros
             ],
@@ -506,6 +457,7 @@ class Profile:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> Profile:
+        # host_actions are ignored: the pad no longer runs desktop macros.
         return cls(
             schema_version=int(data.get("schema_version", SCHEMA_VERSION)),
             name=str(data.get("name", "default")),
@@ -515,10 +467,6 @@ class Profile:
                 int(data.get("text_speed_ms", DEFAULT_TEXT_SPEED_MS)), 0, MAX_TEXT_SPEED_MS
             ),
             keys=_keys_from_dict(data),
-            host_actions={
-                int(token): HostAction.from_dict(value)
-                for token, value in data.get("host_actions", {}).items()
-            },
             device_macros=[
                 [Action.from_dict(step) for step in macro]
                 for macro in data.get("device_macros", [])
@@ -555,7 +503,4 @@ def default_profile() -> Profile:
     for key in range(KEY_COUNT):
         profile.set_action(key, "tap", Action(kind="key", hotkey=f"ctrl+alt+shift+{key + 1}"))
 
-    # No host actions by default. The tokens that used to be here pointed at
-    # nothing, so three keys did nothing at all.
-    profile.host_actions = {}
     return profile

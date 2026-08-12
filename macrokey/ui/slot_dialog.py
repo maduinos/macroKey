@@ -19,7 +19,6 @@ from ..app import MacroKeyApp
 from ..config import Action
 from .describe import (
     SECRET_TEXT_LENGTH,
-    daemon_running,
     describe_binding,
     longest_typed_run,
     nothing_captured_hint,
@@ -86,8 +85,9 @@ class SlotDialog(QDialog):
         self.capture_mouse = QCheckBox("Include mouse")
         self.capture_mouse.setChecked(True)
         self.capture_mouse.setToolTip(
-            "Records button clicks and the wheel, not pointer positions: a "
-            "replayed click lands wherever the pointer is at the time."
+            "Records clicks, wheel, and pointer movement (when the capture "
+            "backend can see them). Replay homes the cursor to the top-left "
+            "first so clicks land on the same pixels."
         )
 
         self.log = QListWidget()
@@ -155,11 +155,26 @@ class SlotDialog(QDialog):
             self.captured.emit(self.app.stop_recording())
             return
 
+        session = getattr(self.app, "session", None)
+        if session is not None and session.recording:
+            QMessageBox.warning(
+                self,
+                "Already recording",
+                "Finish the pad hold-to-record (hold the same key again) before "
+                "recording from this window.",
+            )
+            return
+
         self.app.recorder.capture_mouse = self.capture_mouse.isChecked()
         # Stopping is a button, so without this the click that ends the
         # recording is its last step, and every replay would finish by
         # clicking wherever that button happened to be.
         self._sync_ignored_region()
+        if self.app.recorder.capture_mouse and self.app.device.connected:
+            try:
+                self.app.device.home_pointer()
+            except Exception:  # noqa: BLE001 - keyboard-only still works
+                pass
         try:
             self.app.start_recording(on_event=self._on_live_event)
         except Exception as exc:  # noqa: BLE001 - pynput failures are environmental
@@ -203,9 +218,9 @@ class SlotDialog(QDialog):
         self.log.clear()
         for line in self.app.recorder.summary(steps):
             self.log.addItem(line)
-        self.use_recording.setEnabled(bool(steps))
 
         if not steps:
+            self.use_recording.setEnabled(False)
             self.log.addItem("(nothing captured)")
             self.where.setText(nothing_captured_hint())
             return
@@ -230,27 +245,24 @@ class SlotDialog(QDialog):
                 "of that was a password, discard it: recordings are stored as plain "
                 "text in the profile."
             )
+            # Still allow Use — the warning is enough; discard is Cancel.
+            fits = self.app.recording_fits(steps, self.key, self.gesture)
+            self.use_recording.setEnabled(fits)
             return
         if self.app.recorder.device_action(steps) is not None:
             self.where.setText("Will be stored on the keypad. Works with nothing running here.")
-        elif self.app.recorder.device_macro(steps) is not None:
+            self.use_recording.setEnabled(True)
+        elif self.app.recording_fits(steps, self.key, self.gesture):
             self.where.setText(
                 f"Will be stored on the keypad as a {len(steps)} step macro. "
                 "Works with nothing running here."
             )
+            self.use_recording.setEnabled(True)
         else:
-            # Saying "needs the daemon" is not enough when the daemon is not
-            # running: the key would be bound, look bound, and do nothing at
-            # all. Check and say which of the two situations this is.
+            self.use_recording.setEnabled(False)
             self.where.setText(
-                "Has steps the keypad cannot replay by itself -- text too long "
-                "for its macro slots, or characters it has no keys for. "
-                + (
-                    "The macroKey daemon is running, so it will work."
-                    if daemon_running()
-                    else "The macroKey daemon is NOT running, so this key will do "
-                    "nothing until it is started:  systemctl --user start macrokey"
-                )
+                "Too large for the keypad (macro slots full or steps it cannot "
+                "replay). Shorten the recording or clear unused keys, then try again."
             )
 
     # --------------------------------------------------------------- choices --

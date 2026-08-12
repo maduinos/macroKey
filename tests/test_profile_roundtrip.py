@@ -94,7 +94,6 @@ def test_every_action_kind_can_be_written_down() -> None:
         "mouse_move": Action(kind="mouse_move", dx=40, dy=-20),
         "mouse_wheel": Action(kind="mouse_wheel", delta=-3),
         "sequence": Action(kind="sequence", slot=2),
-        "host": Action(kind="host", token=7),
         "led_scene": Action(kind="led_scene", scene=1),
         "delay": Action(kind="delay", delay_ms=800),
         "text": Action(kind="text", text="agentpet claude"),
@@ -104,6 +103,10 @@ def test_every_action_kind_can_be_written_down() -> None:
     for kind, action in samples.items():
         restored = Action.from_dict(action.to_dict())
         assert restored == action, kind
+
+
+def test_former_host_actions_load_as_empty() -> None:
+    assert Action.from_dict({"kind": "host", "token": 7}).is_empty
 
 
 def test_a_recording_with_typed_text_saves() -> None:

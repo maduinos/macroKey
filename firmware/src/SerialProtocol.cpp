@@ -91,13 +91,6 @@ void SerialProtocol::sendKeyEvent(uint8_t key, uint8_t gesture, bool released) {
   Serial.println(millis());
 }
 
-void SerialProtocol::sendHostAction(uint8_t token, uint8_t key) {
-  Serial.print(F("EV t=host tok="));
-  Serial.print(token);
-  Serial.print(F(" k="));
-  Serial.println(key);
-}
-
 void SerialProtocol::sendLog(char level, const char *message) {
   if (!debug_) return;
   char encoded[64];

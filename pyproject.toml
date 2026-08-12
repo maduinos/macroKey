@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "macrokey"
-version = "0.4.1"
-description = "Host application for the Maduinos macroKey keypad"
+version = "0.5.0"
+description = "Config app for the Maduinos macroKey keypad (GUI; ship via ./build_release.sh)"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { file = "LICENSE" }
@@ -18,12 +18,11 @@ dependencies = [
 # The editor window. Left optional so a headless box can install the CLI without
 # pulling in Qt; every command other than `macrokey gui` works without it.
 gui = ["PySide6>=6.6"]
-# Host-side input synthesis and recording. Without it the device still works;
-# only host actions and the recorder are unavailable.
-input = ["pynput>=1.7"]
-# Image clipboard support on Windows.
-windows = ["Pillow>=9", "pywin32>=305"]
-dev = ["pytest>=7", "ruff>=0.4"]
+# Input capture for recording macros onto the pad. Without it the device still
+# works; only the recorder is unavailable. evdev is required under Wayland;
+# pynput covers X11 and is the fallback elsewhere.
+input = ["pynput>=1.7", "evdev>=1.6; platform_system=='Linux'"]
+dev = ["pytest>=7", "ruff>=0.4", "pyinstaller>=6"]
 
 [project.scripts]
 macrokey = "macrokey.cli:main"

@@ -52,11 +52,14 @@ void ButtonInput::onPressEdge(uint8_t key, uint32_t now) {
       state.hasReleased && (uint32_t)(now - state.releasedAt) < MK_DOUBLE_TAP_MS;
 
   if (state.phase == PH_PENDING_TAP) {
-    // Second press inside the window: this is a double tap, and the deferred
-    // single tap is discarded rather than emitted first.
-    push(key, GESTURE_DOUBLE, false);
+    // Second press inside the window. Do not fire DOUBLE yet: this press may
+    // become a record-hold into the double slot (tap-tap-hold). Emitting the
+    // existing double binding here would run the old macro every time someone
+    // tried to re-record it. Fire DOUBLE on release instead, unless a record
+    // request claims the key first (see onReleaseEdge).
     state.phase = PH_DOUBLE_DOWN;
-    state.holdFired = true;
+    state.holdFired = false;
+    state.recordFired = false;
   } else {
     state.phase = PH_DOWN;
     state.holdFired = false;
@@ -80,6 +83,12 @@ void ButtonInput::onReleaseEdge(uint8_t key, uint32_t now) {
   }
 
   if (state.phase == PH_DOUBLE_DOWN) {
+    // Quick second tap (not held into a record request): this is the double.
+    // recordFired means KeyEngine is about to suppress, or already did via the
+    // early return above; either way the person is programming, not firing.
+    if (!state.recordFired) {
+      push(key, GESTURE_DOUBLE, false);
+    }
     state.phase = PH_IDLE;
   } else if (state.holdFired) {
     // Tells the engine to unwind a momentary layer or release a held key.

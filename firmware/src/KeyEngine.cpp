@@ -10,9 +10,8 @@ void KeyEngine::begin(Profile *profile, ButtonInput *input, LedController *leds)
   refreshDoubleTapMask();
 }
 
-void KeyEngine::setReportCallbacks(MkKeyReportFn key, MkHostActionFn host) {
+void KeyEngine::setReportCallback(MkKeyReportFn key) {
   onKey_ = key;
-  onHost_ = host;
 }
 
 // Only keys that actually have a double-tap binding pay the detection delay;
@@ -48,9 +47,8 @@ void KeyEngine::dispatchKey(const Action &action) {
 }
 
 void KeyEngine::dispatch(const Action &action, uint8_t key, uint32_t now) {
-  // Boot grace window: no HID output yet. A host action sends none, so it is
-  // the one kind that may still run.
-  if (!hidEnabled_ && action.type != ACT_HOST) return;
+  // Boot grace window: no HID output yet.
+  if (!hidEnabled_) return;
 
   switch (action.type) {
     case ACT_KEY:
@@ -83,15 +81,15 @@ void KeyEngine::dispatch(const Action &action, uint8_t key, uint32_t now) {
       break;
 
     case ACT_SEQUENCE:
-      runMacro(action.a, now);
-      break;
-
-    case ACT_HOST:
-      if (onHost_ != NULL) onHost_(action.a, key);
+      runMacro(action.a, key, now);
       break;
 
     case ACT_LED_SCENE:
       leds_->setHostMode(false, now);
+      break;
+
+    case ACT_RESERVED_9:
+      // Former ACT_HOST: pad is HID-only; do nothing.
       break;
 
     case ACT_NONE:
@@ -146,12 +144,14 @@ uint8_t KeyEngine::runText(uint16_t base, uint8_t header, uint8_t length, uint8_
   return next;
 }
 
-void KeyEngine::runMacro(uint8_t slot, uint32_t now) {
+void KeyEngine::runMacro(uint8_t slot, uint8_t key, uint32_t now) {
   // No clamp against MK_MACRO_MAX_RECORDS: the count is one byte and the limit
   // is 255, which Profile.h asserts. Reading past the region is what actually
   // needs guarding, and macroRecord does that per record.
   uint8_t count = profile_->macroRecordCount(slot);
   uint16_t base = profile_->macroBase(slot);
+
+  leds_->noteMacroBusy(key, now);
 
   uint8_t index = 0;
   while (index < count) {
@@ -187,6 +187,8 @@ void KeyEngine::runMacro(uint8_t slot, uint32_t now) {
   // button down with nothing left to run that would let go of it.
   mkMouseReleaseAll();
   mkKeyboardReleaseAll();
+
+  leds_->noteMacroDone(key, millis());
 }
 
 void KeyEngine::handleEvent(const KeyEvent &event, uint32_t now) {

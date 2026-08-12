@@ -18,7 +18,9 @@ enum ActionType : uint8_t {
   ACT_RESERVED_6,
   ACT_RESERVED_7,
   ACT_SEQUENCE,        // a = macro slot
-  ACT_HOST,            // a = host token id, executed by the desktop app
+  // 9 was ACT_HOST (desktop-run tokens). Reserved: the pad is HID-only; the PC
+  // app is config-only. Do not reuse this id.
+  ACT_RESERVED_9,
   ACT_LED_SCENE,       // a = palette/scene index
   ACT_DELAY,           // a = delay in 10 ms units (macro records only)
   // a = character count. The characters follow, packed three to a record, so a

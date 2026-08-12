@@ -47,7 +47,7 @@ class ButtonInput {
     PH_IDLE = 0,
     PH_DOWN,          // pressed, gesture still undecided
     PH_PENDING_TAP,   // released, waiting out the double-tap window
-    PH_DOUBLE_DOWN    // second press of a double, gesture already emitted
+    PH_DOUBLE_DOWN    // second press of a double; DOUBLE fires on release unless recorded
   };
 
   struct KeyState {

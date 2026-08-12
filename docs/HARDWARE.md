@@ -3,7 +3,7 @@
 Pro Micro(ATmega32u4, **5 V / 16 MHz 버전**) 기준입니다. 전원은 PC USB 하나뿐입니다.
 
 > 그림으로 된 배선 다이어그램(핀 맵, 버튼 1개 상세, WS2812B 결선, 전체 결선도, 전력 예산)은
-> [`../wiring.html`](../wiring.html)에 있습니다. 브라우저로 열거나 그대로 인쇄해서 작업대에 두고 쓰세요.
+> [`wiring.html`](wiring.html)에 있습니다. 브라우저로 열거나 그대로 인쇄해서 작업대에 두고 쓰세요.
 > 이 문서는 같은 내용의 텍스트 요약입니다.
 
 ## 핀 맵
@@ -67,19 +67,17 @@ USB SOF 주기는 1 ms이므로 여유가 충분합니다. 8픽셀 스트립일 
 
 ## 픽셀 1개로 무엇을 보여주는가
 
-LED 합성 우선순위(높은 것이 이김)는 그대로입니다.
+LED 합성 우선순위(높은 것이 이김):
 
-1. 키 누름 피드백 — **어느 키를 눌러도** 흰색으로 120 ms 반짝
-2. 호스트 앰비언트 — 앱이 칠하는 색(녹음 중 빨강/분홍 등). 픽셀 1개에서 가장 쓸모 있는 용도
-3. 호스트 앰비언트 — AgentPet 상태 색과 효과
-4. 기본 씬 — 프로필에 저장된 바탕색
+1. 키/매크로 큐 — 탭 흰색, 빈 슬롯 어두운 빨강, 매크로 완료 초록
+2. 매크로 실행 중 — 시안 펄스
+3. 호스트 오버레이 — 설정 앱이 녹음 중 칠하는 빨강/분홍 등
+4. 기본 씬 — 프로필 바탕색
 
 8픽셀 설계에서 두 가지가 줄어듭니다.
 
-- **키별 위치 표시가 불가능합니다.** 펌웨어는 모든 키의 누름을 이 하나의 픽셀로 모읍니다
-  (`LedController::notePress`). 8픽셀이면 키마다 자기 픽셀이 있었습니다.
-- **진행률 바가 밝기로 바뀝니다.** `progress=0.5`는 8픽셀에서 네 개 점등이었지만 1픽셀에서는
-  상태 색이 50% 밝기로 나옵니다.
+- **키별 위치 표시가 불가능합니다.** 펌웨어는 모든 키의 누름을 이 하나의 픽셀로 모읍니다.
+- AgentPet 상시 상태 LED는 없습니다(앱이 상시 실행되지 않음).
 
 스트립으로 바꾸고 싶어지면 `Config.h`의 `MK_LED_COUNT`와 호스트
 `config/model.py`의 `LED_COUNT`를 같은 값으로 올리면 됩니다. EEPROM 팔레트 크기와 전류
@@ -105,15 +103,19 @@ arduino-cli config add board_manager.additional_urls \
 arduino-cli core update-index
 arduino-cli core install SparkFun:avr
 arduino-cli lib install "Adafruit NeoPixel"
+arduino-cli lib install "Keyboard"
+arduino-cli lib install "Mouse"
 
-arduino-cli compile --fqbn SparkFun:avr:promicro:cpu=16MHzatmega32U4 firmware
-arduino-cli upload  --fqbn SparkFun:avr:promicro:cpu=16MHzatmega32U4 -p /dev/ttyACM0 firmware
+arduino-cli compile --upload --fqbn SparkFun:avr:promicro:cpu=16MHzatmega32U4 \
+  -p /dev/ttyACM0 firmware
 ```
 
-`Keyboard`와 `Mouse`는 AVR 코어에 **들어 있지 않으므로** `arduino-cli lib install "Keyboard"`,
-`arduino-cli lib install "Mouse"`로 각각 설치해야 합니다. 빠뜨리면 `HidBackend.h`가
+`compile`만 하고 `upload`만 하면 예전 빌드가 올라갈 수 있습니다. 항상 `compile --upload`로
+한 번에 올리세요.
+
+`Keyboard`와 `Mouse`는 AVR 코어에 **들어 있지 않으므로** 위처럼 각각 설치해야 합니다.
+빠뜨리면 `HidBackend.h`가
 `Mouse.h`를 찾지 못하고 컴파일이 멈춥니다.
 
 업로드는 타이밍 싸움입니다. RST–GND를 빠르게 두 번 단락시킨 **직후에** upload를 실행하세요.
-부트로더 모드에서는 포트 번호가 바뀌는 경우가 많으니 `arduino-cli board list` 또는
-`macrokey ports`로 확인하세요.
+부트로더 모드에서는 포트 번호가 바뀌는 경우가 많으니 `arduino-cli board list` 또는 `python -m macrokey ports`로 확인하세요.

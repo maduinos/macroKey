@@ -3,18 +3,20 @@
 This is the bug that quietly undid the whole device-first design. Correcting a
 macro is the ordinary thing to do with one, and every correction left the old
 slot full: sixteen of them filled all sixteen slots with steps nothing pointed
-at, and from then on every recording fell back to a host action -- so the pad
-stopped working with the app closed, which is the one thing it exists to do.
-Nothing failed and nothing said so; the wording in the status bar changed.
+at, and from then on every recording failed to fit -- so the pad stopped getting
+new macros with nothing saying why.
 """
 
 from __future__ import annotations
+
+import pytest
 
 from macrokey.app import MacroKeyApp
 from macrokey.config.model import (
     MACRO_RECORD_CAPACITY,
     MACRO_SLOTS,
     Action,
+    ProfileError,
     default_profile,
     macro_records,
 )
@@ -62,7 +64,7 @@ def test_re_recording_the_same_key_reuses_its_slot() -> None:
     app = fake_app()
     for attempt in range(MACRO_SLOTS * 3):
         where = app.assign_recording(RECORDING, 0, "tap")
-        assert "keypad" in where, f"fell back to the host on attempt {attempt + 1}"
+        assert "keypad" in where, f"failed to store on attempt {attempt + 1}"
         assert used_slots(app) == 1, f"{used_slots(app)} slots after {attempt + 1} recordings"
 
 
@@ -75,14 +77,14 @@ def test_the_record_budget_does_not_creep() -> None:
     assert used_records(app) == after_one
 
 
-def test_recording_over_a_host_action_frees_its_token() -> None:
-    """Host actions leaked the same way, through the same path."""
+def test_unsupported_steps_are_rejected_rather_than_stored_on_the_host() -> None:
     app = fake_app()
-    app.assign_recording([{"type": "shell", "params": {"command": "ls"}}], 0, "tap")
-    assert len(app.profile.host_actions) == 1
-    for _ in range(10):
+    app.profile.set_action(0, "tap", Action(kind="key", hotkey="ctrl+alt+shift+1"))
+    with pytest.raises(ProfileError, match="does not fit"):
         app.assign_recording([{"type": "shell", "params": {"command": "ls"}}], 0, "tap")
-    assert len(app.profile.host_actions) == 1
+    # Rejected assign must not wipe the key that was already bound.
+    assert app.profile.action(0, "tap").kind == "key"
+    assert app.profile.action(0, "tap").hotkey == "ctrl+alt+shift+1"
 
 
 def test_every_key_still_gets_its_own_slot() -> None:
@@ -112,12 +114,10 @@ def test_reclaim_repairs_a_profile_that_already_leaked() -> None:
     clear it rather than only avoid adding to it."""
     profile = default_profile()
     profile.device_macros = [[Action(kind="key", hotkey="a")] for _ in range(MACRO_SLOTS)]
-    profile.host_actions = {}
     profile.set_action(0, "tap", Action(kind="sequence", slot=4))
 
-    freed_slots, freed_tokens = profile.reclaim_storage()
+    freed_slots = profile.reclaim_storage()
     assert freed_slots == MACRO_SLOTS - 1
-    assert freed_tokens == 0
     assert [index for index, m in enumerate(profile.device_macros) if m] == [4]
 
 
@@ -129,11 +129,22 @@ def test_reclaim_keeps_what_is_still_referenced() -> None:
     assert app.profile.device_macros[slot]
 
 
-def test_a_full_pad_still_falls_back_rather_than_raising() -> None:
-    """The fallback is meant to stay reachable; it just should not be reached
-    by re-recording the same key."""
+def test_a_full_pad_rejects_rather_than_falling_back_to_the_host() -> None:
     app = fake_app()
     app.profile.device_macros = [[Action(kind="key", hotkey="a")] * MACRO_RECORD_CAPACITY]
     app.profile.set_action(7, "tap", Action(kind="sequence", slot=0))
-    where = app.assign_recording(RECORDING, 0, "tap")
-    assert "host action" in where
+    app.profile.set_action(0, "tap", Action(kind="key", hotkey="ctrl+alt+shift+1"))
+    with pytest.raises(ProfileError, match="does not fit"):
+        app.assign_recording(RECORDING, 0, "tap")
+    assert app.profile.action(0, "tap").hotkey == "ctrl+alt+shift+1"
+
+
+def test_re_recording_reuses_the_same_slot_without_wiping_on_failure() -> None:
+    app = fake_app()
+    app.assign_recording(RECORDING, 0, "tap")
+    slot = app.profile.action(0, "tap").slot
+    with pytest.raises(ProfileError, match="does not fit"):
+        app.assign_recording([{"type": "shell", "params": {"command": "ls"}}], 0, "tap")
+    assert app.profile.action(0, "tap").kind == "sequence"
+    assert app.profile.action(0, "tap").slot == slot
+    assert app.profile.device_macros[slot]

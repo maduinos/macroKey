@@ -10,7 +10,6 @@ import argparse
 import json
 import logging
 import logging.handlers
-import socket
 import sys
 import time
 
@@ -18,7 +17,6 @@ from . import __version__
 from .app import MacroKeyApp
 from .config import EDITABLE_GESTURES, KEY_COUNT
 from .device import DeviceError, candidates, pyserial_available
-from .led import default_socket_path
 from .recorder.recorder import DEFAULT_STOP_KEY
 from .ui import MissingToolkit
 
@@ -64,7 +62,10 @@ def _setup_logging(verbose: bool) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="macrokey", description="Maduinos macroKey host app")
+    parser = argparse.ArgumentParser(
+        prog="macrokey",
+        description="Maduinos macroKey config app (pad is HID-only after setup)",
+    )
     parser.add_argument("--version", action="version", version=__version__)
     parser.add_argument("--verbose", "-v", action="store_true", help="log at debug level")
     parser.add_argument("--port", default="", help="serial port (default: auto-detect)")
@@ -79,20 +80,17 @@ def build_parser() -> argparse.ArgumentParser:
     pull.add_argument("--save", action="store_true", help="adopt it as the stored profile")
 
     sub.add_parser("monitor", help="print device events until interrupted")
-    sub.add_parser("daemon", help="run headless: host actions and LEDs, no window")
 
     record = sub.add_parser("record", help="record input and bind it to a key")
     record.add_argument("--key", type=int, required=True, choices=range(1, KEY_COUNT + 1))
     # Not GESTURES: hold is how recording starts on the pad itself, so nothing
-    # may be bound to it. There is no --layer either -- there is one layer.
+    # may be bound to it.
     record.add_argument("--gesture", default="tap", choices=EDITABLE_GESTURES)
-    record.add_argument("--name", default="")
-
-    state = sub.add_parser("state", help="send a state event to the running app")
-    state.add_argument("state", help="idle, running, error, ...")
-    state.add_argument("--severity", default="info")
-    state.add_argument("--progress", type=float, default=None)
-    state.add_argument("--title", default="")
+    record.add_argument(
+        "--no-push",
+        action="store_true",
+        help="save the profile only; do not write it to the keypad",
+    )
 
     return parser
 
@@ -110,9 +108,7 @@ def main(argv: list[str] | None = None) -> int:
         "push": cmd_push,
         "pull": cmd_pull,
         "monitor": cmd_monitor,
-        "daemon": cmd_daemon,
         "record": cmd_record,
-        "state": cmd_state,
     }[command]
 
     try:
@@ -203,77 +199,66 @@ def cmd_monitor(args: argparse.Namespace) -> int:
         app.close()
 
 
-def cmd_daemon(args: argparse.Namespace) -> int:
-    app = MacroKeyApp(status=print)
-    try:
-        app.connect(args.port)
-        print("running headless, Ctrl-C to stop")
-        while True:
-            time.sleep(0.5)
-    except KeyboardInterrupt:
-        return 0
-    finally:
-        app.close()
-
-
 def cmd_record(args: argparse.Namespace) -> int:
+    from .config import ProfileError
+    from .ui.describe import nothing_captured_hint
+
     app = MacroKeyApp(status=print)
     key_index = args.key - 1
     try:
+        try:
+            app.device.connect(args.port)
+        except DeviceError as exc:
+            print(
+                f"warning: no keypad ({exc}); recording to the stored profile only",
+                file=sys.stderr,
+            )
+
         # No window to click Stop in, so the CLI opts into the key. It is
         # therefore the one path where a macro cannot contain Esc.
         app.recorder.stop_key = DEFAULT_STOP_KEY
+        if app.recorder.capture_mouse and app.device.connected:
+            try:
+                app.device.home_pointer()
+            except DeviceError as exc:
+                print(f"warning: could not home pointer: {exc}", file=sys.stderr)
+
         print(f"recording -- press {DEFAULT_STOP_KEY} to stop")
         app.start_recording()
         while app.recorder.recording:
             time.sleep(0.1)
         steps = app.stop_recording()
         if not steps:
-            print("nothing recorded")
+            print(nothing_captured_hint())
             return 1
 
         print("\nrecorded:")
         for line in app.recorder.summary(steps):
             print(f"  {line}")
+        if app.last_redacted:
+            print(
+                f"! dropped {app.last_redacted} step(s) that looked like a password",
+                file=sys.stderr,
+            )
 
         answer = input(f"\nbind to key {args.key} {args.gesture}? [y/N] ")
         if answer.strip().lower() not in ("y", "yes"):
             print("discarded")
             return 1
 
-        where = app.assign_recording(steps, key_index, args.gesture, args.name)
+        try:
+            where = app.assign_recording(steps, key_index, args.gesture)
+        except ProfileError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
         app.save()
-        print(f"bound as {where}")
-        print("run `macrokey push` to write it to the device")
+        if args.no_push or not app.device.connected:
+            print(f"bound as {where}")
+            if not args.no_push:
+                print("run `macrokey push` to write it to the device")
+            return 0
+        app.push_profile()
+        print(f"bound as {where} and written to the keypad")
     finally:
         app.close()
-    return 0
-
-
-def cmd_state(args: argparse.Namespace) -> int:
-    """Sends one event to a running app, for testing the LED mapping."""
-    payload = {
-        "schema_version": 1,
-        "source": "external",
-        "state": args.state,
-        "severity": args.severity,
-    }
-    if args.progress is not None:
-        payload["progress"] = args.progress
-    if args.title:
-        payload["title"] = args.title
-
-    if not hasattr(socket, "AF_UNIX"):
-        print("state events need a Unix socket; not supported on this platform", file=sys.stderr)
-        return 2
-    path = default_socket_path()
-    if not path.exists():
-        print(f"no listener at {path}. Start the app first.", file=sys.stderr)
-        return 1
-
-    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
-        client.settimeout(2.0)
-        client.connect(str(path))
-        client.sendall((json.dumps(payload) + "\n").encode("utf-8"))
-    print(f"sent {args.state} to {path}")
     return 0

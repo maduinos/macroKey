@@ -32,8 +32,6 @@ RECORDING_COLOR = (255, 0, 0)
 RECORDING_DOUBLE_COLOR = (255, 0, 150)
 #: Stored, and the pad can replay it on its own.
 SAVED_ON_DEVICE_COLOR = (0, 255, 60)
-#: Stored, but it needs this computer running to work.
-SAVED_ON_HOST_COLOR = (255, 140, 0)
 #: Nothing was captured, or it would not fit.
 REJECTED_COLOR = (255, 0, 60)
 
@@ -209,11 +207,14 @@ class RecordingSession:
             log.info("  captured: %s", line)
 
         if not steps:
+            from .ui.describe import nothing_captured_hint
+
+            hint = nothing_captured_hint()
             self.last_outcome = RecordOutcome(
-                key, 0, "", False, gesture=self.active_gesture, error="nothing was captured"
+                key, 0, "", False, gesture=self.active_gesture, error=hint
             )
             self.app.status(
-                f"Nothing was captured, so key {key + 1} ({self.active_gesture}) is unchanged"
+                f"{hint} Key {key + 1} ({self.active_gesture}) is unchanged."
             )
             self._flash(REJECTED_COLOR)
             self._on_change()
@@ -230,7 +231,7 @@ class RecordingSession:
             self._on_change()
             return
 
-        on_device = "keypad" in where
+        on_device = where.startswith("on the keypad")
         self.last_outcome = RecordOutcome(
             key=key,
             steps=len(steps),
@@ -258,9 +259,8 @@ class RecordingSession:
             for line in self._stored_steps(key):
                 log.info("  will run: %s", line)
         # push_profile already flashes its own acknowledgement; this replaces it
-        # with one that says *where* the macro ended up, which is the part that
-        # decides whether the pad works with this app closed.
-        self._flash(SAVED_ON_DEVICE_COLOR if on_device else SAVED_ON_HOST_COLOR)
+        # with the saved-on-device colour.
+        self._flash(SAVED_ON_DEVICE_COLOR)
         self._on_change()
 
     def _stored_steps(self, key: int) -> list[str]:

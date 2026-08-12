@@ -11,7 +11,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from .model import SCHEMA_VERSION, Action, HostAction, Profile, default_profile
+from .model import SCHEMA_VERSION, Profile, default_profile
 
 log = logging.getLogger(__name__)
 
@@ -47,33 +47,19 @@ def legacy_bindings_path() -> Path:
     return Path.home() / APP_NAME / "bindings.json"
 
 
-def resolve_asset(path: str) -> Path:
-    """Resolves a file path named by a host action.
-
-    ``~`` expands and absolute paths pass through. A relative path is taken
-    against the config directory, next to ``profile.json``, which is the only
-    folder that is still there after an install; the repository no longer
-    ships sample assets to point at.
-    """
-    candidate = Path(path).expanduser()
-    return candidate if candidate.is_absolute() else config_dir() / candidate
-
-
 @dataclass
 class Settings:
     port: str = ""             # empty means auto-detect
     auto_connect: bool = True
-    led_enabled: bool = True
-    #: Off by default: the pad drives its own LED from its profile, and this
-    #: turns on an always-connected ambient layer instead.
-    agentpet_enabled: bool = False
-    agentpet_socket: str = ""  # empty means the AgentPet default location
     recorder_min_gap_ms: int = 40
     #: Clicks and the wheel, not pointer positions. On by default because
     #: hold-to-record is the only way in now, and it has no checkbox to offer:
     #: someone recording a drag-and-drop gets nothing back and no reason why.
     recorder_capture_mouse: bool = True
     theme: str = "system"
+    #: When True, the editor will not offer the one-click capture fix again.
+    #: Cleared automatically is not done: the person said "not now".
+    capture_setup_declined: bool = False
 
     @classmethod
     def load(cls) -> Settings:
@@ -84,6 +70,7 @@ class Settings:
             data = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             return cls()
+        # Drop retired keys (agentpet_*, led_enabled) quietly.
         known = {k: v for k, v in data.items() if k in cls.__dataclass_fields__}
         return cls(**known)
 
@@ -179,16 +166,18 @@ def migrate(data: dict[str, Any]) -> dict[str, Any]:
     if version == 0:
         # Pre-schema files were the flat binding list of the original app.
         return migrate_legacy_bindings(data.get("bindings", [])).to_dict()
+    # Drop host_actions from the dict before from_dict; from_dict ignores them
+    # too, but stripping here keeps migrate()'s return shape clean for tests.
+    data = dict(data)
+    data.pop("host_actions", None)
     return data
 
 
 def migrate_legacy_bindings(items: Any) -> Profile:
-    """Converts the original app's ``bindings.json`` into a v1 profile.
+    """Converts the original app's ``bindings.json`` into a pad-only profile.
 
-    Each old binding pasted an image on a ``tab+N`` hotkey. That becomes a host
-    action on the matching key's tap slot, and the device sends the token
-    instead of the old Tab-based chord, which typed a stray tab into whatever
-    window had focus.
+    Old bindings pasted clipboard images via a desktop host action. That cannot
+    run on the pad, so those keys are left empty (defaults stay for others).
     """
     profile = default_profile()
     if not isinstance(items, list):
@@ -200,17 +189,17 @@ def migrate_legacy_bindings(items: Any) -> Profile:
         image = str(item.get("image", "")).strip()
         if not image:
             continue
-        token = profile.next_host_token()
-        profile.host_actions[token] = HostAction(
-            type="clipboard_image",
-            name=str(item.get("name") or f"Macro {index + 1}"),
-            params={
-                "path": image,
-                "paste": bool(item.get("paste", True)),
-                "press_enter": bool(item.get("press_enter", True)),
-            },
-        )
+        # Former clipboard_image bindings have no HID equivalent -- clear the
+        # default hyper shortcut so the key does not surprise by doing something
+        # unrelated to the image the user expected.
         if item.get("enabled", True):
-            profile.set_action(index, "tap", Action(kind="host", token=token))
+            from .model import Action
+
+            profile.set_action(index, "tap", Action())
+            log.info(
+                "legacy binding %d (image %s) cleared: pad-only mode has no clipboard actions",
+                index + 1,
+                image,
+            )
 
     return profile

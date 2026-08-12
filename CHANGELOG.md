@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.5.0 — 2026-08-12
+
+**Breaking: pad-only + GUI 배포.** 패드는 USB HID만, PC 앱은 설정·녹음·동기화 전용입니다.
+
+- **제거:** `HOST` 런타임, clipboard/shell, `daemon`/`state`, AgentPet LED, `windows` extra.
+- **녹음:** 장치에 안 들어가면 거절(호스트 fallback 없음). 저장 실패 시 기존 바인딩 유지.
+  Wayland 첫 실행 시 `input` 권한 안내/`pkexec`.
+- **연결:** 프로필 불일치 시 Pull / Push / Cancel.
+- **펌웨어:** `ACT_HOST`/`EV t=host` 퇴역. 더블 슬롯 재녹음 시 기존 DOUBLE 억제.
+  시퀀스 매크로 실행 중 시안 펄스 · 완료 시 초록 플래시.
+- **배포:** `./build_release.sh` → `releases/linux/macrokey` (GUI onefile).
+  `main.py` + `requirements.txt`. 배포 바이너리는 GUI만.
+- **문서:** README 축소, `docs/manual.html`·`wiring.html`, ARCHITECTURE/HARDWARE 정리.
+  프로필 **1024** B, flash는 `compile --upload`.
+
 ## 0.4.1 — 2026-08-09
 
 - **타이핑 속도 설정.** 툴바의 `Typing`, 글자당 대기 시간(ms)이고 `default`는 5 ms입니다.
