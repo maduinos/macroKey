@@ -255,6 +255,25 @@ def test_a_drag_holds_the_button_across_the_movement(harness) -> None:
     assert "mouse release 1" in drag
 
 
+def test_authored_pauses_do_not_truncate_the_keys_after_them(harness) -> None:
+    """MK_MACRO_MAX_RUN_MS used to be a plain wall clock. A recording with more
+    than ten seconds of delays -- a real drag-then-Esc macro -- died before the
+    Esc, and the pad looked like it had dropped the key. Authored waits extend
+    the deadline; only runaway HID work spends the budget.
+    """
+    profile = model.default_profile()
+    profile.device_macros = [
+        [
+            model.Action(kind="delay", delay_ms=12000),
+            model.Action(kind="key", hotkey="esc"),
+        ]
+    ]
+    lines = run(harness, "replay", "0", blob=binary.encode_profile(profile))
+    # KEY_ESC is 0xB1 = 177 in Keyboard.h.
+    assert "key press 177" in lines
+    assert "key release 177" in lines
+
+
 @pytest.mark.parametrize("slot", [0, 1])
 def test_replay_never_leaves_a_key_or_button_held(harness, slot: int) -> None:
     """A press the host never sees released is a key it believes is still down,

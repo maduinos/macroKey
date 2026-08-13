@@ -115,6 +115,12 @@ void KeyEngine::macroWait(uint16_t milliseconds) {
   // alive. Serial is deliberately not in it -- the host writes profiles, and
   // committing one while this macro is reading its records out of EEPROM would
   // change the steps out from under it.
+  //
+  // Authored pauses do not spend the runaway budget: MK_MACRO_MAX_RUN_MS is for
+  // a corrupt slot that never yields, not for "wait 2 s then press Esc".
+  if (macroDeadline_ != 0) {
+    macroDeadline_ += milliseconds;
+  }
   uint32_t until = millis() + milliseconds;
   while ((int32_t)(millis() - until) < 0) macroPump();
 }
@@ -153,6 +159,10 @@ void KeyEngine::runMacro(uint8_t slot, uint8_t key, uint32_t now) {
 
   leds_->noteMacroBusy(key, now);
 
+  // Deadline for HID work only. macroWait extends this when the recording
+  // asked for a pause, so a long drag-then-Esc macro is not truncated mid-way.
+  macroDeadline_ = now + MK_MACRO_MAX_RUN_MS;
+
   uint8_t index = 0;
   while (index < count) {
     // Every record, not only the pauses: a macro with no delay in it -- a drag
@@ -161,7 +171,7 @@ void KeyEngine::runMacro(uint8_t slot, uint8_t key, uint32_t now) {
 
     // A macro runs inline, so both a record count and a wall-clock ceiling
     // guard against a corrupt slot locking the firmware out of its scan loop.
-    if (millis() - now > MK_MACRO_MAX_RUN_MS) break;
+    if ((int32_t)(millis() - macroDeadline_) >= 0) break;
 
     MacroStep record = profile_->macroRecord(base, index);
 
@@ -180,6 +190,8 @@ void KeyEngine::runMacro(uint8_t slot, uint8_t key, uint32_t now) {
     Action action = {record.type, record.a, record.b, 0};
     dispatch(action, 0, now);
   }
+
+  macroDeadline_ = 0;
 
   // Whatever the macro was holding goes back up. A recording is allowed to
   // press a mouse button and move before releasing it -- that is what a drag

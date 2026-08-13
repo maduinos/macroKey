@@ -52,9 +52,9 @@ class Settings:
     port: str = ""             # empty means auto-detect
     auto_connect: bool = True
     recorder_min_gap_ms: int = 40
-    #: Clicks and the wheel, not pointer positions. On by default because
-    #: hold-to-record is the only way in now, and it has no checkbox to offer:
-    #: someone recording a drag-and-drop gets nothing back and no reason why.
+    #: Clicks, wheel, and pointer movement. On by default because hold-to-record
+    #: is how macros are authored; the editor checkbox is the way to turn it off
+    #: when a keyboard-only recording would otherwise pick up desk noise.
     recorder_capture_mouse: bool = True
     theme: str = "system"
     #: When True, the editor will not offer the one-click capture fix again.

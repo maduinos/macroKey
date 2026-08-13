@@ -144,10 +144,12 @@ static const uint8_t MK_KEY_PINS[MK_KEY_COUNT] = {3, 4, 5, 6, 7, 8, 9, 10};
 // was half over -- so recordings fell back to host actions and the pad stopped
 // working with the app closed, which is the one thing it exists to do.
 #define MK_MACRO_MAX_RECORDS 255
-// Total wall clock per invocation. A macro runs inside loop(), so this is also
-// how long the pad can stop scanning buttons and answering the host: 30 s was
-// long enough that the desktop app decided the link was dead. Replaying real
-// thinking-time still fits, and mkMacroYield keeps the pixel alive throughout.
+// Budget for HID *work* inside one macro (moves, clicks, keys), not for
+// authored pauses. ACT_DELAY / text char waits extend the deadline via
+// macroWait -- otherwise a drag with thinking-time pauses dies before its
+// final Esc, which is exactly what a real recording looked like. 10 s of
+// continuous work still stops a corrupt slot spinning forever; a plain 30 s
+// wall clock used to make the desktop app decide the link was dead.
 #define MK_MACRO_MAX_RUN_MS 10000
 // How far ACT_MOUSE_HOME pushes, in steps of 127 pixels on each axis. The
 // pointer stops at the edge, so this only has to be further than the desktop is

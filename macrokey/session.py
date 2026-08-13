@@ -70,9 +70,17 @@ class RecordingSession:
     decided here so there is exactly one place that knows.
     """
 
-    def __init__(self, app, on_change: Callable[[], None] | None = None) -> None:
+    def __init__(
+        self,
+        app,
+        on_change: Callable[[], None] | None = None,
+        on_live_event: Callable[[object], None] | None = None,
+    ) -> None:
         self.app = app
         self._on_change = on_change or (lambda: None)
+        #: Raw capture events while a recording is open. The editor shows them
+        #: live so an empty capture is visible before the pad is held again.
+        self._on_live_event = on_live_event or (lambda _event: None)
         self.active_key: int | None = None
         #: Which slot the running recording is for. Decided when it starts, not
         #: when it finishes: the finish only has to say "this key again", so
@@ -139,7 +147,7 @@ class RecordingSession:
                 log.debug("could not park the pointer before recording", exc_info=True)
 
         try:
-            self.app.start_recording()
+            self.app.start_recording(on_event=self._on_live_event)
         except Exception as exc:  # noqa: BLE001 - capture backends fail environmentally
             self.app.status(f"Cannot record: {exc}")
             self._flash(REJECTED_COLOR)

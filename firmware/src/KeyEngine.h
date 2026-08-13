@@ -59,7 +59,8 @@ class KeyEngine {
   void runMacro(uint8_t slot, uint8_t key, uint32_t now);
   // Types one text run. Returns the record index just past it.
   uint8_t runText(uint16_t base, uint8_t header, uint8_t length, uint8_t count);
-  // delay(), but the pad stays awake.
+  // delay(), but the pad stays awake. When a macro is running, intentional
+  // pauses extend the runaway deadline so authored timing is not truncated.
   void macroWait(uint16_t milliseconds);
   // One pass of everything that must keep running while a macro blocks loop().
   void macroPump();
@@ -83,6 +84,10 @@ class KeyEngine {
   Action repeatAction_ = {ACT_NONE, 0, 0, 0};
   int8_t repeatKey_ = -1;
   uint32_t repeatNextAt_ = 0;
+
+  // Non-zero while runMacro is on the stack: millis() deadline for runaway
+  // work. macroWait pushes it forward by the pause length.
+  uint32_t macroDeadline_ = 0;
 
   bool hidEnabled_ = false;
 };
