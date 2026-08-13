@@ -14,6 +14,7 @@ from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QApplication,
+    QCheckBox,
     QColorDialog,
     QDialog,
     QGridLayout,
@@ -31,7 +32,7 @@ from PySide6.QtWidgets import (
 
 from .. import __version__
 from ..app import MacroKeyApp
-from ..config import KEY_COUNT, ProfileError
+from ..config import KEY_COUNT
 from ..config.model import EDITABLE_GESTURES, MAX_TEXT_SPEED_MS
 from ..device import DeviceError, candidates
 from ..session import RecordingSession
@@ -53,6 +54,7 @@ class MainWindow(QMainWindow):
     pushFinished = Signal()
     recordingChanged = Signal()
     profileMismatch = Signal()
+    liveCapture = Signal(str)
 
     def __init__(self, port: str = "") -> None:
         super().__init__()
@@ -111,9 +113,14 @@ class MainWindow(QMainWindow):
         # session keeps the recording pixel lit from its own thread -- doing it
         # from a QTimer here meant blocking serial calls on the main thread, and
         # a pad that stopped answering froze the window four seconds in five.
-        self.session = RecordingSession(self.app, on_change=self.recordingChanged.emit)
+        self.session = RecordingSession(
+            self.app,
+            on_change=self.recordingChanged.emit,
+            on_live_event=self._on_live_capture,
+        )
         self.app.session = self.session
         self.recordingChanged.connect(self._refresh_recording)
+        self.liveCapture.connect(self._append_live_capture)
 
         self._refresh_all()
         self._refresh_connection()
@@ -218,26 +225,45 @@ class MainWindow(QMainWindow):
         self._apply("Typing speed " + ("default" if value == 0 else f"{value} ms per character"))
 
     def _build_capture(self) -> QWidget:
-        """Where the last recording is listed, step by step.
+        """Recording settings and the capture log.
 
-        Hidden until there is one. It is the answer to "that is not what I
-        did", and until it existed there was no way to ask that question except
-        by guessing.
+        Hold-to-record is authored on the pad; this panel only toggles what is
+        captured and shows what arrived -- live while recording, then the stored
+        steps once it finishes.
         """
         self.capture_box = QWidget()
         column = QVBoxLayout(self.capture_box)
         column.setContentsMargins(8, 0, 8, 4)
 
-        self.capture_title = QLabel()
+        row = QHBoxLayout()
+        self.capture_title = QLabel("Recording")
         self.capture_title.setStyleSheet("font-weight: 600;")
+        self.capture_mouse = QCheckBox("Include mouse")
+        self.capture_mouse.setChecked(bool(self.app.settings.recorder_capture_mouse))
+        self.capture_mouse.setToolTip(
+            "Clicks, wheel, and pointer movement. Replay homes the cursor to "
+            "the top-left first so clicks land on the same pixels."
+        )
+        self.capture_mouse.toggled.connect(self._mouse_capture_toggled)
+        row.addWidget(self.capture_title)
+        row.addStretch(1)
+        row.addWidget(self.capture_mouse)
+
         self.capture_list = QListWidget()
         self.capture_list.setMaximumHeight(140)
         self.capture_list.setStyleSheet("font-family: monospace;")
+        self.capture_list.addItem(
+            "Hold a pad key for 3 seconds to record. Captured steps appear here."
+        )
 
-        column.addWidget(self.capture_title)
+        column.addLayout(row)
         column.addWidget(self.capture_list)
-        self.capture_box.setVisible(False)
         return self.capture_box
+
+    def _mouse_capture_toggled(self, checked: bool) -> None:
+        self.app.settings.recorder_capture_mouse = checked
+        self.app.recorder.capture_mouse = checked
+        self.app.settings.save()
 
     def _build_keys(self) -> QWidget:
         """The eight keys, and nothing wrapped around them.
@@ -381,16 +407,13 @@ class MainWindow(QMainWindow):
     def _edit(self, key: int, gesture: str) -> None:
         dialog = SlotDialog(self, self.app, key, gesture)
         if dialog.exec() != QDialog.Accepted:
+            self.capture_mouse.blockSignals(True)
+            self.capture_mouse.setChecked(bool(self.app.settings.recorder_capture_mouse))
+            self.capture_mouse.blockSignals(False)
             return
-        if dialog.recorded_steps:
-            try:
-                where = self.app.assign_recording(dialog.recorded_steps, key, gesture)
-            except ProfileError as exc:
-                QMessageBox.warning(self, "Could not store recording", str(exc))
-                return
-            self._refresh_all()
-            self._apply(f"Key {key + 1} {gesture} ({where})")
-            return
+        self.capture_mouse.blockSignals(True)
+        self.capture_mouse.setChecked(bool(self.app.settings.recorder_capture_mouse))
+        self.capture_mouse.blockSignals(False)
         if dialog.result_action is not None:
             self.app.profile.set_action(key, gesture, dialog.result_action)
             self._refresh_all()
@@ -670,11 +693,59 @@ class MainWindow(QMainWindow):
             self.record_banner.setText(
                 f"  ● RECORDING key {key} · {gesture} — hold the same key again to finish  "
             )
+            self.capture_title.setText(f"Recording key {key} · {gesture}")
+            self.capture_list.clear()
+            self.capture_list.addItem("(listening…)")
+            self._sync_ignored_region()
         outcome = session.last_outcome
         if outcome is not None and not session.recording:
+            self.app.recorder.ignore_click_region = None
             self._refresh_all()
             self._show_capture(outcome)
         self.record_banner.setVisible(session.recording)
+
+    def _on_live_capture(self, event) -> None:
+        """Recorder thread → GUI thread. Shows that capture is actually alive."""
+        char = f" {event.char!r}" if getattr(event, "char", "") else ""
+        data = ""
+        if event.kind == "mouse_move" and event.data:
+            data = f"  {event.data[0]:+d},{event.data[1]:+d}"
+        elif event.kind == "scroll" and event.data:
+            data = f"  dy={event.data[1]:+d}"
+        self.liveCapture.emit(f"{event.kind}  {event.token}{char}{data}")
+
+    def _append_live_capture(self, line: str) -> None:
+        if (
+            self.capture_list.count() == 1
+            and self.capture_list.item(0).text() == "(listening…)"
+        ):
+            self.capture_list.clear()
+        self.capture_list.addItem(line)
+        self.capture_list.scrollToBottom()
+
+    def _sync_ignored_region(self) -> None:
+        """Clicks on this window are operating the editor, not the macro.
+
+        pynput can filter by coordinates; evdev cannot, so under the preferred
+        backend this is best-effort only.
+        """
+        frame = self.frameGeometry()
+        self.app.recorder.ignore_click_region = (
+            frame.x(),
+            frame.y(),
+            frame.width(),
+            frame.height(),
+        )
+
+    def moveEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        if self.session.recording:
+            self._sync_ignored_region()
+        super().moveEvent(event)
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        if self.session.recording:
+            self._sync_ignored_region()
+        super().resizeEvent(event)
 
     def _show_capture(self, outcome) -> None:
         """Lists what the last recording actually caught.
@@ -696,17 +767,17 @@ class MainWindow(QMainWindow):
         if outcome.error or not outcome.where:
             # Empty / rejected: show the capture log when we have one, else the
             # error (Wayland / input group hints live there).
-            lines = [
-                line
-                for line in self.app.recorder.summary(self.session.last_steps)
-            ] if self.session.last_steps else []
+            lines = (
+                list(self.app.recorder.summary(self.session.last_steps))
+                if self.session.last_steps
+                else []
+            )
             if lines:
                 self.capture_list.addItems(lines)
             elif outcome.error:
                 self.capture_list.addItem(outcome.error)
             else:
                 self.capture_list.addItem("(nothing)")
-            self.capture_box.setVisible(True)
             return
 
         # What will actually run, read back out of the profile -- not the raw
@@ -722,7 +793,6 @@ class MainWindow(QMainWindow):
             lines = [action.describe()]
 
         self.capture_list.addItems(lines or ["(nothing)"])
-        self.capture_box.setVisible(True)
 
     def _push(self) -> None:
         """Writes the profile to the device, in the background.

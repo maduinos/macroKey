@@ -122,12 +122,17 @@ def test_scrolling_is_captured_with_its_sign(captured) -> None:
     assert (events[0].kind, events[0].data) == ("scroll", (0, -2))
 
 
-def test_pointer_movement_is_not_recorded(captured) -> None:
-    """Positions are deliberately not replayed, so they are not captured."""
+def test_pointer_deltas_are_held_until_flushed(captured) -> None:
+    """REL motion is accumulated, not dropped. Emitting before flush would turn
+    every kernel report into its own step; with no flush yet the buffer is empty.
+    """
     events, recorder = captured
     recorder._handle(rel_event(ecodes.REL_X, 40))
     recorder._handle(rel_event(ecodes.REL_Y, -12))
     assert events == []
+    recorder._flush_motion()
+    assert len(events) == 1
+    assert events[0].data == (40, -12)
 
 
 # ------------------------------------------------------- motion accumulation --

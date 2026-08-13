@@ -63,7 +63,7 @@ def nothing_captured_hint() -> str:
             "so capture uses evdev (every window). Without it, only X11 windows "
             "are visible to the fallback recorder."
         )
-    return "Nothing was captured. Press Start recording, do the thing, then Stop."
+    return "Nothing was captured. Hold a pad key for 3 seconds, do the thing, hold again to finish."
 
 
 #: A typed run at least this long is worth pointing at before it is stored.

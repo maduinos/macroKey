@@ -9,7 +9,8 @@ from collections.abc import Callable
 from typing import Any
 
 from . import evdev_source
-from .events import KEY_DOWN, KEY_UP, MOUSE_CLICK, MOUSE_RELEASE, SCROLL, RawEvent
+from .evdev_source import MOTION_DEAD_ZONE
+from .events import KEY_DOWN, KEY_UP, MOUSE_CLICK, MOUSE_MOVE, MOUSE_RELEASE, SCROLL, RawEvent
 from .normalize import (
     DEFAULT_MIN_GAP_MS,
     normalize,
@@ -83,9 +84,9 @@ class Recorder:
         self._min_gap_ms = min_gap_ms
         self.stop_key = stop_key
         #: Screen rectangle whose clicks belong to operating the recorder
-        #: rather than to the macro. Stopping is a button, so without this
-        #: the click that ends a recording is its last step -- and every
-        #: replay would end by clicking wherever that button used to be.
+        #: rather than to the macro (pynput only -- it reports coordinates).
+        #: Used so clicks on the editor while hold-to-record is running do not
+        #: become steps. evdev has no pointer position, so it cannot filter this.
         self.ignore_click_region: tuple[int, int, int, int] | None = None
         self._events: list[RawEvent] = []
         self._lock = threading.Lock()
@@ -95,6 +96,12 @@ class Recorder:
         self.backend = ""
         self._last_device_key_at = 0.0
         self.recording = False
+        # pynput reports absolute cursor position; deltas are derived here so
+        # the rest of the pipeline stays relative, matching evdev.
+        self._pynput_last_pos: tuple[int, int] | None = None
+        self._pynput_pending_dx = 0
+        self._pynput_pending_dy = 0
+        self._pynput_motion_started_at = 0.0
 
     @staticmethod
     def available() -> tuple[bool, str]:
@@ -144,13 +151,17 @@ class Recorder:
         if not usable:
             raise RecorderError(reason)
         self.backend = "pynput"
+        self._pynput_last_pos = None
+        self._pynput_pending_dx = self._pynput_pending_dy = 0
         self._keyboard_listener = pynput_keyboard.Listener(
             on_press=self._on_press, on_release=self._on_release
         )
         self._keyboard_listener.start()
         if self.capture_mouse and pynput_mouse is not None:
             self._mouse_listener = pynput_mouse.Listener(
-                on_click=self._on_click, on_scroll=self._on_scroll
+                on_click=self._on_click,
+                on_scroll=self._on_scroll,
+                on_move=self._on_move,
             )
             self._mouse_listener.start()
         self.recording = True
@@ -162,6 +173,7 @@ class Recorder:
             self._evdev = None
             with self._lock:
                 return list(self._events)
+        self._flush_pynput_motion()
         for listener in (self._keyboard_listener, self._mouse_listener):
             if listener is not None:
                 listener.stop()
@@ -230,6 +242,7 @@ class Recorder:
     def _on_click(self, x: int, y: int, button, pressed: bool) -> None:
         if self._inside_ignored_region(x, y):
             return
+        self._flush_pynput_motion()
         name = getattr(button, "name", "left")
         # Both halves, so normalize can tell a click from the start of a drag.
         self._record(
@@ -251,8 +264,50 @@ class Recorder:
     def _on_scroll(self, x: int, y: int, dx: int, dy: int) -> None:
         if self._inside_ignored_region(x, y):
             return
+        self._flush_pynput_motion()
         self._record(
             RawEvent(kind=SCROLL, token="scroll", at=time.monotonic(), data=(int(dx), int(dy)))
+        )
+
+    def _on_move(self, x: int, y: int) -> None:
+        """pynput path: absolute cursor -> accumulated relative move.
+
+        Without this, Include mouse under the X11 fallback only kept clicks and
+        the wheel, so a drag-and-drop recording came back as two clicks with the
+        pointer never travelling between them.
+        """
+        if self._inside_ignored_region(x, y):
+            # Still track position so leaving the window does not invent a jump.
+            self._pynput_last_pos = (int(x), int(y))
+            return
+        pos = (int(x), int(y))
+        if self._pynput_last_pos is None:
+            self._pynput_last_pos = pos
+            return
+        dx = pos[0] - self._pynput_last_pos[0]
+        dy = pos[1] - self._pynput_last_pos[1]
+        self._pynput_last_pos = pos
+        if not dx and not dy:
+            return
+        if not self._pynput_pending_dx and not self._pynput_pending_dy:
+            self._pynput_motion_started_at = time.monotonic()
+        self._pynput_pending_dx += dx
+        self._pynput_pending_dy += dy
+
+    def _flush_pynput_motion(self) -> None:
+        dx, dy = self._pynput_pending_dx, self._pynput_pending_dy
+        self._pynput_pending_dx = self._pynput_pending_dy = 0
+        if not dx and not dy:
+            return
+        if abs(dx) < MOTION_DEAD_ZONE and abs(dy) < MOTION_DEAD_ZONE:
+            return
+        self._record(
+            RawEvent(
+                kind=MOUSE_MOVE,
+                token="move",
+                at=self._pynput_motion_started_at,
+                data=(dx, dy),
+            )
         )
 
 

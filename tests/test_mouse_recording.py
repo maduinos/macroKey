@@ -169,6 +169,32 @@ def test_a_press_and_its_release_are_one_click_step(recorder) -> None:
     assert steps == [{"type": "mouse_button", "params": {"button": "left", "mode": "click"}}]
 
 
+def test_pynput_move_accumulates_into_a_relative_step(recorder) -> None:
+    """The X11 fallback used to omit on_move, so drag macros had no travel."""
+    from macrokey.recorder.events import MOUSE_MOVE
+
+    recorder._events.clear()
+    recorder.backend = "pynput"
+    recorder._on_move(100, 200)
+    recorder._on_move(220, 160)
+    assert recorder._events == []
+    recorder._flush_pynput_motion()
+    assert [event.kind for event in recorder._events] == [MOUSE_MOVE]
+    assert recorder._events[0].data == (120, -40)
+
+
+def test_pynput_click_flushes_the_move_that_led_to_it(recorder) -> None:
+    from macrokey.recorder.events import MOUSE_CLICK, MOUSE_MOVE
+
+    recorder._events.clear()
+    recorder.backend = "pynput"
+    recorder._on_move(0, 0)
+    recorder._on_move(80, 0)
+    recorder._on_click(80, 0, type("B", (), {"name": "left"}), True)
+    assert [event.kind for event in recorder._events] == [MOUSE_MOVE, MOUSE_CLICK]
+    assert recorder._events[0].data == (80, 0)
+
+
 # ------------------------------------------------------- the self-echo blanket --
 
 
