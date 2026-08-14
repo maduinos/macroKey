@@ -92,3 +92,15 @@ def test_the_keys_are_not_wrapped_in_tabs(window) -> None:
     from PySide6.QtWidgets import QTabWidget
 
     assert not window.findChildren(QTabWidget)
+
+
+def test_storage_usage_is_shown_in_the_status_bar(window) -> None:
+    """Always visible in the default window — not only while recording."""
+    text = window.storage_label.text()
+    assert "% used" in text
+    assert "% free" in text
+    assert "/" in text
+    assert window.statusBar().isVisibleTo(window)
+    window._refresh_storage()
+    assert window.storage_label.text() == text
+
