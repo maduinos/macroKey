@@ -347,6 +347,26 @@ def macro_records(macro: list[Action]) -> int:
     return sum(action.record_count() for action in macro)
 
 
+def macro_storage_usage(
+    macros: list[list[Action]],
+    *,
+    capacity: int = MACRO_RECORD_CAPACITY,
+) -> tuple[int, int, int, int]:
+    """Pad macro-region fill: ``(used, capacity, used_pct, free_pct)``.
+
+    Percentages are of the shared EEPROM pool (every slot together), not of one
+    slot's 255-record ceiling. A near-empty pool rounds to 0% used; a full one
+    is 100% used / 0% free.
+    """
+    used = sum(macro_records(macro) for macro in macros if macro)
+    used = min(used, capacity)
+    if capacity <= 0:
+        return 0, 0, 0, 0
+    used_pct = int(round(100.0 * used / capacity))
+    used_pct = max(0, min(100, used_pct))
+    return used, capacity, used_pct, 100 - used_pct
+
+
 @dataclass
 class Profile:
     schema_version: int = SCHEMA_VERSION

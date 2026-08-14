@@ -33,7 +33,7 @@ from PySide6.QtWidgets import (
 from .. import __version__
 from ..app import MacroKeyApp
 from ..config import KEY_COUNT
-from ..config.model import EDITABLE_GESTURES, MAX_TEXT_SPEED_MS
+from ..config.model import EDITABLE_GESTURES, MAX_TEXT_SPEED_MS, macro_storage_usage
 from ..device import DeviceError, candidates
 from ..session import RecordingSession
 from .describe import describe_binding
@@ -95,7 +95,13 @@ class MainWindow(QMainWindow):
         self.record_banner.setVisible(False)
         layout.insertWidget(0, self.record_banner)
 
+        self.storage_label = QLabel()
+        self.storage_label.setToolTip(
+            "Shared keypad macro storage (keyboard + mouse steps).\n"
+            "All 16 slots draw from the same 308-record pool."
+        )
         self.statusBar().showMessage("Not connected")
+        self.statusBar().addPermanentWidget(self.storage_label)
         self.statusMessage.connect(self.statusBar().showMessage)
         self.pushFinished.connect(self._on_push_finished)
         self.failed.connect(self._show_error)
@@ -399,10 +405,19 @@ class MainWindow(QMainWindow):
 
     def _refresh_all(self) -> None:
         self._refresh_swatch()
+        self._refresh_storage()
         for (key, gesture), button in self.buttons.items():
             action = self.app.profile.action(key, gesture)
             button.setText(describe_binding(self.app.profile, action))
             button.setStyleSheet("text-align: left; padding: 4px 8px;")
+
+    def _refresh_storage(self) -> None:
+        used, capacity, used_pct, free_pct = macro_storage_usage(
+            self.app.profile.device_macros
+        )
+        self.storage_label.setText(
+            f"Storage {used_pct}% used · {free_pct}% free ({used}/{capacity})"
+        )
 
     def _edit(self, key: int, gesture: str) -> None:
         dialog = SlotDialog(self, self.app, key, gesture)
