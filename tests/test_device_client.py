@@ -7,12 +7,13 @@ slower than it should have. These pin the shape of the reads, not the outcome.
 
 from __future__ import annotations
 
+import base64
 import threading
 import time
 
 import pytest
 
-from macrokey.config import binary
+from macrokey.config import binary, default_profile
 from macrokey.config.model import KEY_COUNT, LED_COUNT
 from macrokey.device import protocol
 from macrokey.device.client import DeviceClient, DeviceError
@@ -138,6 +139,29 @@ def test_connect_rejects_a_protocol_it_does_not_speak(monkeypatch) -> None:
         DeviceClient().connect("/dev/fake")
 
 
+@pytest.mark.parametrize(
+    ("keys", "leds"),
+    [(KEY_COUNT + 1, LED_COUNT), (KEY_COUNT, LED_COUNT + 1)],
+)
+def test_connect_rejects_a_different_device_topology(monkeypatch, keys, leds) -> None:
+    fake = FakeSerial()
+
+    def wrong_topology(data: bytes) -> int:
+        fake.written.append(data)
+        reply = (
+            f"HELLO proto=1 fw=0.5.0 board=promicro keys={keys} "
+            f"leds={leds} bytes={binary.PROFILE_SIZE}\r\n"
+        ).encode()
+        fake._pending.extend(reply)
+        return len(data)
+
+    fake.write = wrong_topology  # type: ignore[method-assign]
+    monkeypatch.setattr("macrokey.device.client.serial.Serial", lambda *a, **k: fake)
+    monkeypatch.setattr("macrokey.device.client.OPEN_SETTLE_SECONDS", 0.0)
+    with pytest.raises(DeviceError, match="expects"):
+        DeviceClient().connect("/dev/fake")
+
+
 def test_led_mode_can_declare_its_own_silence_window(client) -> None:
     """`ms=` lets a host holding a colour still say it is not dead."""
     device, fake = client
@@ -164,6 +188,58 @@ def test_encode_round_trips_through_parse() -> None:
     assert message.verb == "LED"
     assert message.get("mode") == "host"
     assert message.get("ms") == "45000"
+
+
+# --------------------------------------------------- profile transfer framing --
+
+
+def _profile_lines(blob: bytes) -> list[bytes]:
+    lines = [
+        f"PROF begin bytes={len(blob)} crc={binary.blob_crc(blob):04X}\r\n".encode()
+    ]
+    for sequence, offset in enumerate(range(0, len(blob), binary.CHUNK_BYTES)):
+        payload = base64.b64encode(blob[offset : offset + binary.CHUNK_BYTES]).decode()
+        lines.append(f"PROF data seq={sequence} b64={payload}\r\n".encode())
+    lines.append(b"PROF end\r\n")
+    return lines
+
+
+def _answer_next_write(fake: FakeSerial, lines: list[bytes]) -> None:
+    def answer(data: bytes) -> int:
+        fake.written.append(data)
+        with fake._lock:
+            fake._pending.extend(b"".join(lines))
+        return len(data)
+
+    fake.write = answer  # type: ignore[method-assign]
+
+
+def test_a_framed_profile_dump_round_trips(client) -> None:
+    device, fake = client
+    blob = binary.encode_profile(default_profile())
+    _answer_next_write(fake, _profile_lines(blob))
+
+    assert device.read_profile() == blob
+
+
+def test_profile_data_before_the_header_is_rejected(client) -> None:
+    device, fake = client
+    blob = binary.encode_profile(default_profile())
+    _answer_next_write(fake, _profile_lines(blob)[1:])
+
+    with pytest.raises(DeviceError, match="before its header"):
+        device.read_profile()
+
+
+def test_out_of_order_profile_chunks_are_rejected(client) -> None:
+    device, fake = client
+    blob = binary.encode_profile(default_profile())
+    lines = _profile_lines(blob)
+    lines[1], lines[2] = lines[2], lines[1]
+    _answer_next_write(fake, lines)
+
+    with pytest.raises(DeviceError, match="expected 0"):
+        device.read_profile()
 
 
 # ------------------------------------------------------- key 0 is a real key --

@@ -12,7 +12,7 @@ import queue
 import threading
 from collections.abc import Callable
 
-from .config import Profile, ProfileError, Settings, binary, load_profile, save_profile
+from .config import KEY_COUNT, Profile, ProfileError, Settings, binary, load_profile, save_profile
 from .device import (
     DeviceClient,
     DeviceError,
@@ -104,7 +104,12 @@ class MacroKeyApp:
             # Tell the recorder so it drops the keypad's own HID echo.
             self.recorder.note_device_key()
         elif isinstance(event, RecordRequest):
-            if self.session is None:
+            # A malformed or out-of-sync device must not be able to turn on
+            # global input capture. Profile access validates the index again,
+            # but recording starts well before a profile is touched.
+            if not 0 <= event.key < KEY_COUNT:
+                self.status(f"Ignored record request for invalid key {event.key}")
+            elif self.session is None:
                 self.status(
                     f"Key {event.key + 1} asked to record, but this app is not "
                     "listening — open the editor (macrokey) to program the pad"
