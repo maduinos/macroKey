@@ -334,6 +334,29 @@ def test_a_record_request_is_not_handled_on_the_serial_reader_thread() -> None:
     assert thread_name != caller, "handled inline on the delivering thread"
 
 
+def test_an_invalid_record_request_cannot_start_global_capture() -> None:
+    """Serial noise must not be enough to turn on the global input recorder."""
+    from macrokey.app import MacroKeyApp
+    from macrokey.device.protocol import RecordRequest
+
+    app = MacroKeyApp.__new__(MacroKeyApp)
+    app._status_callbacks = []
+    app._event_callbacks = []
+    app.statuses = []
+    app.status = app.statuses.append
+
+    class Session:
+        def handle_request(self, key: int, gesture: str = "tap") -> None:
+            raise AssertionError("invalid request reached the recording session")
+
+    app.session = Session()
+    for key in (-1, 8, 99):
+        MacroKeyApp._on_device_event(app, RecordRequest(key=key))
+
+    assert len(app.statuses) == 3
+    assert all("invalid key" in message for message in app.statuses)
+
+
 def test_requests_are_handled_in_order_by_a_single_worker() -> None:
     """Start and finish are two halves of one state machine. A thread per
     request would let a finish overtake the start it belongs to."""

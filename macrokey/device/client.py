@@ -15,7 +15,7 @@ import time
 from collections.abc import Callable
 from typing import Any
 
-from ..config import binary
+from ..config import KEY_COUNT, LED_COUNT, binary
 from . import discovery, protocol
 from .protocol import Hello, KeyEvent, Message, ProtocolError, RecordRequest
 
@@ -120,6 +120,11 @@ class DeviceClient:
             raise DeviceError(
                 f"device profile is {hello.profile_bytes} bytes, this app builds "
                 f"{binary.PROFILE_SIZE}. Firmware and app are out of step."
+            )
+        if hello.keys != KEY_COUNT or hello.leds != LED_COUNT:
+            raise DeviceError(
+                f"device reports {hello.keys} keys and {hello.leds} LEDs, this app expects "
+                f"{KEY_COUNT} keys and {LED_COUNT} LEDs. Firmware and app are out of step."
             )
         self.hello = hello
         self.port = port
@@ -248,6 +253,8 @@ class DeviceClient:
             deadline = time.monotonic() + PROFILE_READ_TIMEOUT
             chunks: dict[int, bytes] = {}
             declared_crc: int | None = None
+            declared_bytes: int | None = None
+            expected_sequence = 0
 
             while True:
                 remaining = deadline - time.monotonic()
@@ -260,20 +267,56 @@ class DeviceClient:
                 if message.verb != "PROF":
                     continue
                 if message.sub == "begin":
-                    declared_crc = int(message.get("crc", "0") or "0", 16)
+                    if declared_bytes is not None or chunks:
+                        raise DeviceError("device restarted the profile transfer unexpectedly")
+                    try:
+                        declared_bytes = int(message.get("bytes", "") or "", 10)
+                        declared_crc = int(message.get("crc", "") or "", 16)
+                    except ValueError as exc:
+                        raise DeviceError("device sent a malformed profile header") from exc
+                    if declared_bytes != binary.PROFILE_SIZE:
+                        raise DeviceError(
+                            f"device declared {declared_bytes} profile bytes, "
+                            f"expected {binary.PROFILE_SIZE}"
+                        )
                 elif message.sub == "data":
+                    if declared_bytes is None:
+                        raise DeviceError("device sent profile data before its header")
                     sequence = message.int("seq", -1)
                     payload = message.get("b64", "") or ""
-                    if sequence < 0:
-                        continue
-                    chunks[sequence] = base64.b64decode(payload)
+                    if sequence != expected_sequence:
+                        raise DeviceError(
+                            f"device sent profile chunk {sequence}, expected {expected_sequence}"
+                        )
+                    try:
+                        chunk = base64.b64decode(payload, validate=True)
+                    except ValueError as exc:
+                        raise DeviceError(
+                            f"device sent invalid base64 in profile chunk {sequence}"
+                        ) from exc
+                    offset = expected_sequence * binary.CHUNK_BYTES
+                    if offset >= binary.PROFILE_SIZE:
+                        raise DeviceError(f"device sent unexpected extra profile chunk {sequence}")
+                    expected_length = min(
+                        binary.CHUNK_BYTES,
+                        binary.PROFILE_SIZE - offset,
+                    )
+                    if len(chunk) != expected_length:
+                        raise DeviceError(
+                            f"device sent {len(chunk)} bytes in profile chunk {sequence}, "
+                            f"expected {expected_length}"
+                        )
+                    chunks[sequence] = chunk
+                    expected_sequence += 1
                 elif message.sub == "end":
+                    if declared_bytes is None or declared_crc is None:
+                        raise DeviceError("device ended the profile transfer without a header")
                     break
 
         blob = b"".join(chunks[index] for index in sorted(chunks))
         if len(blob) != binary.PROFILE_SIZE:
             raise DeviceError(f"device sent {len(blob)} bytes, expected {binary.PROFILE_SIZE}")
-        if declared_crc is not None and binary.blob_crc(blob) != declared_crc:
+        if binary.blob_crc(blob) != declared_crc:
             raise DeviceError("device profile failed its checksum")
         return blob
 

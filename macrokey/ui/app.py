@@ -640,7 +640,10 @@ class MainWindow(QMainWindow):
             if ok:
                 self.statusMessage.emit("Recording is ready")
                 return
-            if "restart" in message.lower() or "reinstall" in message.lower() or "build" in message.lower():
+            needs_restart = any(
+                word in message.lower() for word in ("restart", "reinstall", "build")
+            )
+            if needs_restart:
                 QMessageBox.information(
                     self,
                     "Recording support",
