@@ -29,6 +29,10 @@ class FakeDevice:
             raise DeviceError("pad said ERR")
         self.resets += 1
 
+    def disconnect(self) -> None:
+        """Closing the window calls this through MacroKeyApp.close()."""
+        self.connected = False
+
 
 def edited_profile() -> Profile:
     profile = default_profile()
