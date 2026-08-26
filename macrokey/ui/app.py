@@ -54,6 +54,21 @@ from .widgets import AUTO_PORT, RescanningComboBox
 PREVIEW_HOLD_MS = 45000
 
 
+def _button_width(button: QPushButton, *labels: str) -> int:
+    """What `button` needs to show the widest of `labels` without eliding.
+
+    Asked of the button itself rather than measured by hand, so the padding a
+    style puts around a label is whatever that style actually uses.
+    """
+    current = button.text()
+    widest = 0
+    for label in labels:
+        button.setText(label)
+        widest = max(widest, button.sizeHint().width())
+    button.setText(current)
+    return widest
+
+
 class MainWindow(QMainWindow):
     # Worker threads emit these; Qt delivers them on the GUI thread.
     statusMessage = Signal(str)
@@ -79,7 +94,8 @@ class MainWindow(QMainWindow):
         central = QWidget()
         layout = QVBoxLayout(central)
         layout.setContentsMargins(10, 10, 10, 6)
-        layout.addWidget(self._build_toolbar(port))
+        toolbar = self._build_toolbar(port)
+        layout.addWidget(toolbar)
         layout.addWidget(self._build_keys(), 1)
 
         # The pad's main feature is invisible: nothing about eight buttons
@@ -94,6 +110,8 @@ class MainWindow(QMainWindow):
         layout.addWidget(hint)
         layout.addWidget(self._build_capture())
         self.setCentralWidget(central)
+        self._toolbar = toolbar
+        self._central_layout = layout
 
         self.record_banner = QLabel("  ● RECORDING - hold the same key again to finish  ")
         self.record_banner.setStyleSheet(
@@ -138,6 +156,11 @@ class MainWindow(QMainWindow):
 
         self._refresh_all()
         self._refresh_connection()
+        # Only now do the labels hold their real text -- "no keypad", the
+        # brightness readout, "Disconnect" -- so only now is the row as wide as
+        # it will ever be. Measured before this, the window's minimum came out
+        # 60 px short and the toolbar was squeezed at any UI font above 9 pt.
+        self._pin_minimum_width()
         # Connect straight away rather than making someone press a button to
         # reach a device that is already plugged in and already identified.
         QTimer.singleShot(0, self._autoconnect)
@@ -145,6 +168,22 @@ class MainWindow(QMainWindow):
         # the one-click fix once the window is up, not before connect: the pad
         # works without it, and a modal during splash feels like a failure.
         QTimer.singleShot(400, self._maybe_fix_capture)
+
+    def _pin_minimum_width(self) -> None:
+        """Keeps the window from being narrower than its toolbar.
+
+        The toolbar is a single row that does not wrap. Squeezed, it does not
+        drop anything -- it slides the widgets over each other, so the port name
+        ends up half under the Connect button and every label comes out cut.
+        820 px is roomy at a 9 pt UI font and too tight at 13, which is why this
+        asks the row instead of guessing a second number.
+        """
+        margins = self._central_layout.contentsMargins()
+        row = max(
+            self._toolbar.sizeHint().width(),
+            self._toolbar.minimumSizeHint().width(),
+        )
+        self.setMinimumWidth(max(820, row + margins.left() + margins.right()))
 
     # ------------------------------------------------------------------ build --
 
@@ -162,7 +201,13 @@ class MainWindow(QMainWindow):
         # Empty means "let discovery choose", which is the normal state.
         self.port_box = RescanningComboBox(self._rescan_ports)
         self.port_box.setEditable(True)
-        self.port_box.setMinimumWidth(150)
+        # Wide enough for a real port name at whatever the UI font is. A flat
+        # 150 px fitted "/dev/ttyACM0" at 9 pt and cut it at 13; the slack on
+        # top is the frame and the drop-down arrow, which grow with the font.
+        metrics = self.port_box.fontMetrics()
+        self.port_box.setMinimumWidth(
+            max(150, metrics.horizontalAdvance("/dev/ttyACM0") + metrics.height() * 2)
+        )
         self.port_box.setToolTip(
             "Leave as Auto to use whichever board identifies itself as a keypad."
         )
@@ -170,6 +215,13 @@ class MainWindow(QMainWindow):
         self.port_box.setCurrentText(port or self.app.settings.port or AUTO_PORT)
 
         self.connect_button = QPushButton("Connect")
+        # A button elides its label rather than refuse to shrink, so a toolbar
+        # that does not fit squeezes it silently. Pin it to the widest text it
+        # will ever carry -- the row then demands its real width instead, and
+        # the label stops changing size as the state changes.
+        self.connect_button.setMinimumWidth(
+            _button_width(self.connect_button, "Connecting...", "Disconnect", "Connect")
+        )
         self.connect_button.clicked.connect(self._toggle_connection)
 
         self.link_label = QLabel()
@@ -209,7 +261,11 @@ class MainWindow(QMainWindow):
         self.text_speed = QSpinBox()
         self.text_speed.setRange(MIN_TEXT_SPEED_MS, MAX_TEXT_SPEED_MS)
         self.text_speed.setSuffix(" ms")
-        self.text_speed.setFixedWidth(84)
+        # Sized for the widest value it will ever hold, the way the brightness
+        # readout is. A flat 84 px was fine for "default" and cut "255 ms" off
+        # at anything above a 9 pt UI font.
+        self.text_speed.setValue(MAX_TEXT_SPEED_MS)
+        self.text_speed.setFixedWidth(self.text_speed.sizeHint().width())
         self.text_speed.setValue(text_speed_shown(self.app.profile.text_speed_ms))
         self.text_speed.setToolTip(
             "Pause between characters when the pad replays typed text.\n"
@@ -221,6 +277,7 @@ class MainWindow(QMainWindow):
         # Destructive, and the only control here that is, so it sits apart from
         # the knobs and says so with an ellipsis: nothing happens on the click.
         self.reset_button = QPushButton("Reset\u2026")
+        self.reset_button.setMinimumWidth(_button_width(self.reset_button, "Reset\u2026"))
         self.reset_button.setToolTip(
             "Clears every binding and every recorded macro -- on this computer\n"
             "and on the keypad -- and puts the hyper + 1..8 defaults back."
