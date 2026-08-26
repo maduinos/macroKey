@@ -107,7 +107,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          version="$(python -c "import tomllib,pathlib; print(tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']['version'])")"
+          # 22.04 러너의 python은 3.10이라 tomllib이 없다. 한 줄이라 sed로 충분하다.
+          version="$(sed -n 's/^version = "\(.*\)"/\1/p' pyproject.toml | head -1)"
           short="${GITHUB_SHA::7}"
           if [[ "${{ github.ref_type }}" == "tag" ]]; then
             tag="${{ github.ref_name }}"
