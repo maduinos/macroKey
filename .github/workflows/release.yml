@@ -5,6 +5,9 @@
 #
 # 빌드는 로컬과 같은 ./build_release.sh 를 쓴다. 테스트는 아래 test 잡에서
 # 한 번만 돌리고, 빌드 잡은 --skip-tests 로 중복 실행을 피한다.
+#
+# Ubuntu 러너는 22.04로 고정한다. ubuntu-latest(24.04, glibc 2.39)에서 빌드하면
+# 결과물이 GLIBC_2.38을 요구해 22.04 이하에서 실행되지 않는다.
 name: release
 
 on:
@@ -22,7 +25,7 @@ concurrency:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -50,7 +53,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          - os: ubuntu-22.04
             asset: macrokey-linux-x86_64
             built: releases/linux/macrokey
           - os: windows-latest
@@ -86,7 +89,7 @@ jobs:
 
   release:
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
