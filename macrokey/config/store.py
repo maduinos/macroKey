@@ -52,10 +52,11 @@ class Settings:
     port: str = ""             # empty means auto-detect
     auto_connect: bool = True
     recorder_min_gap_ms: int = 40
-    #: Clicks, wheel, and pointer movement. On by default because hold-to-record
-    #: is how macros are authored; the editor checkbox is the way to turn it off
-    #: when a keyboard-only recording would otherwise pick up desk noise.
-    recorder_capture_mouse: bool = True
+    #: Clicks, wheel, and pointer movement. Off by default: most macros are
+    #: keyboard, and a recording that quietly picked up every stray pointer
+    #: twitch spent its slot on desk noise. The editor checkbox turns it on for
+    #: the recordings that do want it.
+    recorder_capture_mouse: bool = False
     theme: str = "system"
     #: When True, the editor will not offer the one-click capture fix again.
     #: Cleared automatically is not done: the person said "not now".
