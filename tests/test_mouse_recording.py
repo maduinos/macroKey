@@ -310,9 +310,11 @@ def test_a_move_survives_the_binary_round_trip() -> None:
     assert (step.kind, step.dx, step.dy) == ("mouse_move", -30, 45)
 
 
-def test_the_recorder_captures_the_mouse_by_default() -> None:
-    """It was off, so hold-to-record -- which has no checkbox to offer -- gave
-    back keyboard-only recordings with nothing saying why."""
+def test_the_recorder_leaves_the_mouse_out_by_default() -> None:
+    """Most macros are keyboard, and a recording that silently picked up every
+    stray pointer twitch spent its slot on desk noise. "Include mouse" in the
+    editor turns it on, and it sticks -- hold-to-record reads the same setting,
+    so the choice is made before the hold, not during it."""
     from macrokey.config.store import Settings
 
-    assert Settings().recorder_capture_mouse is True
+    assert Settings().recorder_capture_mouse is False

@@ -29,7 +29,7 @@ def window():
     return MainWindow()
 
 
-CLICKED_SLOTS = ("_toggle_connection", "_brightness_settled")
+CLICKED_SLOTS = ("_toggle_connection", "_brightness_settled", "_reset_everything")
 
 
 @pytest.mark.parametrize("name", CLICKED_SLOTS)

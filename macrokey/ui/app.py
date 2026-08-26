@@ -33,7 +33,15 @@ from PySide6.QtWidgets import (
 from .. import __version__
 from ..app import MacroKeyApp
 from ..config import KEY_COUNT
-from ..config.model import EDITABLE_GESTURES, MAX_TEXT_SPEED_MS, macro_storage_usage
+from ..config.model import (
+    EDITABLE_GESTURES,
+    MAX_TEXT_SPEED_MS,
+    MIN_TEXT_SPEED_MS,
+    default_profile,
+    macro_storage_usage,
+    text_speed_shown,
+    text_speed_stored,
+)
 from ..device import DeviceError, candidates
 from ..session import RecordingSession
 from .describe import describe_binding
@@ -199,16 +207,25 @@ class MainWindow(QMainWindow):
         # still starting, a field that validates as you type -- so it is a knob,
         # and it lives on the profile because the pad replays without the app.
         self.text_speed = QSpinBox()
-        self.text_speed.setRange(0, MAX_TEXT_SPEED_MS)
+        self.text_speed.setRange(MIN_TEXT_SPEED_MS, MAX_TEXT_SPEED_MS)
         self.text_speed.setSuffix(" ms")
-        self.text_speed.setSpecialValueText("default")
         self.text_speed.setFixedWidth(84)
-        self.text_speed.setValue(self.app.profile.text_speed_ms)
+        self.text_speed.setValue(text_speed_shown(self.app.profile.text_speed_ms))
         self.text_speed.setToolTip(
             "Pause between characters when the pad replays typed text.\n"
-            "Raise it if the receiving window misses the start."
+            "5 ms is what the pad does out of the box. Drop it to 1 ms for the\n"
+            "fastest replay, or raise it if the receiving window misses the start."
         )
         self.text_speed.valueChanged.connect(self._text_speed_changed)
+
+        # Destructive, and the only control here that is, so it sits apart from
+        # the knobs and says so with an ellipsis: nothing happens on the click.
+        self.reset_button = QPushButton("Reset\u2026")
+        self.reset_button.setToolTip(
+            "Clears every binding and every recorded macro -- on this computer\n"
+            "and on the keypad -- and puts the hyper + 1..8 defaults back."
+        )
+        self.reset_button.clicked.connect(self._reset_everything)
 
         version = QLabel(f"v{__version__}")
         version.setStyleSheet("color: palette(mid);")
@@ -221,14 +238,17 @@ class MainWindow(QMainWindow):
         row.addWidget(QLabel("Typing"))
         row.addWidget(self.text_speed)
         row.addSpacing(12)
+        row.addWidget(self.reset_button)
+        row.addSpacing(12)
         row.addWidget(version)
         return bar
 
     def _text_speed_changed(self, value: int) -> None:
-        if value == self.app.profile.text_speed_ms:
+        stored = text_speed_stored(value)
+        if stored == self.app.profile.text_speed_ms:
             return
-        self.app.profile.text_speed_ms = value
-        self._apply("Typing speed " + ("default" if value == 0 else f"{value} ms per character"))
+        self.app.profile.text_speed_ms = stored
+        self._apply(f"Typing speed {value} ms per character")
 
     def _build_capture(self) -> QWidget:
         """Recording settings and the capture log.
@@ -404,12 +424,34 @@ class MainWindow(QMainWindow):
     # --------------------------------------------------------------- actions --
 
     def _refresh_all(self) -> None:
+        self._refresh_toolbar()
         self._refresh_swatch()
         self._refresh_storage()
         for (key, gesture), button in self.buttons.items():
             action = self.app.profile.action(key, gesture)
             button.setText(describe_binding(self.app.profile, action))
             button.setStyleSheet("text-align: left; padding: 4px 8px;")
+
+    def _refresh_toolbar(self) -> None:
+        """Puts the profile's own values back on the toolbar widgets.
+
+        They are seeded once when the toolbar is built, so anything that
+        replaces the profile wholesale -- adopting the pad's on Pull -- left
+        brightness and typing speed showing the values of a profile that is no
+        longer loaded. A fresh install is where it bites: the defaults are on
+        screen, the pad's are in the profile, and the two never agree again.
+
+        Signals are blocked because these setters would otherwise be read as
+        edits and written straight back to the pad.
+        """
+        for widget, value in (
+            (self.brightness, self.app.profile.brightness),
+            (self.text_speed, text_speed_shown(self.app.profile.text_speed_ms)),
+        ):
+            was_blocked = widget.blockSignals(True)
+            widget.setValue(value)
+            widget.blockSignals(was_blocked)
+        self.brightness_value.setNum(self.app.profile.brightness)
 
     def _refresh_storage(self) -> None:
         used, capacity, used_pct, free_pct = macro_storage_usage(
@@ -433,6 +475,63 @@ class MainWindow(QMainWindow):
             self.app.profile.set_action(key, gesture, dialog.result_action)
             self._refresh_all()
             self._apply(f"Key {key + 1} {gesture}")
+
+    def _reset_everything(self) -> None:
+        """Factory-resets both sides: every binding and recorded macro is gone.
+
+        The pad is cleared with its own RESET rather than by pushing the host
+        defaults. ``Profile::writeDefaults`` is the definition the two sides are
+        built to agree on -- going through it means they match by construction,
+        and it zeroes the macro region outright instead of leaving records that
+        nothing points at.
+
+        The pad goes first. If it refuses, the host profile is left alone: two
+        sides that still agree beats a cleared computer and a pad that kept
+        eight bindings nothing on screen admits to.
+        """
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Warning)
+        box.setWindowTitle("Reset everything?")
+        box.setText(
+            "Every key binding and every recorded macro is cleared -- on this "
+            "computer and on the keypad -- and the hyper + 1..8 defaults go "
+            "back.\n\nThis cannot be undone."
+        )
+        reset = box.addButton("Reset", QMessageBox.DestructiveRole)
+        cancel = box.addButton("Cancel", QMessageBox.RejectRole)
+        box.setDefaultButton(cancel)
+        box.exec()
+        if box.clickedButton() is not reset:
+            self.statusBar().showMessage("Reset cancelled")
+            return
+
+        if self.app.device.connected:
+            try:
+                self.app.device.reset_defaults()
+            except (DeviceError, OSError) as exc:
+                QMessageBox.critical(
+                    self, "Reset failed", f"The keypad kept its profile: {exc}"
+                )
+                return
+
+        self.app.profile = default_profile()
+        self._refresh_all()
+        try:
+            self.app.save()
+        except OSError as exc:
+            self.statusMessage.emit(f"The keypad was cleared, but could not save: {exc}")
+            return
+
+        if self.app.device.connected:
+            self.app.confirm_on_device()
+            self.statusBar().showMessage(
+                "Reset. The keypad and this computer are back to defaults."
+            )
+        else:
+            self.statusBar().showMessage(
+                "Reset this computer. The keypad still holds its own bindings "
+                "until you connect and push."
+            )
 
     def _apply(self, what: str) -> None:
         """Persists an edit and gets it onto the device.

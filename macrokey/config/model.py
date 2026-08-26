@@ -55,8 +55,32 @@ SCHEMA_VERSION = 2
 #: fixed rate. That is too fast for anything that has to catch up: a terminal
 #: still starting, a field that validates as you type.
 DEFAULT_TEXT_SPEED_MS = 0
+#: What a stored 0 actually does, and what the editor shows in its place.
+#: Must match MK_MACRO_TEXT_DELAY_MS in firmware/src/Config.h.
+FIRMWARE_TEXT_SPEED_MS = 5
+#: The editor offers no 0. It used to, spelled "default", and stepping up from
+#: it gave 1 ms -- five times *faster* than the default it had just left, with a
+#: tooltip saying the opposite. So the knob now starts at 1 ms and the pad's own
+#: rate is shown as the number it is.
+MIN_TEXT_SPEED_MS = 1
 #: The pad stores this in one byte.
 MAX_TEXT_SPEED_MS = 255
+
+
+def text_speed_shown(stored: int) -> int:
+    """The stored value as the editor spells it: 0 is the firmware's 5 ms."""
+    return stored or FIRMWARE_TEXT_SPEED_MS
+
+
+def text_speed_stored(shown: int) -> int:
+    """The editor's number as the pad stores it.
+
+    5 ms goes back as 0, not as 5. A freshly flashed pad has 0 in that byte
+    (``Profile::writeDefaults``) and the app compares profiles as raw bytes, so
+    writing 5 for the same behaviour would report a difference that isn't one --
+    a "Profile differs" prompt on the first connect of every new install.
+    """
+    return 0 if shown == FIRMWARE_TEXT_SPEED_MS else shown
 
 #: What the pixel rests at, as RRGGBB. Must match the firmware's writeDefaults.
 #: A dim blue-grey rather than off, because off reads as unplugged.
