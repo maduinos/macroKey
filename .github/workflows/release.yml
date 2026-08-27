@@ -46,6 +46,8 @@ jobs:
         env:
           QT_QPA_PLATFORM: offscreen
         run: python -m pytest -q
+      - name: ruff
+        run: python -m ruff check .
 
   build:
     needs: test

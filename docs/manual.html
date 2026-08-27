@@ -85,7 +85,7 @@ a { color:var(--accent); }
 <header>
   <h1>macroKey 사용 설명서</h1>
   <p class="lede">
-    버튼 8 × 바인딩 가능한 제스처 2 = 16 슬롯. 펌웨어 0.5.0 · 설정 앱 0.5.2.
+    버튼 8 × 바인딩 가능한 제스처 2 = 16 슬롯. 펌웨어 0.6.0 · 설정 앱 0.6.0.
     배선은 <a href="wiring.html">wiring.html</a>을 보세요.
   </p>
 </header>
@@ -117,7 +117,9 @@ python main.py
 
 <p class="small muted">일반 사용은 <b>PyInstaller GUI</b> 실행 파일만 있으면 됩니다.
 Wayland에서 녹음이 안 되면 첫 실행 안내에 따라 관리자 비밀번호로 <code>input</code>
-권한을 한 번 허용하세요. 포트가 안 보이면
+권한을 한 번 허용하세요. 이 권한은 계정의 프로그램이 비밀번호를 포함한 모든 키보드·마우스
+입력을 읽을 수 있으므로, macroKey는 빨간 녹화 표시가 켜진 동안에만 입력 장치를 엽니다.
+포트가 안 보이면
 <code>sudo usermod -aG dialout $USER</code> 후 재로그인.</p>
 
 <h2><span class="n">02</span>누르는 방식</h2>
@@ -158,7 +160,7 @@ Wayland에서 녹음이 안 되면 첫 실행 안내에 따라 관리자 비밀�
   <thead><tr><th>키 · 제스처</th><th>동작</th></tr></thead>
   <tbody>
     <tr><td class="k">1–8 TAP</td><td>ctrl+alt+shift+1 … 8</td></tr>
-    <tr><td class="k">1–8 DOUBLE</td><td>비어 있음 — 탭 후 3초 홀드로 녹음해 채웁니다</td></tr>
+    <tr><td class="k">1–8 DOUBLE</td><td>비어 있음 — 탭 후 250 ms 안에 다시 눌러 3초 홀드</td></tr>
   </tbody>
 </table>
 </div>
@@ -174,12 +176,14 @@ Wayland에서 녹음이 안 되면 첫 실행 안내에 따라 관리자 비밀�
 
 <p><code>python main.py</code> 또는 배포 바이너리로 편집기를 엽니다.
 <b>키 8행 × 제스처 2열</b> 격자로 16슬롯이 화면에 있습니다. 칸을 클릭 → 단축키를 누르거나
-녹음. 연결 시 장치 프로필과 다르면 Pull / Push / Cancel을 묻습니다.</p>
+녹음. 연결 시 장치 프로필과 다르면 Pull / Push / Cancel을 묻습니다. Cancel 뒤에는
+<b>Sync needed</b>가 계속 보이고, 어느 쪽이 이길지 정할 때까지 로컬 편집이 패드를 덮어쓰지
+않습니다.</p>
 
 <div class="note">
   <p><b>Save·Write 버튼은 없습니다.</b> 편집이나 녹음이 끝나면 그 자리에서 저장되고
-  키패드에 기록됩니다. 개발용으로만 <code>python -m macrokey push</code> /
-  <code>pull</code>이 있습니다.</p>
+  키패드에 기록됩니다. 단, 프로필 충돌을 Cancel한 동안은 로컬에만 저장합니다.
+  <b>Profile</b> 메뉴에서 가져오기·내보내기·직전 버전 복구를 할 수 있습니다.</p>
 </div>
 
 <div class="scroll">
@@ -189,6 +193,7 @@ Wayland에서 녹음이 안 되면 첫 실행 안내에 따라 관리자 비밀�
     <tr><td class="k">key</td><td>단축키 문자열</td><td>장치</td><td><code>ctrl+shift+p</code></td></tr>
     <tr><td class="k">consumer</td><td>미디어 키 이름</td><td>장치</td><td><code>volume_up</code></td></tr>
     <tr><td class="k">mouse_button</td><td>left · right · middle</td><td>장치</td><td><code>middle</code></td></tr>
+    <tr><td class="k">mouse_wheel</td><td>up · down</td><td>장치</td><td>현재 포인터에서 스크롤</td></tr>
     <tr><td class="k">sequence</td><td>매크로 슬롯</td><td>장치</td><td class="muted">녹음이 만듦</td></tr>
     <tr><td class="k">none</td><td>—</td><td>—</td><td class="muted">비우기</td></tr>
   </tbody>
@@ -216,7 +221,7 @@ next_track prev_track brightness_up brightness_down</code></p>
   <thead><tr><th>동작</th><th>들어가는 슬롯</th><th>픽셀</th></tr></thead>
   <tbody>
     <tr><td class="k">홀드 3초</td><td>TAP</td><td>빨강 맥동</td></tr>
-    <tr><td class="k">탭 → 홀드 3초</td><td>DOUBLE</td><td>분홍 맥동</td></tr>
+    <tr><td class="k">탭 → 250 ms 안에 다시 눌러 홀드 3초</td><td>DOUBLE</td><td>분홍 맥동</td></tr>
     <tr><td class="k">저장 성공</td><td>—</td><td>초록 플래시</td></tr>
     <tr><td class="k">저장 실패·빈 캡처</td><td>—</td><td>빨강 플래시</td></tr>
   </tbody>
@@ -233,8 +238,12 @@ next_track prev_track brightness_up brightness_down</code></p>
   그 속도로 재생합니다.</p>
 </div>
 
-<p><b>마우스가 든 녹음은 커서를 좌상단으로 보내고 시작합니다.</b> (패드 USB 마우스가 이동 —
-Wayland에서도 동작.) 장치가 재생할 수 없는 녹음은 거절되며, 기존 바인딩은 지우지 않습니다.</p>
+<p><b>마우스는 기본적으로 현재 포인터 기준으로 재생합니다.</b> 단순 클릭·휠은 현재 위치에서,
+이동·드래그는 현재 위치로부터 상대적으로 실행됩니다. 화면의 같은 좌표가 필요할 때만
+실험 기능인 <code>Fixed screen</code>을 켜세요. 이 모드는 녹음과 재생 전에 패드 USB
+마우스로 좌상단에 홈하지만, 모니터 배치·해상도·배율·포인터 속도/가속·창 위치가 같아야
+합니다. 긴 이동은 짧은 시간 조각으로 저장해 가속 오차를 줄이지만 절대 좌표 HID는 아닙니다.
+위험한 버튼을 누르는 고정 위치 매크로는 안전한 대상에서 먼저 시험하세요.</p>
 
 <h2><span class="n">05</span>설정 후 앱 종료</h2>
 
@@ -291,8 +300,9 @@ Wayland에서도 동작.) 장치가 재생할 수 없는 녹음은 거절되며,
 </div>
 
 <p class="small"><code>profile.json</code>(키맵 · 장치 매크로 · LED 색)과
-<code>settings.json</code>. 백업은 <code>profile.json</code>이면 되고,
-키맵은 장치 EEPROM에도 있어 <code>python -m macrokey pull --save</code>로 되찾을 수 있습니다.</p>
+<code>settings.json</code>. 저장할 때마다 직전 프로필을 권한 0600의
+<code>profile.json.bak</code>로 남깁니다. 편집기의 Profile → Restore previous version으로
+복구하거나, 장치 EEPROM에서 <code>python -m macrokey pull --save</code>로 되찾을 수 있습니다.</p>
 
 <h2><span class="n">09</span>지금은 안 되는 것</h2>
 
@@ -302,15 +312,15 @@ Wayland에서도 동작.) 장치가 재생할 수 없는 녹음은 거절되며,
   <tbody>
     <tr><td>호스트 액션 · 셸 · 클립보드 이미지</td><td>제거됨. 장치 HID만</td></tr>
     <tr><td>미디어 키 (consumer)</td><td><code>MK_USE_HID_PROJECT=1</code>로 다시 빌드해야 동작</td></tr>
-    <tr><td>마우스 이동 · 휠 · 드래그</td><td>녹음으로만. 편집기에서 직접 고를 수 없음</td></tr>
-    <tr><td>절대 좌표 마우스</td><td>상대 마우스만. 재생 전 좌상단 홈</td></tr>
+    <tr><td>마우스 이동 · 드래그</td><td>녹음으로만. 클릭·휠은 편집기에서 직접 지정 가능</td></tr>
+    <tr><td>절대 좌표 마우스</td><td>상대 마우스만. 선택형 좌상단 홈은 실험 기능</td></tr>
     <tr><td>PC 단축키로 매크로 실행</td><td>트리거는 패드뿐</td></tr>
   </tbody>
 </table>
 </div>
 
 <footer>
-  macroKey · 사용 설명서 · 펌웨어 0.5.0 · 설정 앱 0.5.2 — 배선은 <a href="wiring.html">wiring.html</a>,
+  macroKey · 사용 설명서 · 펌웨어 0.6.0 · 설정 앱 0.6.0 — 배선은 <a href="wiring.html">wiring.html</a>,
   설계 배경은 <code>ARCHITECTURE.md</code>, 프로토콜은 <code>PROTOCOL.md</code>.
 </footer>
 

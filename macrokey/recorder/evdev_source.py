@@ -84,15 +84,22 @@ _SHIFTED = {
 
 _BUTTONS = {"BTN_LEFT": "left", "BTN_RIGHT": "right", "BTN_MIDDLE": "middle"}
 
-#: USB vendors whose input nodes are the keypad itself, never a source to
-#: record from. Shared with port discovery so there is one list to keep true.
-KEYPAD_VENDORS = frozenset(discovery.KNOWN_VENDORS)
+#: USB identities whose input nodes are the keypad itself, never a source to
+#: record from. Product IDs are vendor-scoped: skipping every Arduino-vendor
+#: device would also hide a separate Arduino keyboard the user meant to record.
+KEYPAD_USB_IDS = frozenset(discovery.KNOWN_USB_IDS)
 
 #: Motion this still or stiller is a hand resting on the mouse, not a gesture.
 MOTION_DEAD_ZONE = 6
 #: A pointer that has not moved for this long has finished its gesture. Also
 #: the select timeout, so a resting pointer is flushed without a second timer.
 MOTION_REST_SECONDS = 0.12
+# Do not collapse a whole gesture into one instantaneous USB report. Desktop
+# pointer acceleration depends on velocity; replaying two seconds of physical
+# movement as a handful of maximum-size reports makes the cursor travel a very
+# different distance. Periodic slices preserve enough timing for the normalizer
+# to insert pauses, without storing hundreds of reports per second.
+MOTION_SLICE_SECONDS = 0.05
 
 _MODIFIER_TOKENS = {"shift", "rshift"}
 
@@ -153,12 +160,12 @@ class EvdevRecorder:
         self._shift_held = False
         # Pointer motion arrives as a stream of one-pixel deltas -- a mouse
         # reports hundreds of times a second, so a two-second drag is a few
-        # thousand events. They are summed here and flushed as one move when
-        # something else happens or the pointer comes to rest, which is what
-        # turns "the mouse was moved over there" into a single step.
+        # thousand events. They are summed into short timed slices: this keeps
+        # the profile compact while retaining the speed information desktop
+        # pointer acceleration needs for repeatable playback.
         self._pending_dx = 0
         self._pending_dy = 0
-        self._motion_started_at = 0.0
+        self._motion_started_at: float | None = None
         self._motion_last_at = 0.0
 
     def start(self) -> None:
@@ -177,7 +184,7 @@ class EvdevRecorder:
             # for that was to drop *every* event for 150 ms after any pad press,
             # which threw away whatever was really being typed at the time.
             # Skipping the node is the honest version and costs nothing.
-            if device.info.vendor in KEYPAD_VENDORS:
+            if (device.info.vendor, device.info.product) in KEYPAD_USB_IDS:
                 device.close()
                 continue
 
@@ -242,7 +249,12 @@ class EvdevRecorder:
         now = time.monotonic()
 
         if event.type == ecodes.EV_REL and event.code in (ecodes.REL_X, ecodes.REL_Y):
-            if not self._pending_dx and not self._pending_dy:
+            if (
+                self._motion_started_at is not None
+                and now - self._motion_started_at >= MOTION_SLICE_SECONDS
+            ):
+                self._flush_motion(filter_noise=False)
+            if self._motion_started_at is None:
                 self._motion_started_at = now
             if event.code == ecodes.REL_X:
                 self._pending_dx += int(event.value)
@@ -292,7 +304,7 @@ class EvdevRecorder:
         if event.type == ecodes.EV_REL and event.code == ecodes.REL_WHEEL and event.value:
             self._emit(RawEvent(kind=SCROLL, token="scroll", at=now, data=(0, int(event.value))))
 
-    def _flush_motion(self) -> None:
+    def _flush_motion(self, *, filter_noise: bool = True) -> None:
         """Emits the accumulated pointer movement as one event, if any.
 
         Dated at the moment motion *started*, not at the flush: the delay before
@@ -300,15 +312,19 @@ class EvdevRecorder:
         stamping it at the end would fold the whole gesture into that pause.
         """
         dx, dy = self._pending_dx, self._pending_dy
-        if not dx and not dy:
+        started_at = self._motion_started_at
+        if started_at is None:
             return
         self._pending_dx = self._pending_dy = 0
-        if abs(dx) < MOTION_DEAD_ZONE and abs(dy) < MOTION_DEAD_ZONE:
+        self._motion_started_at = None
+        if not dx and not dy:
+            return
+        if filter_noise and abs(dx) < MOTION_DEAD_ZONE and abs(dy) < MOTION_DEAD_ZONE:
             # A hand resting on the mouse. Replaying it does nothing useful and
             # it would sit between two keystrokes as a step that reads as noise.
             return
         self._emit(
-            RawEvent(kind=MOUSE_MOVE, token="move", at=self._motion_started_at, data=(dx, dy))
+            RawEvent(kind=MOUSE_MOVE, token="move", at=started_at, data=(dx, dy))
         )
 
     def _char(self, token: str) -> str:

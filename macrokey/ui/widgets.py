@@ -131,7 +131,9 @@ class ShortcutEdit(QLineEdit):
 
 def heading(text: str) -> QLabel:
     label = QLabel(text)
-    label.setStyleSheet("font-weight: 600; color: palette(mid);")
+    # `palette(mid)` is a bevel/shadow colour, not secondary text. On several
+    # light themes it is almost the same as the window background.
+    label.setStyleSheet("font-weight: 600; color: palette(window-text);")
     return label
 
 
@@ -154,5 +156,4 @@ class RescanningComboBox(QComboBox):
     def showPopup(self) -> None:  # noqa: N802 - Qt naming
         self._rescan()
         super().showPopup()
-
 

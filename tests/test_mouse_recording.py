@@ -71,8 +71,35 @@ def test_a_mouse_recording_still_fits_on_the_keypad() -> None:
     macro = reduce_to_device_macro(normalize([click("left", 1.0), scroll(-2, 1.5)]))
     assert macro is not None
     assert [action.kind for action in macro] == [
-        "mouse_home", "mouse_button", "delay", "mouse_wheel",
+        "mouse_button", "delay", "mouse_wheel",
     ]
+
+
+def test_a_plain_click_uses_the_current_pointer_instead_of_the_corner() -> None:
+    """The old compiler inserted mouse_home for every click, despite the UI and
+    normalizer describing a current-pointer click. A click-only macro therefore
+    jumped to the top-left and clicked the wrong thing."""
+    macro = reduce_to_device_macro(normalize([click("left", 1.0)]))
+    assert macro is not None
+    assert [action.kind for action in macro] == ["mouse_button"]
+
+
+def test_fixed_position_playback_is_explicitly_anchored() -> None:
+    macro = reduce_to_device_macro(
+        [{"type": "mouse_move", "params": {"dx": 200, "dy": 80}}],
+        anchor_pointer=True,
+    )
+    assert macro is not None
+    assert macro[0].kind == "mouse_home"
+
+
+def test_fixed_position_wheel_targets_the_anchored_pointer() -> None:
+    macro = reduce_to_device_macro(
+        [{"type": "mouse_wheel", "params": {"delta": -1}}],
+        anchor_pointer=True,
+    )
+    assert macro is not None
+    assert [action.kind for action in macro] == ["mouse_home", "mouse_wheel"]
 
 
 def test_a_keyboard_only_recording_does_not_move_the_pointer() -> None:
@@ -100,9 +127,8 @@ def test_short_typed_text_mixed_with_mouse_fits_on_the_device() -> None:
     assert any(step["type"] == "text" for step in recording)
     macro = reduce_to_device_macro(recording)
     assert macro is not None
-    # `mouse_home` leads: the click has to land where it landed when recorded.
     assert [action.kind for action in macro] == [
-        "mouse_home", "text", "delay", "mouse_button",
+        "text", "delay", "mouse_button",
     ]
 
 
@@ -259,6 +285,17 @@ def test_a_stop_key_still_works_when_one_is_asked_for() -> None:
     assert device._events == []
 
 
+def test_the_evdev_backend_honours_the_cli_stop_key_without_self_joining() -> None:
+    device = Recorder(stop_key="esc")
+    device.backend = "evdev"
+    device.recording = True
+
+    device._record(RawEvent(kind=KEY_DOWN, token="esc", at=time.monotonic()))
+
+    assert device.recording is False
+    assert device._events == []
+
+
 # ------------------------------------------------------------ pointer motion --
 
 
@@ -318,3 +355,9 @@ def test_the_recorder_leaves_the_mouse_out_by_default() -> None:
     from macrokey.config.store import Settings
 
     assert Settings().recorder_capture_mouse is False
+
+
+def test_fixed_screen_mouse_playback_is_opt_in() -> None:
+    from macrokey.config.store import Settings
+
+    assert Settings().recorder_anchor_mouse is False

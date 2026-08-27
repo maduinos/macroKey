@@ -9,7 +9,7 @@ from collections.abc import Callable
 from typing import Any
 
 from . import evdev_source
-from .evdev_source import MOTION_DEAD_ZONE
+from .evdev_source import MOTION_DEAD_ZONE, MOTION_SLICE_SECONDS
 from .events import KEY_DOWN, KEY_UP, MOUSE_CLICK, MOUSE_MOVE, MOUSE_RELEASE, SCROLL, RawEvent
 from .normalize import (
     DEFAULT_MIN_GAP_MS,
@@ -76,11 +76,13 @@ class Recorder:
         self,
         on_event: Callable[[RawEvent], None] | None = None,
         capture_mouse: bool = False,
+        anchor_mouse: bool = False,
         min_gap_ms: int = DEFAULT_MIN_GAP_MS,
         stop_key: str | None = None,
     ) -> None:
         self._on_event = on_event
         self.capture_mouse = capture_mouse
+        self.anchor_mouse = anchor_mouse
         self._min_gap_ms = min_gap_ms
         self.stop_key = stop_key
         #: Screen rectangle whose clicks belong to operating the recorder
@@ -96,12 +98,13 @@ class Recorder:
         self.backend = ""
         self._last_device_key_at = 0.0
         self.recording = False
+        self._stop_requested = False
         # pynput reports absolute cursor position; deltas are derived here so
         # the rest of the pipeline stays relative, matching evdev.
         self._pynput_last_pos: tuple[int, int] | None = None
         self._pynput_pending_dx = 0
         self._pynput_pending_dy = 0
-        self._pynput_motion_started_at = 0.0
+        self._pynput_motion_started_at: float | None = None
 
     @staticmethod
     def available() -> tuple[bool, str]:
@@ -128,6 +131,7 @@ class Recorder:
     def start(self) -> None:
         if self.recording:
             return
+        self._stop_requested = False
         with self._lock:
             self._events.clear()
 
@@ -143,8 +147,13 @@ class Recorder:
             # whether the self-echo blanket applies. Set afterwards, the first
             # events of every recording were judged by the wrong rule.
             self.backend = "evdev"
-            self._evdev.start()
             self.recording = True
+            try:
+                self._evdev.start()
+            except Exception:
+                self.recording = False
+                self._evdev = None
+                raise
             return
 
         usable, reason = self.available()
@@ -152,19 +161,30 @@ class Recorder:
             raise RecorderError(reason)
         self.backend = "pynput"
         self._pynput_last_pos = None
-        self._pynput_pending_dx = self._pynput_pending_dy = 0
-        self._keyboard_listener = pynput_keyboard.Listener(
-            on_press=self._on_press, on_release=self._on_release
-        )
-        self._keyboard_listener.start()
         if self.capture_mouse and pynput_mouse is not None:
-            self._mouse_listener = pynput_mouse.Listener(
-                on_click=self._on_click,
-                on_scroll=self._on_scroll,
-                on_move=self._on_move,
-            )
-            self._mouse_listener.start()
+            try:
+                position = pynput_mouse.Controller().position
+                self._pynput_last_pos = (int(position[0]), int(position[1]))
+            except Exception:  # noqa: BLE001 - capture still works after first move
+                pass
+        self._pynput_pending_dx = self._pynput_pending_dy = 0
+        self._pynput_motion_started_at = None
         self.recording = True
+        try:
+            self._keyboard_listener = pynput_keyboard.Listener(
+                on_press=self._on_press, on_release=self._on_release
+            )
+            self._keyboard_listener.start()
+            if self.capture_mouse and pynput_mouse is not None:
+                self._mouse_listener = pynput_mouse.Listener(
+                    on_click=self._on_click,
+                    on_scroll=self._on_scroll,
+                    on_move=self._on_move,
+                )
+                self._mouse_listener.start()
+        except Exception:
+            self.stop()
+            raise
 
     def stop(self) -> list[RawEvent]:
         self.recording = False
@@ -201,13 +221,25 @@ class Recorder:
         return reduce_to_device_action(steps)
 
     @staticmethod
-    def device_macro(steps: list[dict[str, Any]]):
+    def device_macro(
+        steps: list[dict[str, Any]], *, anchor_pointer: bool = False
+    ):
         """The whole recording as firmware sequence steps, or None."""
-        return reduce_to_device_macro(steps)
+        return reduce_to_device_macro(steps, anchor_pointer=anchor_pointer)
 
     # -------------------------------------------------------------- listeners --
 
     def _record(self, event: RawEvent) -> None:
+        if self._stop_requested:
+            return
+        if self.stop_key is not None and event.token == self.stop_key:
+            # evdev callbacks run on their reader thread, so calling stop()
+            # here would try to join that same thread. Mark it stopped; the
+            # CLI/main thread notices and performs the actual cleanup.
+            if event.kind == KEY_DOWN:
+                self.recording = False
+                self._stop_requested = True
+            return
         # Only pynput needs this. It reports keystrokes with no idea which
         # device produced them, so the keypad's own HID output comes back as
         # input and the recorder eats its own tail; blanking a window after a
@@ -229,8 +261,7 @@ class Recorder:
         if token is None:
             return
         if self.stop_key is not None and token == self.stop_key:
-            self.stop()
-            return
+            self._flush_pynput_motion()
         self._record(RawEvent(kind=KEY_DOWN, token=token, char=char, at=time.monotonic()))
 
     def _on_release(self, key) -> None:
@@ -289,23 +320,33 @@ class Recorder:
         self._pynput_last_pos = pos
         if not dx and not dy:
             return
-        if not self._pynput_pending_dx and not self._pynput_pending_dy:
-            self._pynput_motion_started_at = time.monotonic()
+        now = time.monotonic()
+        if (
+            self._pynput_motion_started_at is not None
+            and now - self._pynput_motion_started_at >= MOTION_SLICE_SECONDS
+        ):
+            self._flush_pynput_motion(filter_noise=False)
+        if self._pynput_motion_started_at is None:
+            self._pynput_motion_started_at = now
         self._pynput_pending_dx += dx
         self._pynput_pending_dy += dy
 
-    def _flush_pynput_motion(self) -> None:
+    def _flush_pynput_motion(self, *, filter_noise: bool = True) -> None:
         dx, dy = self._pynput_pending_dx, self._pynput_pending_dy
+        started_at = self._pynput_motion_started_at
+        if started_at is None:
+            return
         self._pynput_pending_dx = self._pynput_pending_dy = 0
+        self._pynput_motion_started_at = None
         if not dx and not dy:
             return
-        if abs(dx) < MOTION_DEAD_ZONE and abs(dy) < MOTION_DEAD_ZONE:
+        if filter_noise and abs(dx) < MOTION_DEAD_ZONE and abs(dy) < MOTION_DEAD_ZONE:
             return
         self._record(
             RawEvent(
                 kind=MOUSE_MOVE,
                 token="move",
-                at=self._pynput_motion_started_at,
+                at=started_at,
                 data=(dx, dy),
             )
         )

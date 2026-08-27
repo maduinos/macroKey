@@ -54,6 +54,9 @@ def window(monkeypatch):
     win._connection_timer.stop()
     win.app.save = lambda: None
     win.app.confirm_on_device = lambda *a, **k: None
+    # The production path is asynchronous so an EEPROM reset cannot freeze Qt;
+    # these state assertions run the already-separated worker inline.
+    win._in_background = lambda work: work()
     return win
 
 

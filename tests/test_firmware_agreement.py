@@ -131,11 +131,14 @@ def sample_profile() -> model.Profile:
             {"type": "delay", "params": {"ms": 300}},
             {"type": "hotkey", "params": {"hotkey": "enter"}},
         ]),
-        reduce_to_device_macro([
-            {"type": "mouse_button", "params": {"button": "left", "mode": "press"}},
-            {"type": "mouse_move", "params": {"dx": 300, "dy": -200}},
-            {"type": "mouse_button", "params": {"button": "left", "mode": "release"}},
-        ]),
+        reduce_to_device_macro(
+            [
+                {"type": "mouse_button", "params": {"button": "left", "mode": "press"}},
+                {"type": "mouse_move", "params": {"dx": 300, "dy": -200}},
+                {"type": "mouse_button", "params": {"button": "left", "mode": "release"}},
+            ],
+            anchor_pointer=True,
+        ),
     ]
     profile.set_action(0, "tap", model.Action(kind="sequence", slot=0))
     profile.set_action(1, "double", model.Action(kind="sequence", slot=1))

@@ -5,7 +5,9 @@ from __future__ import annotations
 import json
 import logging
 import os
+import shutil
 import sys
+import threading
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
@@ -16,6 +18,16 @@ from .model import SCHEMA_VERSION, Profile, default_profile
 log = logging.getLogger(__name__)
 
 APP_NAME = "MaduinosMacroKey"
+
+# Profile saves can come from the recording worker while settings/profile edits
+# are queued by the UI worker. Serialize write-then-rename inside one process;
+# the temporary name also carries the PID so two app processes do not collide.
+_WRITE_LOCK = threading.RLock()
+
+
+def _temporary_path(path: Path) -> Path:
+    """Same directory for atomic replace, unique across running app processes."""
+    return path.with_name(f".{path.name}.{os.getpid()}.tmp")
 
 
 def config_dir() -> Path:
@@ -33,6 +45,10 @@ def config_dir() -> Path:
 
 def profile_path() -> Path:
     return config_dir() / "profile.json"
+
+
+def profile_backup_path() -> Path:
+    return config_dir() / "profile.json.bak"
 
 
 def settings_path() -> Path:
@@ -57,6 +73,10 @@ class Settings:
     #: twitch spent its slot on desk noise. The editor checkbox turns it on for
     #: the recordings that do want it.
     recorder_capture_mouse: bool = False
+    #: Fixed-position mouse playback is inherently display-dependent: it homes
+    #: the pointer before recording and replay. Relative/current-pointer replay
+    #: is the safe default; this opt-in exists for unchanged single-screen rigs.
+    recorder_anchor_mouse: bool = False
     theme: str = "system"
     #: When True, the editor will not offer the one-click capture fix again.
     #: Cleared automatically is not done: the person said "not now".
@@ -71,15 +91,44 @@ class Settings:
             data = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             return cls()
-        # Drop retired keys (agentpet_*, led_enabled) quietly.
-        known = {k: v for k, v in data.items() if k in cls.__dataclass_fields__}
-        return cls(**known)
+        if not isinstance(data, dict):
+            return cls()
+
+        # Drop retired keys (agentpet_*, led_enabled) and malformed values
+        # quietly. JSON itself being valid does not make `port: []` or
+        # `capture_mouse: "yes"` safe to feed into startup code.
+        loaded = cls()
+        if isinstance(data.get("port"), str):
+            loaded.port = data["port"]
+        if isinstance(data.get("recorder_min_gap_ms"), int) and not isinstance(
+            data["recorder_min_gap_ms"], bool
+        ):
+            gap = data["recorder_min_gap_ms"]
+            if 0 <= gap <= 10_000:
+                loaded.recorder_min_gap_ms = gap
+        if isinstance(data.get("theme"), str):
+            loaded.theme = data["theme"]
+        for field in (
+            "auto_connect",
+            "recorder_capture_mouse",
+            "recorder_anchor_mouse",
+            "capture_setup_declined",
+        ):
+            value = data.get(field)
+            if isinstance(value, bool):
+                setattr(loaded, field, value)
+        return loaded
 
     def save(self) -> None:
         path = settings_path()
-        path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-        path.write_text(json.dumps(asdict(self), indent=2), encoding="utf-8")
-        _restrict(path)
+        with _WRITE_LOCK:
+            path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+            temporary = _temporary_path(path)
+            temporary.write_text(json.dumps(asdict(self), indent=2), encoding="utf-8")
+            _restrict(temporary)
+            temporary.replace(path)
+            _restrict(path)
+            _restrict(path.parent, directory=True)
 
 
 def _quarantine(path: Path, exc: Exception) -> Profile:
@@ -128,20 +177,53 @@ def load_profile() -> Profile:
 
 
 def save_profile(profile: Profile) -> None:
-    path = profile_path()
-    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    payload = profile.to_dict()
-    payload["schema_version"] = SCHEMA_VERSION
-    # Write-then-rename: a crash mid-save leaves the previous profile intact.
-    temporary = path.with_suffix(".json.tmp")
-    temporary.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
-    # A recording holds whatever was typed while it ran, verbatim, and it only
-    # takes one macro started a moment too early to put a password in here. The
-    # default 0644 made that readable by every account on the machine.
-    _restrict(temporary)
-    temporary.replace(path)
-    _restrict(path)
-    _restrict(path.parent, directory=True)
+    _write_profile(profile_path(), profile, keep_backup=True)
+
+
+def export_profile(profile: Profile, path: str | Path) -> None:
+    """Writes a portable profile copy without changing the app's stored one."""
+    _write_profile(Path(path), profile, keep_backup=False)
+
+
+def load_profile_file(path: str | Path) -> Profile:
+    """Loads and validates an explicitly selected profile file."""
+    source = Path(path)
+    data = json.loads(source.read_text(encoding="utf-8"))
+    profile = Profile.from_dict(migrate(data))
+    profile.reclaim_storage()
+    return profile
+
+
+def _write_profile(path: Path, profile: Profile, *, keep_backup: bool) -> None:
+    with _WRITE_LOCK:
+        path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        payload = profile.to_dict()
+        payload["schema_version"] = SCHEMA_VERSION
+        # Write-then-rename: a crash mid-save leaves the previous profile intact.
+        temporary = _temporary_path(path)
+        temporary.write_text(
+            json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8"
+        )
+        # A recording holds whatever was typed while it ran, verbatim, and it only
+        # takes one macro started a moment too early to put a password in here. The
+        # default 0644 made that readable by every account on the machine.
+        _restrict(temporary)
+        if keep_backup and path.exists():
+            backup = profile_backup_path()
+            backup_temporary = _temporary_path(backup)
+            try:
+                shutil.copy2(path, backup_temporary)
+                _restrict(backup_temporary)
+                backup_temporary.replace(backup)
+                _restrict(backup)
+            except OSError:
+                # The atomic primary save is still more important than its recovery
+                # copy. Keep going, but leave a useful trace in the always-on log.
+                log.warning("could not update profile backup %s", backup, exc_info=True)
+        temporary.replace(path)
+        _restrict(path)
+        if keep_backup:
+            _restrict(path.parent, directory=True)
 
 
 def _restrict(path: Path, *, directory: bool = False) -> None:
@@ -158,6 +240,8 @@ def migrate(data: dict[str, Any]) -> dict[str, Any]:
     Each step is a separate ``if`` so upgrades chain: a v1 file passing through
     a future v3 codebase runs 1->2 and then 2->3.
     """
+    if not isinstance(data, dict):
+        raise ValueError("profile must be a JSON object")
     version = int(data.get("schema_version", 0))
     if version > SCHEMA_VERSION:
         raise ValueError(

@@ -63,6 +63,13 @@ def test_the_alias_tuple_is_unwrapped() -> None:
     assert _token_for(ecodes.KEY_A) == "a"
 
 
+def test_keypad_input_filter_uses_the_vendor_product_pair() -> None:
+    from macrokey.recorder.evdev_source import KEYPAD_USB_IDS
+
+    assert (0x1B4F, 0x9206) in KEYPAD_USB_IDS
+    assert (0x1B4F, 0xBEEF) not in KEYPAD_USB_IDS
+
+
 # ------------------------------------------------------------------- keyboard --
 
 
@@ -153,13 +160,16 @@ def _source():
     return EvdevRecorder(got.append, capture_mouse=True), got
 
 
-def test_a_report_stream_accumulates_into_one_move() -> None:
+def test_a_report_stream_accumulates_into_one_move(monkeypatch) -> None:
     """The kernel appends EV_SYN to every mouse report. Treating that as "some
     other event happened" flushed after each one, so a drag came back as
     thousands of one-pixel steps instead of a single move."""
     from evdev import ecodes
 
+    import macrokey.recorder.evdev_source as source_module
+
     source, got = _source()
+    monkeypatch.setattr(source_module.time, "monotonic", lambda: 1.0)
     for _ in range(50):  # 50 reports, as a real mouse sends them
         source._handle(_fake(ecodes.EV_REL, ecodes.REL_X, 2))
         source._handle(_fake(ecodes.EV_REL, ecodes.REL_Y, -1))
@@ -203,3 +213,21 @@ def test_flushing_twice_emits_once() -> None:
     source._flush_motion()
     source._flush_motion()
     assert len(got) == 1
+
+
+def test_a_long_motion_keeps_timing_slices_for_pointer_acceleration(monkeypatch) -> None:
+    """Collapsing a whole gesture into one instant changes the desktop's mouse
+    acceleration and therefore the replay distance. Long motion is compacted,
+    but not past the point where all speed information disappears."""
+    import macrokey.recorder.evdev_source as source_module
+
+    source, got = _source()
+    times = iter((1.00, 1.03, 1.06))
+    monkeypatch.setattr(source_module.time, "monotonic", lambda: next(times))
+    source._handle(_fake(ecodes.EV_REL, ecodes.REL_X, 20))
+    source._handle(_fake(ecodes.EV_REL, ecodes.REL_X, 20))
+    source._handle(_fake(ecodes.EV_REL, ecodes.REL_X, 20))
+    source._flush_motion()
+
+    assert [event.data for event in got] == [(40, 0), (20, 0)]
+    assert got[1].at - got[0].at >= 0.05

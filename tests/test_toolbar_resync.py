@@ -66,6 +66,10 @@ def test_choosing_five_stores_the_zero_a_fresh_pad_holds(window) -> None:
     window._refresh_all()  # the spinbox now reads 40, so 5 is a real change
 
     window.text_speed.setValue(5)
+    # Writes are debounced so stepping through the spinbox does not transfer a
+    # full EEPROM profile for every intermediate number.
+    window._text_speed_timer.stop()
+    window._text_speed_settled()
 
     assert window.app.profile.text_speed_ms == 0
     assert applied == ["Typing speed 5 ms per character"]

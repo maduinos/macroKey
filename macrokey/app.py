@@ -42,10 +42,15 @@ class MacroKeyApp:
         if status is not None:
             self._status_callbacks.append(status)
 
-        self.device = DeviceClient(on_event=self._on_device_event, on_status=self.status)
+        self.device = DeviceClient(
+            on_event=self._on_device_event,
+            on_status=self.status,
+            on_disconnect=self._on_device_disconnect,
+        )
         self.recorder = Recorder(
             min_gap_ms=self.settings.recorder_min_gap_ms,
             capture_mouse=self.settings.recorder_capture_mouse,
+            anchor_mouse=self.settings.recorder_anchor_mouse,
         )
         #: How many steps the last recording lost to the password filter.
         self.last_redacted = 0
@@ -54,8 +59,9 @@ class MacroKeyApp:
 
         # Record requests are handled here, one at a time, and never on the
         # thread that delivered them. See `_record_worker`.
-        self._record_queue: queue.Queue[tuple[int, str]] = queue.Queue()
+        self._record_queue: queue.Queue[tuple[int, str, bool] | None] = queue.Queue()
         self._record_thread: threading.Thread | None = None
+        self._closed = threading.Event()
 
     # ------------------------------------------------------------ observers --
 
@@ -75,7 +81,7 @@ class MacroKeyApp:
 
     # ------------------------------------------------------------- lifecycle --
 
-    def connect(self, port: str = "") -> None:
+    def connect(self, port: str | None = None) -> None:
         """Opens the keypad, falling back to discovery when a named port is gone.
 
         The port number changes whenever the board re-enumerates, which happens
@@ -83,19 +89,52 @@ class MacroKeyApp:
         Failing on that instead of looking again would mean the app cannot find
         a device that is plugged in and working.
         """
-        wanted = port or self.settings.port
-        if wanted and wanted not in {item.device for item in candidates()}:
+        closed = getattr(self, "_closed", None)
+        if closed is not None and closed.is_set():
+            raise DeviceError("application is closed")
+        # `None` means "use the remembered choice"; an explicit empty string
+        # means Auto. Treating both as falsy made selecting Auto silently reopen
+        # the previously pinned port.
+        remembered = port is None
+        wanted = self.settings.port if remembered else port
+        if remembered and wanted and wanted not in {item.device for item in candidates()}:
             self.status(f"{wanted} is gone; looking for the keypad")
             wanted = ""
         self.device.connect(wanted)
+        # Closing and a worker finishing IDENT can cross by a few instructions.
+        # Never let that late success resurrect a serial link after shutdown.
+        if closed is not None and closed.is_set():
+            self.device.disconnect()
+            raise DeviceError("application closed while connecting")
 
     def disconnect(self) -> None:
-        self.device.disconnect()
+        session = self.session
+        try:
+            if session is not None and getattr(session, "recording", False):
+                session.abort("Keypad disconnected, so the recording was dropped")
+        finally:
+            # Releasing a recorder backend can fail independently of the serial
+            # port. A failed cleanup must not leave the keypad attached while
+            # the application reports that it disconnected.
+            self.device.disconnect()
 
     def close(self) -> None:
-        self.disconnect()
-        if self.recorder.recording:
+        if self._closed.is_set():
+            return
+        self._closed.set()
+        session = self.session
+        if session is not None and getattr(session, "recording", False):
+            try:
+                session.abort("Application closed; recording discarded")
+            except Exception:  # noqa: BLE001 - shutdown must continue
+                log.exception("could not abort recording while closing")
+        elif self.recorder.recording:
             self.recorder.stop()
+        self.disconnect()
+        self._record_queue.put(None)
+        thread, self._record_thread = self._record_thread, None
+        if thread is not None and thread is not threading.current_thread():
+            thread.join(timeout=1.0)
 
     # ---------------------------------------------------------------- events --
 
@@ -134,23 +173,39 @@ class MacroKeyApp:
             except Exception:  # noqa: BLE001
                 log.exception("event callback raised")
 
-    def request_record(self, key: int, gesture: str = "tap") -> None:
+    def _on_device_disconnect(self, reason: str) -> None:
+        """Stops global capture immediately when the only stop control vanishes."""
+        session = self.session
+        if session is not None and getattr(session, "recording", False):
+            try:
+                session.abort("Keypad disconnected, so the recording was dropped")
+            except Exception:  # noqa: BLE001 - preserve the original link failure
+                log.exception("could not abort recording after disconnect")
+
+    def request_record(
+        self, key: int, gesture: str = "tap", *, finish_only: bool = False
+    ) -> None:
         """Asks the session to start or finish recording into `key`.
 
         Public because the session's own watchdog needs it: a recording that has
         run too long has to be finished, and that must happen on the worker like
         every other request rather than on whatever thread noticed.
         """
-        self._queue_record_request(key, gesture)
+        self._queue_record_request(key, gesture, finish_only=finish_only)
 
-    def _queue_record_request(self, key: int, gesture: str = "tap") -> None:
+    def _queue_record_request(
+        self, key: int, gesture: str = "tap", *, finish_only: bool = False
+    ) -> None:
         """Hands a record request to the worker, starting it on first use."""
+        closed = getattr(self, "_closed", None)
+        if closed is not None and closed.is_set():
+            return
         if self._record_thread is None or not self._record_thread.is_alive():
             self._record_thread = threading.Thread(
                 target=self._record_worker, name="macrokey-record", daemon=True
             )
             self._record_thread.start()
-        self._record_queue.put((key, gesture))
+        self._record_queue.put((key, gesture, finish_only))
 
     def _record_worker(self) -> None:
         """Runs record requests in order, off the reader thread.
@@ -160,9 +215,23 @@ class MacroKeyApp:
         finish overtake the start it belongs to.
         """
         while True:
-            key, gesture = self._record_queue.get()
+            request = self._record_queue.get()
+            if request is None:
+                return
+            key, gesture, finish_only = request
+            closed = getattr(self, "_closed", None)
+            if closed is not None and closed.is_set():
+                continue
             session = self.session
             if session is None:
+                continue
+            if finish_only and (
+                not getattr(session, "recording", False)
+                or getattr(session, "active_key", None) != key
+            ):
+                # A watchdog timeout queued a finish, but disconnect/cancel won
+                # the race. Treating the stale toggle as a fresh start would
+                # briefly turn global capture back on with no keypad attached.
                 continue
             try:
                 session.handle_request(key, gesture)
@@ -281,7 +350,9 @@ class MacroKeyApp:
         """True when `assign_recording` would succeed without changing the profile."""
         if self.recorder.device_action(steps) is not None:
             return True
-        macro = self.recorder.device_macro(steps)
+        macro = self.recorder.device_macro(
+            steps, anchor_pointer=getattr(self.recorder, "anchor_mouse", False)
+        )
         if macro is None:
             return False
         previous = self.profile.action(key, gesture)
@@ -307,7 +378,9 @@ class MacroKeyApp:
                 log.debug("reclaimed %d macro slot(s)", freed)
             return f"on the keypad: {device_action.describe()}"
 
-        macro = self.recorder.device_macro(steps)
+        macro = self.recorder.device_macro(
+            steps, anchor_pointer=getattr(self.recorder, "anchor_mouse", False)
+        )
         previous = self.profile.action(key, gesture)
         also_free = previous.slot if previous.kind == "sequence" else None
         slot = self._find_macro_slot(macro, also_free=also_free) if macro is not None else None

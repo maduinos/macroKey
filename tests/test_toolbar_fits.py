@@ -1,10 +1,4 @@
-"""The toolbar at UI fonts bigger than the one it was drawn against.
-
-It is a single row that does not wrap, and squeezed it does not drop anything --
-it slides the widgets over each other, so the port name ends up half under the
-Connect button and "Reset..." comes out cut. The window's minimum width has to
-follow the row, and the row's buttons have to hold their own labels.
-"""
+"""The two-row toolbar at UI fonts bigger than the one it was drawn against."""
 
 from __future__ import annotations
 
@@ -59,7 +53,12 @@ def test_no_toolbar_widget_is_squeezed_below_its_label(build_window, point_size)
 
 @pytest.mark.parametrize("point_size", FONT_SIZES)
 def test_the_window_cannot_be_narrower_than_its_toolbar(build_window, point_size) -> None:
-    """resize() asked for 820. The minimum has to win, or the row overlaps."""
+    """resize() must not make controls overlap or labels elide."""
     window = build_window(point_size)
 
     assert window.width() >= window._toolbar.sizeHint().width()
+
+
+def test_large_text_does_not_force_a_wider_than_small_screen_window(build_window) -> None:
+    window = build_window(15)
+    assert window.minimumWidth() <= 800

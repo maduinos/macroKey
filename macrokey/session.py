@@ -118,11 +118,25 @@ class RecordingSession:
 
     def abort(self, reason: str = "Recording cancelled") -> None:
         """Drops a recording in progress without storing it."""
-        if self.active_key is None:
+        key = self.active_key
+        if key is None:
             return
+        gesture = self.active_gesture
         self.active_key = None
         self._watch_stop.set()
-        self.app.stop_recording()
+        try:
+            self.app.stop_recording()
+        except Exception:  # noqa: BLE001 - cleanup and UI state must still complete
+            log.exception("could not stop the capture backend while aborting")
+        self.last_steps = []
+        self.last_outcome = RecordOutcome(
+            key=key,
+            steps=0,
+            where="",
+            on_device=False,
+            gesture=gesture,
+            error=reason,
+        )
         self._release_led()
         self.app.status(reason)
         self._on_change()
@@ -130,17 +144,22 @@ class RecordingSession:
     # ---------------------------------------------------------------- internals --
 
     def _start(self, key: int, gesture: str = "tap") -> None:
-        # Before capture, not after: everything the recorder sees from here is
-        # measured from the corner, which is what lets the macro be replayed
-        # back onto the same pixels. Done by the pad, because it is a real USB
-        # mouse -- under Wayland nothing outside the compositor may move the
-        # cursor, so the host cannot do this itself.
+        # Requests originate on the keypad. A queued request can outlive a USB
+        # disconnect; reject it before global input capture is opened.
+        if not self.app.device.connected:
+            self.app.status("Keypad disconnected, so recording did not start")
+            return
+        # Fixed-screen mode is measured from the corner, which lets replay aim
+        # at the same pixels on an unchanged desktop. Done by the pad because it
+        # is a real USB mouse -- under Wayland the host cannot move the pointer.
         #
         # Failure is not fatal. A keyboard-only recording does not care where
         # the pointer is, and refusing to record at all because the cursor
         # could not be parked would be worse than a mouse macro that needs
         # doing again.
-        if self.app.recorder.capture_mouse:
+        if self.app.recorder.capture_mouse and getattr(
+            self.app.recorder, "anchor_mouse", False
+        ):
             try:
                 self.app.device.home_pointer()
             except DeviceError:
@@ -154,8 +173,18 @@ class RecordingSession:
             return
         self.active_key = key
         self.active_gesture = gesture
+        self.last_outcome = None
+        self.last_steps = []
         self._started_at = time.monotonic()
+        if not self.app.device.connected:
+            self.abort("Keypad disconnected, so the recording was dropped")
+            return
         self._show_recording()
+        # A failed LED write can synchronously report a lost link. The app's
+        # disconnect observer then aborts this session while `_show_recording`
+        # is still on the stack; do not resurrect it with a watchdog afterwards.
+        if self.active_key is None:
+            return
         self._start_watchdog()
         self.app.status(
             f"Recording into key {key + 1} ({gesture}). Hold it again to finish."
@@ -172,11 +201,21 @@ class RecordingSession:
         the window for the full two second timeout, twice, every five seconds.
         It also means this works with no window at all.
         """
-        self._watch_stop.clear()
-        threading.Thread(target=self._watch, name="macrokey-recwatch", daemon=True).start()
+        # Never clear and reuse the previous Event. A rapid finish/start can
+        # clear it before the old waiter wakes, leaving two watchdogs attached
+        # to the new recording.
+        self._watch_stop.set()
+        stop = threading.Event()
+        self._watch_stop = stop
+        threading.Thread(
+            target=self._watch,
+            args=(stop,),
+            name="macrokey-recwatch",
+            daemon=True,
+        ).start()
 
-    def _watch(self) -> None:
-        while not self._watch_stop.wait(WATCH_SECONDS):
+    def _watch(self, stop: threading.Event) -> None:
+        while not stop.wait(WATCH_SECONDS):
             key = self.active_key
             if key is None:
                 return
@@ -193,7 +232,7 @@ class RecordingSession:
                 # Through the record worker, not inline: finishing writes the
                 # whole profile, and that belongs on the one thread that owns
                 # starting and finishing so the two cannot interleave.
-                self.app.request_record(key, self.active_gesture)
+                self.app.request_record(key, self.active_gesture, finish_only=True)
                 return
 
             self._show_recording()
@@ -203,7 +242,22 @@ class RecordingSession:
         assert key is not None
         self.active_key = None
         self._watch_stop.set()
-        steps = self.app.stop_recording()
+        try:
+            steps = self.app.stop_recording()
+        except Exception as exc:  # noqa: BLE001 - leave the session visibly idle
+            self.last_steps = []
+            self.last_outcome = RecordOutcome(
+                key,
+                0,
+                "",
+                False,
+                gesture=self.active_gesture,
+                error=f"Could not stop recording: {exc}",
+            )
+            self.app.status(self.last_outcome.error)
+            self._flash(REJECTED_COLOR)
+            self._on_change()
+            return
 
         # Every step, written out, every time. A recording is authored blind --
         # there is no screen on the pad and the window need not even be open --
@@ -261,8 +315,8 @@ class RecordingSession:
 
         self.app.status(f"Key {key + 1} ({self.active_gesture}): {where}")
         # The captured steps were logged above; this is what the pad will
-        # actually do with them, which is not the same list. A macro that
-        # touches the pointer gains a step that sends it to the corner first.
+        # actually do with them, which is not the same list. Fixed-screen mouse
+        # capture gains a home step before its relative moves.
         if on_device:
             for line in self._stored_steps(key):
                 log.info("  will run: %s", line)
@@ -274,10 +328,10 @@ class RecordingSession:
     def _stored_steps(self, key: int) -> list[str]:
         """What the pad will actually do, read back out of the profile.
 
-        Not the captured steps: a macro that touches the pointer gains a step
-        that sends it to the corner first, long text becomes one typed run, and
-        a long move becomes several. Reporting the capture as though it were the
-        macro described something the pad was not going to do.
+        Not the captured steps: fixed-screen mouse capture gains a home step,
+        long text becomes one typed run, and a long move becomes several.
+        Reporting the capture as though it were the macro described something
+        the pad was not going to do.
         """
         profile = getattr(self.app, "profile", None)
         if profile is None:

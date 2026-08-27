@@ -6,7 +6,7 @@
 
 #include <Arduino.h>
 
-#define MK_FIRMWARE_VERSION "0.5.0"
+#define MK_FIRMWARE_VERSION "0.6.0"
 #define MK_PROTOCOL_VERSION 1
 #define MK_BOARD_NAME "promicro"
 
@@ -151,10 +151,11 @@ static const uint8_t MK_KEY_PINS[MK_KEY_COUNT] = {3, 4, 5, 6, 7, 8, 9, 10};
 // continuous work still stops a corrupt slot spinning forever; a plain 30 s
 // wall clock used to make the desktop app decide the link was dead.
 #define MK_MACRO_MAX_RUN_MS 10000
-// How far ACT_MOUSE_HOME pushes, in steps of 127 pixels on each axis. The
+// How far ACT_MOUSE_HOME pushes, in steps of 127 raw units on each axis. The
 // pointer stops at the edge, so this only has to be further than the desktop is
-// wide: 48 covers 6096 px, which is a 5K display with room to spare.
-#define MK_MOUSE_HOME_STEPS 48
+// wide. 128 covers 16256 raw units, including two 8K-wide displays; the old
+// 6096-unit push stopped short on ordinary dual-4K horizontal layouts.
+#define MK_MOUSE_HOME_STEPS 128
 
 // Between characters of a text run. The host needs a report boundary to see
 // them as separate keystrokes; below about 4 ms fast applications drop some.
