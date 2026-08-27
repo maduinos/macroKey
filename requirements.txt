@@ -9,3 +9,4 @@ pyinstaller>=6
 
 # Dev / tests (optional)
 pytest>=7
+ruff>=0.4

@@ -52,6 +52,7 @@ class FakeApp:
         self.saved = False
         self.pushed = False
         self._start_raises = behaviour.get("start_raises", False)
+        self._stop_raises = behaviour.get("stop_raises", False)
         self._assign_raises = behaviour.get("assign_raises", False)
         self._push_raises = behaviour.get("push_raises", False)
         self._where = behaviour.get("where", "on the keypad: a")
@@ -70,7 +71,9 @@ class FakeApp:
     def status(self, message: str) -> None:
         self.messages.append(message)
 
-    def request_record(self, key: int, gesture: str = "tap") -> None:
+    def request_record(
+        self, key: int, gesture: str = "tap", *, finish_only: bool = False
+    ) -> None:
         """The real one hands this to the record worker."""
         self.requested.append((key, gesture))
 
@@ -80,6 +83,8 @@ class FakeApp:
         self.started = True
 
     def stop_recording(self):
+        if self._stop_raises:
+            raise RuntimeError("capture backend stuck")
         self.started = False
         return self.steps
 
@@ -173,6 +178,17 @@ def test_a_capture_backend_that_will_not_start_reports_and_stays_idle() -> None:
     assert any("Cannot record" in message for message in app.messages)
 
 
+def test_a_queued_request_does_not_open_capture_after_disconnect() -> None:
+    app, session, _ = session_for()
+    app.device.connected = False
+
+    session.handle_request(0)
+
+    assert session.recording is False
+    assert app.started is False
+    assert any("disconnected" in message.lower() for message in app.messages)
+
+
 def test_a_full_profile_is_reported_rather_than_raised() -> None:
     app, session, _ = session_for(assign_raises=True)
     session.handle_request(0)
@@ -199,6 +215,22 @@ def test_a_dead_link_does_not_stop_the_recording_working() -> None:
     assert app.pushed is True
 
 
+def test_disconnect_during_initial_led_update_does_not_start_a_watchdog(
+    monkeypatch,
+) -> None:
+    """The serial failure callback can abort re-entrantly inside `_start`."""
+    app, session, _ = session_for()
+    watchdogs: list[bool] = []
+    monkeypatch.setattr(session, "_show_recording", lambda: session.abort("link lost"))
+    monkeypatch.setattr(session, "_start_watchdog", lambda: watchdogs.append(True))
+
+    session.handle_request(1)
+
+    assert session.recording is False
+    assert app.started is False
+    assert watchdogs == []
+
+
 def test_dropped_secrets_are_carried_into_the_outcome() -> None:
     _, session, _ = session_for(redacted=1)
     session.handle_request(0)
@@ -215,6 +247,18 @@ def test_aborting_discards_without_storing() -> None:
     session.abort()
     assert session.recording is False
     assert not hasattr(app, "assigned")
+    assert session.last_outcome.error == "Recording cancelled"
+
+
+def test_abort_still_finishes_if_the_capture_backend_cleanup_fails() -> None:
+    app, session, changes = session_for(stop_raises=True)
+    session.handle_request(4)
+
+    session.abort("discarded after failure")
+
+    assert session.recording is False
+    assert session.last_outcome.error == "discarded after failure"
+    assert changes[-1] == 1
 
 
 def test_aborting_when_idle_does_nothing() -> None:
@@ -282,6 +326,31 @@ def test_a_recording_that_runs_too_long_is_stored_rather_than_left_open(
         if app.requested:
             break
     assert app.requested == [(0, "tap")]
+
+
+def test_starting_a_new_watchdog_permanently_wakes_the_previous_one(
+    monkeypatch,
+) -> None:
+    import macrokey.session as session_module
+
+    started: list[tuple] = []
+
+    class Thread:
+        def __init__(self, *args, **kwargs):
+            started.append(kwargs.get("args", ()))
+
+        def start(self) -> None:
+            pass
+
+    monkeypatch.setattr(session_module.threading, "Thread", Thread)
+    _, session, _ = session_for()
+    session._start_watchdog()
+    first = session._watch_stop
+    session._start_watchdog()
+
+    assert first.is_set()
+    assert session._watch_stop is not first
+    assert len(started) == 2
 
 
 @pytest.mark.parametrize("key", range(8))
@@ -392,3 +461,56 @@ def test_requests_are_handled_in_order_by_a_single_worker() -> None:
 
     assert seen == [0, 0, 5, 5]
     assert len(threads) == 1
+
+
+def test_a_stale_watchdog_finish_cannot_start_a_new_recording() -> None:
+    import queue as _queue
+
+    from macrokey.app import MacroKeyApp
+
+    app = MacroKeyApp.__new__(MacroKeyApp)
+    app._record_queue = _queue.Queue()
+    app._record_thread = None
+
+    class Session:
+        recording = False
+        active_key = None
+
+        def handle_request(self, key: int, gesture: str = "tap") -> None:
+            raise AssertionError("stale finish became a new recording")
+
+    app.session = Session()
+    app._record_queue.put((1, "tap", True))
+    app._record_queue.put(None)
+
+    app._record_worker()
+
+
+def test_closing_stops_the_record_worker(monkeypatch, tmp_path) -> None:
+    """The old worker blocked on Queue.get forever. It was daemonized, but every
+    opened window leaked another live worker into tests and long sessions."""
+    import time
+
+    from macrokey.app import MacroKeyApp
+
+    monkeypatch.setenv("MACROKEY_CONFIG_DIR", str(tmp_path))
+    app = MacroKeyApp()
+    seen: list[int] = []
+
+    class Session:
+        recording = False
+
+        def handle_request(self, key: int, gesture: str = "tap") -> None:
+            seen.append(key)
+
+    app.session = Session()
+    app.request_record(1)
+    deadline = time.monotonic() + 1.0
+    while not seen and time.monotonic() < deadline:
+        time.sleep(0.005)
+    thread = app._record_thread
+    assert thread is not None and thread.is_alive()
+
+    app.close()
+
+    assert not thread.is_alive()

@@ -125,12 +125,18 @@ def test_a_drag_compiles_to_device_records() -> None:
     macro = reduce_to_device_macro(steps)
     assert macro is not None
     kinds = [action.kind for action in macro]
-    # The pointer is sent to the corner first: the movement was recorded from
-    # there, so replaying from there puts the drag back on the same pixels.
-    assert kinds[0] == "mouse_home"
+    # Relative is the safe default: the drag begins wherever the pointer is.
+    assert kinds[0] == "mouse_button"
     buttons = [a for a in macro if a.kind == "mouse_button"]
     assert [a.mode for a in buttons] == ["press", "release"]
     assert "mouse_move" in kinds
+
+
+def test_an_anchored_drag_starts_from_the_corner() -> None:
+    steps = normalize([press("left", 1.0), move(300, -200, 1.2), release("left", 1.6)])
+    macro = reduce_to_device_macro(steps, anchor_pointer=True)
+    assert macro is not None
+    assert macro[0].kind == "mouse_home"
 
 
 def test_the_modes_survive_the_binary_round_trip() -> None:

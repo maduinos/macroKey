@@ -402,9 +402,9 @@ void SerialProtocol::handleLine(uint32_t now) {
   } else if (strcmp(verb_, "PROF") == 0) {
     cmdProfile(now);
   } else if (strcmp(verb_, "MOUSE") == 0 && sub_ != NULL && strcmp(sub_, "home") == 0) {
-    // Asked for when a recording starts. Everything the recorder then sees is
-    // measured from the corner, which is what lets a replayed macro land where
-    // it was recorded rather than an unknown distance away from it.
+    // Fixed-screen recording asks for this before capture. Everything the
+    // recorder then sees is measured from the corner, which lets replay land
+    // where it was recorded on an unchanged desktop.
     if (!engine_->hidEnabled()) {
       sendErr("busy");  // still inside the boot grace window
     } else {

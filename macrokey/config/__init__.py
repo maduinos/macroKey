@@ -11,7 +11,14 @@ from .model import (
     ProfileError,
     default_profile,
 )
-from .store import Settings, load_profile, save_profile
+from .store import (
+    Settings,
+    export_profile,
+    load_profile,
+    load_profile_file,
+    profile_backup_path,
+    save_profile,
+)
 
 __all__ = [
     "EDITABLE_GESTURES",
@@ -24,6 +31,9 @@ __all__ = [
     "ProfileError",
     "Settings",
     "default_profile",
+    "export_profile",
     "load_profile",
+    "load_profile_file",
+    "profile_backup_path",
     "save_profile",
 ]

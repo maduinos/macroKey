@@ -29,6 +29,8 @@ class FakeSerial:
         self.written: list[bytes] = []
         self.reply_after = reply_after
         self.is_open = True
+        self.fail_reads = False
+        self.fail_writes = False
 
     # -- the parts pyserial exposes that the client uses -----------------------
 
@@ -38,6 +40,8 @@ class FakeSerial:
             return len(self._pending)
 
     def read(self, size: int = 1) -> bytes:
+        if self.fail_reads:
+            raise OSError("USB cable removed")
         # Both numbers matter: asking for more than is buffered is what makes
         # pyserial sit on the timeout.
         self.read_sizes.append((size, self.in_waiting))
@@ -52,6 +56,8 @@ class FakeSerial:
         return b""
 
     def write(self, data: bytes) -> int:
+        if self.fail_writes:
+            raise OSError("USB cable removed")
         self.written.append(data)
         line = data.decode().strip()
         verb = line.split()[0] if line else ""
@@ -115,6 +121,179 @@ def test_a_request_returns_promptly(client) -> None:
     elapsed = time.monotonic() - started
     # Ten exchanges took over two seconds before the read fix.
     assert elapsed < 0.5, f"ten round trips took {elapsed:.2f}s"
+
+
+def test_an_open_tty_is_not_connected_until_ident_has_validated_it() -> None:
+    device = DeviceClient()
+    device._serial = FakeSerial()
+
+    assert device.connected is False
+
+    device.hello = protocol.Hello(
+        1, "test", "promicro", KEY_COUNT, LED_COUNT, binary.PROFILE_SIZE
+    )
+    assert device.connected is True
+    device.disconnect()
+
+
+def test_a_reader_failure_marks_the_link_disconnected_immediately(client) -> None:
+    device, fake = client
+    fake.fail_reads = True
+
+    deadline = time.monotonic() + 1.0
+    while device.connected and time.monotonic() < deadline:
+        time.sleep(0.005)
+
+    assert device.connected is False
+    assert device.hello is None
+
+
+def test_a_write_failure_is_wrapped_as_a_device_error(client) -> None:
+    device, fake = client
+    fake.fail_writes = True
+
+    with pytest.raises(DeviceError, match="serial link lost"):
+        device.ping()
+    assert device.connected is False
+
+
+def test_write_failure_observer_can_release_device_state_without_deadlock(client) -> None:
+    device, fake = client
+    cleaned = threading.Event()
+
+    def cleanup(_reason: str) -> None:
+        try:
+            device.set_led_mode(False)
+        except DeviceError:
+            cleaned.set()
+
+    device._on_disconnect = cleanup
+    fake.fail_writes = True
+
+    with pytest.raises(DeviceError, match="serial link lost"):
+        device.ping()
+    assert cleaned.wait(0.2)
+
+
+def test_disconnect_cancels_a_connection_during_board_settle(monkeypatch) -> None:
+    fake = FakeSerial()
+    monkeypatch.setattr("macrokey.device.client.serial.Serial", lambda *a, **k: fake)
+    monkeypatch.setattr("macrokey.device.client.OPEN_SETTLE_SECONDS", 5.0)
+    device = DeviceClient()
+    failures: list[Exception] = []
+
+    def connect() -> None:
+        try:
+            device.connect("/dev/fake")
+        except Exception as exc:  # noqa: BLE001 - asserted below
+            failures.append(exc)
+
+    thread = threading.Thread(target=connect)
+    thread.start()
+    deadline = time.monotonic() + 1.0
+    while device._serial is None and time.monotonic() < deadline:
+        time.sleep(0.005)
+    device.disconnect()
+    thread.join(timeout=0.5)
+
+    assert not thread.is_alive()
+    assert failures and "cancelled" in str(failures[0])
+    assert fake.is_open is False
+
+
+def test_a_stale_reader_cannot_drop_a_new_connection() -> None:
+    old = FakeSerial()
+    current = FakeSerial()
+    device = DeviceClient()
+    device._serial = current
+    device.hello = protocol.Hello(
+        1, "test", "promicro", KEY_COUNT, LED_COUNT, binary.PROFILE_SIZE
+    )
+
+    device._drop_link(notify=True, expected_port=old)
+
+    assert device.connected is True
+    device.disconnect()
+
+
+def test_link_loss_notifies_disconnect_observer(monkeypatch) -> None:
+    fake = FakeSerial()
+    lost: list[str] = []
+    monkeypatch.setattr("macrokey.device.client.serial.Serial", lambda *a, **k: fake)
+    monkeypatch.setattr("macrokey.device.client.OPEN_SETTLE_SECONDS", 0.0)
+    device = DeviceClient(on_disconnect=lost.append)
+    device.connect("/dev/fake")
+
+    fake.fail_reads = True
+    deadline = time.monotonic() + 1.0
+    while not lost and time.monotonic() < deadline:
+        time.sleep(0.005)
+
+    assert lost and "link lost" in lost[0].lower()
+    device.disconnect()
+
+
+def test_a_broken_event_observer_does_not_kill_serial_dispatch() -> None:
+    def broken(_event) -> None:
+        raise RuntimeError("view disappeared")
+
+    device = DeviceClient(on_event=broken)
+    device._dispatch("EV t=key k=0 g=tap l=0 ms=10")
+
+    device._responses.put(protocol.Message("OK"))
+    assert device._responses.get_nowait().verb == "OK"
+
+
+def test_auto_discovery_falls_through_from_likely_to_generic(monkeypatch) -> None:
+    from macrokey.device.discovery import PortCandidate
+    from macrokey.device.protocol import Hello
+
+    candidates = [
+        PortCandidate("/dev/likely", "Arduino", 0x2341, 0x8036),
+        PortCandidate("/dev/generic", "clone", 0xCAFE, 0xBEEF),
+    ]
+    monkeypatch.setattr("macrokey.device.client.discovery.candidates", lambda: candidates)
+    attempted: list[str] = []
+    device = DeviceClient()
+
+    def connect_one(port: str) -> Hello:
+        attempted.append(port)
+        if port == "/dev/likely":
+            raise DeviceError("not macroKey")
+        return Hello(1, "test", "promicro", KEY_COUNT, LED_COUNT, binary.PROFILE_SIZE)
+
+    monkeypatch.setattr(device, "_connect_one", connect_one)
+    device.connect("")
+    assert attempted == ["/dev/likely", "/dev/generic"]
+
+
+def test_usb_identity_requires_matching_vendor_and_product() -> None:
+    from macrokey.device.discovery import PortCandidate
+
+    assert PortCandidate("a", "", 0x2341, 0x8036).likely
+    assert PortCandidate("promicro", "", 0x1B4F, 0x9206).likely
+    assert not PortCandidate("b", "", 0x2341, 0xBEEF).likely
+    assert not PortCandidate("c", "", 0xCAFE, 0x8036).likely
+
+
+def test_eeprom_operations_get_a_longer_reply_window(monkeypatch) -> None:
+    from macrokey.device.client import EEPROM_WRITE_TIMEOUT
+
+    device = DeviceClient()
+    calls: list[tuple[str, float]] = []
+
+    def request(line: str, expect=None, timeout=2.0):
+        calls.append((line, timeout))
+        return protocol.Message("OK")
+
+    monkeypatch.setattr(device, "request", request)
+    device.write_profile(binary.encode_profile(default_profile()))
+    device.reset_defaults()
+
+    commit = next(timeout for line, timeout in calls if line == "PROF commit")
+    reset = next(timeout for line, timeout in calls if line.startswith("RESET "))
+    assert commit == EEPROM_WRITE_TIMEOUT
+    assert reset == EEPROM_WRITE_TIMEOUT
 
 
 def test_connect_rejects_a_protocol_it_does_not_speak(monkeypatch) -> None:

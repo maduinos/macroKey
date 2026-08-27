@@ -372,6 +372,7 @@ def reduce_to_device_macro(
     steps: list[dict[str, Any]],
     *,
     max_records: int = MACRO_MAX_RECORDS,
+    anchor_pointer: bool = False,
 ) -> list[Action] | None:
     """Compiles a whole recording into records the firmware can replay itself.
 
@@ -464,14 +465,16 @@ def reduce_to_device_macro(
     if not compiled:
         return None
 
-    # A macro that moves the pointer has to start from somewhere known. The
-    # movement captured is relative -- the kernel reports nothing else -- so
-    # replaying it from wherever the cursor happens to be lands an unknown
-    # distance from where it was recorded, and every click in the macro then
-    # hits whatever is there instead. The recording was made from the corner
-    # (the session parks the pointer there when it starts), so replaying from
-    # the corner puts it back on the same pixels.
-    if any(action.kind in ("mouse_move", "mouse_button") for action in compiled):
+    # Fixed-position playback is explicit. By default a click happens at the
+    # current pointer and movement is relative to it -- both are predictable on
+    # different monitors and window layouts. Anchored recordings are made from
+    # the top-left, so they must replay from there too. Even a button-only macro
+    # needs the home in that mode because its recorded location was the corner;
+    # wheel events are pointer-targeted too.
+    if anchor_pointer and any(
+        action.kind in ("mouse_move", "mouse_button", "mouse_wheel")
+        for action in compiled
+    ):
         compiled.insert(0, Action(kind="mouse_home"))
 
     if macro_records(compiled) > max_records:

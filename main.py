@@ -3,10 +3,12 @@
 
 from __future__ import annotations
 
+from macrokey.logging_setup import setup_logging
 from macrokey.ui import run_gui
 
 
 def main() -> int:
+    setup_logging()
     return run_gui()
 
 

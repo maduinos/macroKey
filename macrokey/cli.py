@@ -8,8 +8,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import logging
-import logging.handlers
 import sys
 import time
 
@@ -17,48 +15,9 @@ from . import __version__
 from .app import MacroKeyApp
 from .config import EDITABLE_GESTURES, KEY_COUNT
 from .device import DeviceError, candidates, pyserial_available
+from .logging_setup import setup_logging
 from .recorder.recorder import DEFAULT_STOP_KEY
 from .ui import MissingToolkit
-
-
-def _setup_logging(verbose: bool) -> None:
-    """Everything to the file, only what is worth interrupting to the terminal.
-
-    The two have different jobs. The file answers "what did it actually
-    capture" afterwards, so it takes everything and is not behind --verbose: a
-    recording is made with the window unwatched and the pad under a hand, and by
-    the time something is obviously wrong the explanation has already happened.
-    The terminal is where someone is reading, and status messages already reach
-    them through the status callback -- logging those too printed every line
-    twice.
-
-    The levels belong on the handlers. Raising the root logger so the file could
-    see everything sent all of it to the terminal as well, which is how the
-    console came to be full of every step of every recording.
-    """
-    from .config.store import profile_path
-
-    root = logging.getLogger()
-    root.setLevel(logging.DEBUG)
-
-    console = logging.StreamHandler()
-    console.setLevel(logging.DEBUG if verbose else logging.WARNING)
-    console.setFormatter(logging.Formatter("%(levelname)s %(name)s: %(message)s"))
-    root.addHandler(console)
-
-    try:
-        path = profile_path().parent / "macrokey.log"
-        path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-        to_file = logging.handlers.RotatingFileHandler(
-            path, maxBytes=512_000, backupCount=1, encoding="utf-8"
-        )
-        to_file.setLevel(logging.DEBUG)
-        to_file.setFormatter(
-            logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
-        )
-        root.addHandler(to_file)
-    except OSError:
-        pass  # a log we cannot write is not a reason to refuse to run
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -98,7 +57,7 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    _setup_logging(args.verbose)
+    setup_logging(args.verbose)
 
     command = args.command or "gui"
     handler = {
@@ -217,7 +176,7 @@ def cmd_record(args: argparse.Namespace) -> int:
         # No window to click Stop in, so the CLI opts into the key. It is
         # therefore the one path where a macro cannot contain Esc.
         app.recorder.stop_key = DEFAULT_STOP_KEY
-        if app.recorder.capture_mouse and app.device.connected:
+        if app.recorder.capture_mouse and app.recorder.anchor_mouse and app.device.connected:
             try:
                 app.device.home_pointer()
             except DeviceError as exc:

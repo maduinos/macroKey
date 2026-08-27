@@ -36,8 +36,8 @@ class FakeRecorder:
         return None  # force the macro path
 
     @staticmethod
-    def device_macro(steps):
-        return reduce_to_device_macro(steps)
+    def device_macro(steps, *, anchor_pointer=False):
+        return reduce_to_device_macro(steps, anchor_pointer=anchor_pointer)
 
 
 def fake_app() -> MacroKeyApp:

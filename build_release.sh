@@ -120,9 +120,17 @@ PY
 }
 
 run_tests() {
+  log "ruff 실행"
+  (cd "$ROOT_DIR" && "$PYTHON_CMD" -m ruff check .) \
+    || fail "정적 검사 실패. 수정 후 다시 빌드하세요."
   log "pytest 실행"
-  (cd "$ROOT_DIR" && "$PYTHON_CMD" -m pytest -q) \
-    || fail "테스트 실패. 수정 후 다시 빌드하세요. (건너뛰려면 --skip-tests)"
+  if [[ "$CURRENT_OS" == Linux* ]]; then
+    (cd "$ROOT_DIR" && QT_QPA_PLATFORM=offscreen "$PYTHON_CMD" -m pytest -q) \
+      || fail "테스트 실패. 수정 후 다시 빌드하세요. (건너뛰려면 --skip-tests)"
+  else
+    (cd "$ROOT_DIR" && "$PYTHON_CMD" -m pytest -q) \
+      || fail "테스트 실패. 수정 후 다시 빌드하세요. (건너뛰려면 --skip-tests)"
+  fi
 }
 
 prepare_dirs() {
