@@ -21,7 +21,11 @@ enum ActionType : uint8_t {
   // 9 was ACT_HOST (desktop-run tokens). Reserved: the pad is HID-only; the PC
   // app is config-only. Do not reuse this id.
   ACT_RESERVED_9,
-  ACT_LED_SCENE,       // a = palette/scene index
+  // Hands the pixel back to the profile's own colour, dropping whatever the
+  // desktop app had painted over it. `a` is reserved and must be zero: there is
+  // one palette entry per pixel and so nothing to index. It stays a payload
+  // byte rather than being spent, for the day a profile carries several scenes.
+  ACT_LED_SCENE,
   ACT_DELAY,           // a = delay in 10 ms units (macro records only)
   // a = character count. The characters follow, packed three to a record, so a
   // run costs about a byte a letter instead of a whole 3 byte key action each.
@@ -60,7 +64,12 @@ enum KeyModifier : uint8_t {
 // Flags byte (Action::c) for ACT_KEY.
 enum KeyActionFlag : uint8_t {
   KEYF_NONE = 0x00,
-  KEYF_REPEAT = 0x01,  // auto-repeat while held
+  // 0x01 was KEYF_REPEAT, auto-repeat while the key is held. Nothing could
+  // reach it once hold stopped being bindable: tap and double both fire on
+  // *release*, so the repeat armed itself against a key that was already up and
+  // disarmed on the next scan. The bit stays reserved -- it is a wire format --
+  // and the timer, the armed slot and MK_HOLD_REPEAT_MS are gone.
+  KEYF_RESERVED_1 = 0x01,
   KEYF_STICKY = 0x02   // one-shot modifier: stays armed until the next key
 };
 

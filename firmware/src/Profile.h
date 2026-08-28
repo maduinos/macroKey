@@ -1,4 +1,4 @@
-// EEPROM-backed profile store.
+// Profile store, on top of the byte store in Storage.h.
 //
 // The keymap is *not* mirrored into SRAM. Slots are read straight out of EEPROM
 // when a key fires; at four cycles per byte that is instant on a human
@@ -38,9 +38,6 @@ static const uint16_t MK_MACRO_OFFSET = MK_PALETTE_OFFSET + MK_PALETTE_SIZE;
 static const uint16_t MK_MACRO_INDEX_SIZE = MK_MACRO_SLOTS;
 static const uint16_t MK_MACRO_RECORD_SIZE = 3;
 
-// The ATmega32u4 has exactly this much EEPROM, and the profile is the only
-// thing in it.
-static const uint16_t MK_EEPROM_SIZE = 1024;
 // Everything left after the fixed regions. Derived rather than written down: it
 // was 480, then 768, each time by hand and each time leaving bytes unused, and
 // macro records are the one thing a pad with eight keys and no layers wants

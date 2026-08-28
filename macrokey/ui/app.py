@@ -10,6 +10,7 @@ import logging
 import queue
 import sys
 import threading
+import time
 from collections.abc import Callable
 
 from PySide6.QtCore import Qt, QTimer, Signal
@@ -64,6 +65,19 @@ from .widgets import AUTO_PORT, RescanningComboBox
 #: three second default, and has not crashed.
 PREVIEW_HOLD_MS = 45000
 
+#: Reconnect backoff after a link that was working drops, in seconds, doubling
+#: to the ceiling (PROTOCOL.md section 5). A pad re-enumerates on every firmware
+#: upload and whenever the cable is touched, and the pad is the only way to
+#: start a recording -- so a drop used to leave hold-to-record dead until
+#: someone noticed the toolbar and pressed Connect, with nothing saying why
+#: holding a key for three seconds had stopped doing anything.
+#:
+#: Only after a link that was established: probing every serial port on a timer
+#: would open unrelated devices repeatedly, and opening a port is not free --
+#: plenty of boards reset when their port is opened.
+RECONNECT_FIRST_SECONDS = 1.0
+RECONNECT_MAX_SECONDS = 30.0
+
 log = logging.getLogger(__name__)
 
 
@@ -112,6 +126,12 @@ class MainWindow(QMainWindow):
         self._capture_setup_running = False
         self._profiles_diverged = False
         self._closing = False
+        # Reconnect state. `_allowed` is cleared by an explicit Disconnect: the
+        # link going away because someone asked for it is not something to undo.
+        self._reconnect_allowed = False
+        self._reconnect_at: float | None = None
+        self._reconnect_delay = RECONNECT_FIRST_SECONDS
+        self._was_connected = False
         self._io_queue: queue.Queue[Callable[[], None] | None] = queue.Queue()
         self._io_thread: threading.Thread | None = None
 
@@ -176,7 +196,7 @@ class MainWindow(QMainWindow):
         # than trusting whatever the last click implied.
         self._connection_timer = QTimer(self)
         self._connection_timer.setInterval(1000)
-        self._connection_timer.timeout.connect(self._refresh_connection)
+        self._connection_timer.timeout.connect(self._poll_connection)
         self._connection_timer.start()
 
         # Hold-to-record: the pad drives it, this window just reflects it. The
@@ -1132,9 +1152,57 @@ class MainWindow(QMainWindow):
         QMessageBox.critical(self, "Sync failed", message)
 
     def _disconnect(self) -> None:
+        # Asked for, so do not undo it. `_poll_connection` sees the same
+        # transition a dropped cable makes and must be able to tell them apart.
+        self._reconnect_allowed = False
+        self._reconnect_at = None
         self.app.disconnect()
         self.statusBar().showMessage("Disconnected")
         self._refresh_connection()
+
+    # ------------------------------------------------------------ reconnect --
+
+    def _poll_connection(self) -> None:
+        """One tick: notice what the link did, then reflect and act on it."""
+        connected = self.app.device.connected
+        if connected and not self._was_connected:
+            # A link worth restoring. Every later drop is now worth chasing, and
+            # the backoff starts over.
+            self._reconnect_allowed = True
+            self._reconnect_delay = RECONNECT_FIRST_SECONDS
+            self._reconnect_at = None
+        elif self._was_connected and not connected and self._reconnect_allowed:
+            self._reconnect_at = time.monotonic() + self._reconnect_delay
+            self.statusBar().showMessage("Keypad disconnected; looking for it again…")
+        self._was_connected = connected
+
+        self._refresh_connection()
+        self._maybe_reconnect()
+
+    def _maybe_reconnect(self) -> None:
+        """Retries a dropped link, once its backoff has elapsed.
+
+        The next attempt is scheduled before this one runs rather than after it
+        fails: the connect worker reports failure by simply leaving the link
+        down, and there is nothing else to hang the growth of the backoff on.
+        """
+        if self._reconnect_at is None or self._closing:
+            return
+        if (
+            self.app.device.connected
+            or self._connecting
+            or self._syncing
+            or self._resetting
+            or self._profile_prompt_open
+            or self.session.recording
+        ):
+            return
+        if time.monotonic() < self._reconnect_at:
+            return
+
+        self._reconnect_at = time.monotonic() + self._reconnect_delay
+        self._reconnect_delay = min(self._reconnect_delay * 2, RECONNECT_MAX_SECONDS)
+        self._toggle_connection(quiet=True)
 
     def _set_editing_enabled(self, enabled: bool) -> None:
         """Locks profile-changing controls during one coherent device operation."""

@@ -29,9 +29,9 @@ bool ButtonInput::nextEvent(KeyEvent *out) {
   return true;
 }
 
-void ButtonInput::suppressUntilRelease(uint8_t mask) {
+void ButtonInput::suppressUntilRelease(mk_keymask_t mask) {
   for (uint8_t key = 0; key < MK_KEY_COUNT; key++) {
-    if ((mask & (1 << key)) == 0) continue;
+    if ((mask & ((mk_keymask_t)1 << key)) == 0) continue;
     keys_[key].suppressed = true;
     keys_[key].holdFired = true;  // blocks the hold timer from firing later
     keys_[key].phase = PH_DOWN;
@@ -40,7 +40,7 @@ void ButtonInput::suppressUntilRelease(uint8_t mask) {
 
 void ButtonInput::onPressEdge(uint8_t key, uint32_t now) {
   KeyState &state = keys_[key];
-  pressedMask_ |= (uint8_t)(1 << key);
+  pressedMask_ |= (mk_keymask_t)((mk_keymask_t)1 << key);
   lastPressEdgeAt_ = now;
 
   // Was this press the second of a quick pair? Answered from the gap alone,
@@ -70,7 +70,7 @@ void ButtonInput::onPressEdge(uint8_t key, uint32_t now) {
 
 void ButtonInput::onReleaseEdge(uint8_t key, uint32_t now) {
   KeyState &state = keys_[key];
-  pressedMask_ &= (uint8_t)~(1 << key);
+  pressedMask_ &= (mk_keymask_t)~((mk_keymask_t)1 << key);
   // Every release, not just the ones that defer a tap: the next press reads
   // this to decide whether it is the second of a pair.
   state.releasedAt = now;
@@ -94,7 +94,7 @@ void ButtonInput::onReleaseEdge(uint8_t key, uint32_t now) {
     // Tells the engine to unwind a momentary layer or release a held key.
     push(key, GESTURE_HOLD, true);
     state.phase = PH_IDLE;
-  } else if (doubleTapMask_ & (1 << key)) {
+  } else if (doubleTapMask_ & ((mk_keymask_t)1 << key)) {
     state.phase = PH_PENDING_TAP;  // releasedAt was set above
   } else {
     push(key, GESTURE_TAP, false);
@@ -130,7 +130,7 @@ void ButtonInput::update(uint32_t now) {
     // out of ordinary use -- holding a key while pressing others is someone
     // using the pad, not someone programming it.
     if (state.stablePressed && !state.recordFired &&
-        pressedMask_ == (uint8_t)(1 << key) &&
+        pressedMask_ == (mk_keymask_t)((mk_keymask_t)1 << key) &&
         now - state.pressedAt >= MK_RECORD_HOLD_MS) {
       state.recordFired = true;
       recordRequest_ = (int8_t)key;

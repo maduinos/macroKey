@@ -6,7 +6,7 @@
 
 #include <Arduino.h>
 
-#define MK_FIRMWARE_VERSION "0.6.0"
+#define MK_FIRMWARE_VERSION "0.7.0"
 #define MK_PROTOCOL_VERSION 1
 #define MK_BOARD_NAME "promicro"
 
@@ -14,6 +14,14 @@
 
 #define MK_KEY_COUNT 8
 #define MK_LED_COUNT 1
+
+// A bitmask over the keys, one bit per key index. The scanner's pressed,
+// double-tap and suppress masks are all this type, so raising MK_KEY_COUNT past
+// its width is a compile error here rather than eight keys that work and the
+// rest silently doing nothing -- which is what a wider board would have got.
+typedef uint8_t mk_keymask_t;
+static_assert(MK_KEY_COUNT <= (int)(sizeof(mk_keymask_t) * 8),
+              "MK_KEY_COUNT exceeds the key mask width: widen mk_keymask_t");
 // No layers. Eight keys that each do one thing is the whole product; layers
 // added a mode nobody could see and a shortcut nobody could remember, and the
 // keymap they cost is EEPROM that macro records use instead. What survived the
@@ -41,11 +49,30 @@ static const uint8_t MK_KEY_PINS[MK_KEY_COUNT] = {3, 4, 5, 6, 7, 8, 9, 10};
 // A0 is digital 18 on the 32u4.
 #define MK_LED_PIN 18
 
+// ---------------------------------------------------------------- storage --
+
+// Bytes the profile gets. The ATmega32u4 has exactly this much EEPROM and the
+// profile is the only thing in it, so the two numbers are the same one. It
+// lives here rather than in Profile.h because it is a fact about the board:
+// a part with more room changes this line and the macro region grows into it.
+#define MK_EEPROM_SIZE 1024
+
+// 0: AVR-style EEPROM. Memory-mapped, every write lands on its own, and reads
+//    work from the first instruction -- so begin() and commit() are no-ops.
+// 1: flash-emulated EEPROM (RP2040, ESP32). The library holds a RAM copy that
+//    must be filled by begin() before the first read and written back by
+//    commit() after the last write. Without both, reads return rubbish and
+//    nothing survives a power cycle.
+// Profile only ever goes through Storage.h, so this is the whole switch.
+#ifndef MK_STORAGE_FLASH_EMULATED
+#define MK_STORAGE_FLASH_EMULATED 0
+#endif
+
 // -------------------------------------------------------------- HID backend --
 
 // 0: Keyboard + Mouse from the Arduino AVR core. No extra library, but the
-//    consumer page (volume, play/pause) is unavailable and ACT_CONSUMER is a
-//    no-op that reports back over serial.
+//    consumer page (volume, play/pause) is unavailable, so ACT_CONSUMER does
+//    nothing at all.
 // 1: NicoHood's HID-Project, which adds the consumer page. Install with
 //    `arduino-cli lib install "HID-Project"`.
 #ifndef MK_USE_HID_PROJECT
@@ -58,7 +85,6 @@ static const uint8_t MK_KEY_PINS[MK_KEY_COUNT] = {3, 4, 5, 6, 7, 8, 9, 10};
 #define MK_DEBOUNCE_MS 12       // stable window before a level change counts
 #define MK_DOUBLE_TAP_MS 250    // second press must start within this window
 #define MK_HOLD_MS 400          // press longer than this becomes a hold
-#define MK_HOLD_REPEAT_MS 120   // auto-repeat period for repeating hold actions
 
 // HID output is suppressed for this long after boot. If a macro misfires into
 // an infinite key storm this window is the only chance to re-flash the board.

@@ -368,12 +368,21 @@ def text_to_runs(text: str) -> list[Action] | None:
         return None  # not printable ASCII; the host can still type it
 
 
-def reduce_to_device_macro(
+class UnsupportedRecording(ProfileError):
+    """A recording the pad cannot replay, and why.
+
+    Separate from "it does not fit" because the two ask for different things
+    from the person: one wants a shorter recording, the other wants a different
+    one. Reported as a single sentence naming the step that stopped it.
+    """
+
+
+def compile_device_macro(
     steps: list[dict[str, Any]],
     *,
     max_records: int = MACRO_MAX_RECORDS,
     anchor_pointer: bool = False,
-) -> list[Action] | None:
+) -> list[Action]:
     """Compiles a whole recording into records the firmware can replay itself.
 
     The firmware has always been able to run a stored sequence, but nothing ever
@@ -381,17 +390,17 @@ def reduce_to_device_macro(
     action and stopped working the moment the desktop app was not running. A
     keyboard macro with pauses is exactly what the sequence format is for.
 
-    Returns None when a step has no on-device equivalent, or when the result
-    would be truncated: `max_records` mirrors MK_MACRO_MAX_RECORDS, past which
-    the firmware stops replaying, and half a macro is worse than an honest
-    fallback to the host.
+    Raises UnsupportedRecording when a step has no on-device equivalent, or when
+    the result would be truncated: `max_records` mirrors MK_MACRO_MAX_RECORDS,
+    past which the firmware stops replaying, and half a macro is worse than an
+    honest refusal.
 
     The budget is counted in *records*, not steps -- a text run spans a header
     plus one record per three characters, and it is records the region runs out
     of.
     """
     if not steps:
-        return None
+        raise UnsupportedRecording("nothing was captured")
 
     compiled: list[Action] = []
     for step in steps:
@@ -414,15 +423,17 @@ def reduce_to_device_macro(
             hotkey = params.get("hotkey", "")
             try:
                 keycodes.parse_hotkey(hotkey)
-            except keycodes.KeyParseError:
-                return None
+            except keycodes.KeyParseError as exc:
+                raise UnsupportedRecording(
+                    f"the keypad cannot send {hotkey!r}"
+                ) from exc
             compiled.append(Action(kind="key", hotkey=hotkey))
             continue
 
         if kind == "consumer":
             usage = params.get("usage", "")
             if usage not in keycodes.CONSUMER_USAGES:
-                return None
+                raise UnsupportedRecording(f"unknown media key {usage!r}")
             compiled.append(Action(kind="consumer", usage=usage))
             continue
 
@@ -434,8 +445,11 @@ def reduce_to_device_macro(
                     mode=params.get("mode", "click"),
                 )
                 action.encode()
-            except Exception:  # noqa: BLE001 - unknown button, keep it off the device
-                return None
+            except Exception as exc:  # noqa: BLE001 - unknown button
+                raise UnsupportedRecording(
+                    f"the keypad cannot press the {params.get('button', '?')!r} "
+                    "mouse button"
+                ) from exc
             compiled.append(action)
             continue
 
@@ -453,17 +467,20 @@ def reduce_to_device_macro(
             continue
 
         if kind == "text":
-            runs = text_to_runs(params.get("text", ""))
+            text = params.get("text", "")
+            runs = text_to_runs(text)
             if runs is None:
-                return None
+                raise UnsupportedRecording(
+                    "the keypad types printable ASCII only, and this recording "
+                    "contains characters it cannot send"
+                )
             compiled.extend(runs)
             continue
 
-        # Clipboard and shell still need the host.
-        return None
+        raise UnsupportedRecording(f"a recorded {kind!r} step has no keypad equivalent")
 
     if not compiled:
-        return None
+        raise UnsupportedRecording("nothing in the recording reaches the keypad")
 
     # Fixed-position playback is explicit. By default a click happens at the
     # current pointer and movement is relative to it -- both are predictable on
@@ -477,9 +494,28 @@ def reduce_to_device_macro(
     ):
         compiled.insert(0, Action(kind="mouse_home"))
 
-    if macro_records(compiled) > max_records:
-        return None
+    used = macro_records(compiled)
+    if used > max_records:
+        raise UnsupportedRecording(
+            f"the recording needs {used} records and one macro slot holds "
+            f"{max_records}. Record it in shorter pieces."
+        )
     return compiled
+
+
+def reduce_to_device_macro(
+    steps: list[dict[str, Any]],
+    *,
+    max_records: int = MACRO_MAX_RECORDS,
+    anchor_pointer: bool = False,
+) -> list[Action] | None:
+    """`compile_device_macro`, for callers that only need to know whether."""
+    try:
+        return compile_device_macro(
+            steps, max_records=max_records, anchor_pointer=anchor_pointer
+        )
+    except UnsupportedRecording:
+        return None
 
 
 def _split_move(dx: int, dy: int) -> list[Action]:

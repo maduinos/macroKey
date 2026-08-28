@@ -21,7 +21,7 @@ from .device import (
     candidates,
 )
 from .recorder import Recorder
-from .recorder.normalize import redact_secrets
+from .recorder.normalize import compile_device_macro, redact_secrets
 
 log = logging.getLogger(__name__)
 
@@ -378,16 +378,20 @@ class MacroKeyApp:
                 log.debug("reclaimed %d macro slot(s)", freed)
             return f"on the keypad: {device_action.describe()}"
 
-        macro = self.recorder.device_macro(
+        # Not the None-returning wrapper: the two ways this fails ask for
+        # different things from the person, and saying "shorten it" to someone
+        # whose recording contains one key the pad cannot send sends them off
+        # trimming a macro that was never too long.
+        macro = compile_device_macro(
             steps, anchor_pointer=getattr(self.recorder, "anchor_mouse", False)
         )
         previous = self.profile.action(key, gesture)
         also_free = previous.slot if previous.kind == "sequence" else None
-        slot = self._find_macro_slot(macro, also_free=also_free) if macro is not None else None
-        if macro is None or slot is None:
+        slot = self._find_macro_slot(macro, also_free=also_free)
+        if slot is None:
             raise ProfileError(
-                "recording does not fit on the keypad (too many steps or macros full). "
-                "Shorten it, or clear unused keys and try again."
+                "the keypad's macro storage is full. Clear a key you no longer "
+                "use, or record this one in shorter pieces."
             )
 
         macros = self.profile.device_macros

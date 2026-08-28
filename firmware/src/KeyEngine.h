@@ -50,7 +50,6 @@ class KeyEngine {
 
  private:
   void handleEvent(const KeyEvent &event, uint32_t now);
-  void serviceRepeat(uint32_t now);
   void refreshDoubleTapMask();
 
   // Runs one action. `key` is only used for reporting.
@@ -78,12 +77,6 @@ class KeyEngine {
 
   // One-shot modifiers armed by a KEYF_STICKY action, consumed by the next key.
   uint8_t stickyModifiers_ = 0;
-
-  // Auto-repeat for a held ACT_KEY with KEYF_REPEAT. One slot: a keypad this
-  // size never needs two keys repeating at once, and a table would cost SRAM.
-  Action repeatAction_ = {ACT_NONE, 0, 0, 0};
-  int8_t repeatKey_ = -1;
-  uint32_t repeatNextAt_ = 0;
 
   // Non-zero while runMacro is on the stack: millis() deadline for runaway
   // work. macroWait pushes it forward by the pause length.

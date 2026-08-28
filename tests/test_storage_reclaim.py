@@ -80,7 +80,10 @@ def test_the_record_budget_does_not_creep() -> None:
 def test_unsupported_steps_are_rejected_rather_than_stored_on_the_host() -> None:
     app = fake_app()
     app.profile.set_action(0, "tap", Action(kind="key", hotkey="ctrl+alt+shift+1"))
-    with pytest.raises(ProfileError, match="does not fit"):
+    # Named, not "does not fit": nothing here is too long, and telling someone
+    # to shorten a recording the pad simply cannot replay sends them trimming
+    # a macro that was never the problem.
+    with pytest.raises(ProfileError, match="'shell' step has no keypad equivalent"):
         app.assign_recording([{"type": "shell", "params": {"command": "ls"}}], 0, "tap")
     # Rejected assign must not wipe the key that was already bound.
     assert app.profile.action(0, "tap").kind == "key"
@@ -134,7 +137,9 @@ def test_a_full_pad_rejects_rather_than_falling_back_to_the_host() -> None:
     app.profile.device_macros = [[Action(kind="key", hotkey="a")] * MACRO_RECORD_CAPACITY]
     app.profile.set_action(7, "tap", Action(kind="sequence", slot=0))
     app.profile.set_action(0, "tap", Action(kind="key", hotkey="ctrl+alt+shift+1"))
-    with pytest.raises(ProfileError, match="does not fit"):
+    # This recording *is* replayable; there is simply nowhere to put it, which
+    # asks for something different of the person than an unsupported step does.
+    with pytest.raises(ProfileError, match="macro storage is full"):
         app.assign_recording(RECORDING, 0, "tap")
     assert app.profile.action(0, "tap").hotkey == "ctrl+alt+shift+1"
 
@@ -143,7 +148,7 @@ def test_re_recording_reuses_the_same_slot_without_wiping_on_failure() -> None:
     app = fake_app()
     app.assign_recording(RECORDING, 0, "tap")
     slot = app.profile.action(0, "tap").slot
-    with pytest.raises(ProfileError, match="does not fit"):
+    with pytest.raises(ProfileError, match="'shell' step has no keypad equivalent"):
         app.assign_recording([{"type": "shell", "params": {"command": "ls"}}], 0, "tap")
     assert app.profile.action(0, "tap").kind == "sequence"
     assert app.profile.action(0, "tap").slot == slot

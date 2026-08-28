@@ -35,7 +35,7 @@ HID 입력과 시리얼은 완전히 독립입니다. 시리얼을 아무도 열
 부팅 직후 한 번, 그리고 `IDENT` 요청마다 보냅니다.
 
 ```
-HELLO proto=1 fw=0.6.0 board=promicro keys=8 leds=1 bytes=1024
+HELLO proto=1 fw=0.7.0 board=promicro keys=8 leds=1 bytes=1024
 ```
 
 호스트는 `proto`가 자신이 아는 버전보다 크면 연결을 거부하고 사용자에게 앱 업데이트를
@@ -83,7 +83,7 @@ STATE bright=64 ledmode=host hid=1 up=123456
 
 ```
 OK  id=7
-ERR id=7 code=<verb|arg|range|crc|long|busy|nomem>
+ERR id=7 code=<verb|arg|range|crc|long|busy|nomem|unsupported>
 ```
 
 ### `LOG` — 진단
@@ -111,9 +111,9 @@ LOG lvl=<d|i|w|e> msg=<base64>
 | --- | --- |
 | `LED mode=<host\|local>` | 앰비언트 계층 소유권. `host`는 3초 워치독이 걸립니다 |
 | `LED bright=<0..255>` | 전역 밝기. 전력 상한 스케일링은 이 뒤에 적용됩니다 |
-| `LED i=<0..7> rgb=<RRGGBB> [fx=<효과>] [ms=<주기>]` | 픽셀 하나 |
+| `LED i=<0..leds-1> rgb=<RRGGBB> [fx=<효과>] [ms=<주기>]` | 픽셀 하나. 지금은 픽셀이 1개라 `i=0`뿐 |
 | `LED all rgb=<RRGGBB> [fx=..] [ms=..]` | 전체 동일 색 |
-| `LED frame=<RRGGBB,…8개>` | 전체 프레임 한 번에. 애니메이션은 호스트가 계산 |
+| `LED frame=<RRGGBB,…leds개>` | 전체 프레임 한 번에. 애니메이션은 호스트가 계산 |
 | `LED bar=<0..100> rgb=<RRGGBB>` | 진행률 바 (디버그/미리보기용) |
 
 효과: `solid`, `breathe`, `pulse`, `blink`, `flash`, `rainbow`.
@@ -157,7 +157,7 @@ LOG lvl=<d|i|w|e> msg=<base64>
 | --- | --- |
 | `SAVE` | 런타임 변경(밝기 등)을 EEPROM에 반영 |
 | `RESET defaults=1` | 공장 초기화 |
-| `BOOT` | 부트로더 진입 (펌웨어 업데이트용) |
+| `BOOT` | 부트로더 진입 (펌웨어 업데이트용). 진입 방법이 없는 빌드는 `ERR code=unsupported` |
 
 ## 5. 연결 수립 절차
 
@@ -165,7 +165,7 @@ LOG lvl=<d|i|w|e> msg=<base64>
 
 1. 후보 시리얼 포트를 찾습니다 (VID/PID 또는 사용자 지정).
 2. 포트를 열고 **2초 대기**합니다. Leonardo는 포트 열 때 리셋될 수 있습니다.
-3. `IDENT`를 보내고 1초 안에 `HELLO`를 기다립니다. 없으면 다음 후보로 넘어갑니다.
+3. `IDENT`를 보내고 2초 안에 `HELLO`를 기다립니다. 없으면 다음 후보로 넘어갑니다.
 4. `proto` 버전을 확인합니다.
 5. `PROF read`로 장치 프로필을 읽어 로컬 프로필과 비교합니다. 다르면 사용자에게
    어느 쪽을 기준으로 할지 묻습니다. **말없이 덮어쓰지 않습니다.**
@@ -173,6 +173,9 @@ LOG lvl=<d|i|w|e> msg=<base64>
    앱을 종료해도 됩니다 — 패드는 HID로 혼자 동작합니다.
 
 연결이 끊기면 지수 백오프(1s → 2s → 4s → 최대 30s)로 3번 절차부터 재시도합니다.
+**한 번이라도 맺어졌던 링크에 한해서**입니다. 앱을 켤 때 패드가 없었던 경우까지 타이머로
+계속 재시도하면 무관한 시리얼 장치의 포트를 반복해서 여는 셈이 되고, 포트를 여는 것만으로
+리셋되는 보드가 흔합니다. 사용자가 직접 Disconnect한 경우도 재시도하지 않습니다.
 
 ## 6. 버전 정책
 

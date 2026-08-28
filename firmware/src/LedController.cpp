@@ -66,7 +66,6 @@ void LedController::noteMacroBusy(uint8_t key, uint32_t now) {
   macroBusy_ = true;
   macroBusyIndex_ = index;
   macroBusyStartedAt_ = now == 0 ? 1 : now;
-  dirty_ = true;
 }
 
 void LedController::noteMacroDone(uint8_t key, uint32_t now) {
@@ -82,7 +81,6 @@ void LedController::setHostMode(bool enabled, uint32_t now, uint16_t timeoutMs) 
   // Handing control back always restores the default, so one session asking for
   // a long window cannot leave the next host stuck with it.
   hostTimeoutMs_ = (enabled && timeoutMs > 0) ? timeoutMs : MK_LED_HOST_TIMEOUT_MS;
-  dirty_ = true;
 }
 
 void LedController::setPixel(uint8_t index, Rgb color, uint8_t effect, uint16_t period,
@@ -90,7 +88,6 @@ void LedController::setPixel(uint8_t index, Rgb color, uint8_t effect, uint16_t 
   if (index >= MK_LED_COUNT) return;
   ambient_[index] = AmbientPixel{color, now, period, effect};
   noteHostAlive(now);
-  dirty_ = true;
 }
 
 void LedController::setAll(Rgb color, uint8_t effect, uint16_t period, uint32_t now) {
@@ -98,7 +95,6 @@ void LedController::setAll(Rgb color, uint8_t effect, uint16_t period, uint32_t 
     ambient_[i] = AmbientPixel{color, now, period, effect};
   }
   noteHostAlive(now);
-  dirty_ = true;
 }
 
 void LedController::setFrame(const Rgb *colors, uint8_t count, uint32_t now) {
@@ -107,7 +103,6 @@ void LedController::setFrame(const Rgb *colors, uint8_t count, uint32_t now) {
     ambient_[i] = AmbientPixel{color, now, 0, FX_SOLID};
   }
   noteHostAlive(now);
-  dirty_ = true;
 }
 
 void LedController::setBar(uint8_t percent, Rgb color, uint32_t now) {
@@ -126,7 +121,6 @@ void LedController::setBar(uint8_t percent, Rgb color, uint32_t now) {
     ambient_[i] = AmbientPixel{pixel, now, 0, FX_SOLID};
   }
   noteHostAlive(now);
-  dirty_ = true;
 }
 
 void LedController::applyPowerLimit(Rgb *frame) const {
@@ -243,10 +237,8 @@ void LedController::update(uint32_t now) {
     // The desktop app went away. Fall back to the local scene instead of
     // freezing on whatever colour it last sent.
     hostMode_ = false;
-    dirty_ = true;
   }
   if (now - lastRenderAt_ < RENDER_INTERVAL_MS) return;
   lastRenderAt_ = now;
   render(now);
-  dirty_ = false;
 }

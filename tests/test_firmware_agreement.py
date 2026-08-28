@@ -34,9 +34,11 @@ pytestmark = pytest.mark.skipif(
     COMPILER is None, reason="no C++ compiler, so the firmware cannot be run here"
 )
 
-#: Sources the harness needs. LedEffects comes along because LedController uses it.
+#: Sources the harness needs. LedEffects comes along because LedController uses
+#: it, and SerialProtocol because a command's effect on the device -- not merely
+#: its reply -- is the thing worth testing.
 SOURCES = ("Profile.cpp", "Util.cpp", "KeyEngine.cpp", "ButtonInput.cpp",
-           "LedController.cpp", "LedEffects.cpp")
+           "LedController.cpp", "LedEffects.cpp", "SerialProtocol.cpp")
 
 
 @pytest.fixture(scope="session")
@@ -66,6 +68,32 @@ def run(harness: Path, *args: str, blob: bytes | None = None) -> list[str]:
 
 def fields(lines: list[str]) -> dict[str, int]:
     return {line.split()[0]: int(line.split()[1]) for line in lines if line}
+
+
+def serial(harness: Path, blob: bytes, *commands: str) -> tuple[dict[str, int], list[str]]:
+    """Runs `commands` against the real serial layer on a pad holding `blob`.
+
+    Returns the device state either side of them, and the lines the pad sent
+    back. State first because the reply is rarely the interesting part: the
+    failures this catches are commands that answered `OK` and left the pad
+    holding something stale.
+    """
+    lines = run(harness, "serial", "".join(f"{line}\n" for line in commands), blob=blob)
+    cut = lines.index("--- transcript")
+    return fields(lines[:cut]), lines[cut + 1 :]
+
+
+def profile_transfer(blob: bytes) -> list[str]:
+    """The host half of a profile write, as lines."""
+    import base64
+
+    crc = binary.blob_crc(blob)
+    lines = [f"PROF begin bytes={len(blob)} crc={crc:04X}"]
+    for sequence, offset in enumerate(range(0, len(blob), binary.CHUNK_BYTES)):
+        payload = base64.b64encode(blob[offset : offset + binary.CHUNK_BYTES]).decode()
+        lines.append(f"PROF data seq={sequence} b64={payload}")
+    lines.append("PROF commit")
+    return lines
 
 
 # ------------------------------------------------------------------- layout --
@@ -277,6 +305,43 @@ def test_authored_pauses_do_not_truncate_the_keys_after_them(harness) -> None:
     assert "key release 177" in lines
 
 
+def test_a_text_run_that_overruns_its_slot_stops_the_macro(harness) -> None:
+    """A text header says how many characters follow. Its end was computed in a
+    byte, so a header late in a long slot wrapped: record 200 claiming 200
+    characters worked out to 268, which truncated to 12 -- inside the slot, so
+    the truncation check passed, and *behind* the header, so the macro replayed
+    the same stretch for ever. The runaway deadline could not end it either,
+    because every character pushes the deadline out by the pause it then waits.
+
+    The pad cannot be made to hold such a slot by this app, and the profile CRC
+    rules out getting there by corruption -- but the failure is a keypad that
+    types nothing and answers nothing until it is unplugged, so the guard is
+    worth having be a guard.
+    """
+    profile = model.default_profile()
+    blob = bytearray(binary.encode_profile(profile))
+
+    count = 210
+    blob[binary.MACRO_OFFSET] = count
+    base = binary.MACRO_OFFSET + binary.MACRO_INDEX_SIZE
+    for index in range(count):
+        at = base + index * binary.RECORD_SIZE
+        blob[at : at + binary.RECORD_SIZE] = bytes(3)
+    # Something visible inside the stretch the wrap would replay again.
+    marker = model.Action(kind="key", hotkey="esc").encode()
+    blob[base + 50 * 3 : base + 50 * 3 + 3] = bytes(marker[:3])
+    # 1 + (200 + 2) // 3 = 68 records past record 200, which is 268 -> 12.
+    blob[base + 200 * 3 : base + 200 * 3 + 3] = bytes((model.ACTION_TYPE_IDS["text"], 200, 0))
+    crc = binary.crc16(bytes(blob[binary.HEADER_SIZE :]))
+    blob[12], blob[13] = crc & 0xFF, crc >> 8
+
+    lines = run(harness, "replay", "0", blob=bytes(blob))
+
+    # KEY_ESC is 0xB1 = 177. Once: the run is refused as truncated and the
+    # macro ends there. Looping, it is pressed until the deadline gives out.
+    assert lines.count("key press 177") == 1
+
+
 @pytest.mark.parametrize("slot", [0, 1])
 def test_replay_never_leaves_a_key_or_button_held(harness, slot: int) -> None:
     """A press the host never sees released is a key it believes is still down,
@@ -301,6 +366,64 @@ def test_replay_never_leaves_a_key_or_button_held(harness, slot: int) -> None:
 
     assert held_keys == set(), f"keys still held: {sorted(held_keys)}"
     assert held_buttons == set(), f"buttons still held: {sorted(held_buttons)}"
+
+
+# ------------------------------------------------------------------ serial --
+
+
+def stocked_profile() -> model.Profile:
+    """A pad that is *not* at its defaults, so a reset has something to undo."""
+    profile = model.default_profile()
+    profile.brightness = 200
+    profile.set_action(0, "double", model.Action(kind="key", hotkey="ctrl+z"))
+    return profile
+
+
+def test_reset_refreshes_what_the_rest_of_the_firmware_had_cached(harness) -> None:
+    """`RESET defaults=1` rewrites the keymap under two things that had read it.
+
+    The engine caches which keys have a double binding -- only those pay the
+    double-tap delay -- and the pixel is driven from the LED controller's own
+    copy of the brightness. Neither was told, so after a factory reset from the
+    editor's Reset button a key whose double binding had just been erased still
+    deferred its tap and then answered a double-tap with the unbound colour,
+    and the pixel kept a brightness the app no longer showed. Until it was
+    unplugged, which is not something the button says to do.
+    """
+    blob = binary.encode_profile(stocked_profile())
+
+    state, replies = serial(harness, blob, "RESET defaults=1")
+
+    assert state["mask_before"] == 0b1 and state["bright_before"] == 200
+    assert state["mask_after"] == 0, "the erased double binding still defers its tap"
+    assert state["bright_after"] == 64, "the pixel kept the old brightness"
+    assert replies == ["OK"]
+
+
+def test_a_written_profile_lights_the_pixel_at_its_own_brightness(harness) -> None:
+    """The same staleness on the other write path.
+
+    The GUI hid this by sending `LED bright=` before writing the profile, but
+    `macrokey push` does not, so a profile whose brightness had changed took
+    effect on everything except the light.
+    """
+    dim = stocked_profile()
+    dim.brightness = 12
+    state, _ = serial(harness, binary.encode_profile(stocked_profile()),
+                      *profile_transfer(binary.encode_profile(dim)))
+
+    assert state["bright_before"] == 200
+    assert state["bright_after"] == 12
+
+
+def test_boot_is_refused_where_there_is_no_way_into_the_bootloader(harness) -> None:
+    """The AVR arm jumps to Caterina and never returns; every other build has to
+    say it cannot, because a BOOT that silently did nothing looks exactly like a
+    pad that stopped answering -- at the moment someone is re-flashing it.
+    """
+    _, replies = serial(harness, binary.encode_profile(model.default_profile()), "BOOT")
+
+    assert replies == ["ERR code=unsupported"]
 
 
 def test_the_harness_is_built_from_the_real_sources() -> None:
