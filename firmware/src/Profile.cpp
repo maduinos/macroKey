@@ -1,8 +1,8 @@
 #include "Profile.h"
 
-#include <EEPROM.h>
 #include <stdlib.h>
 
+#include "Storage.h"
 #include "Util.h"
 
 namespace {
@@ -23,10 +23,10 @@ enum : uint16_t {
 };
 
 void writeAction(uint16_t address, const Action &action) {
-  EEPROM.update(address + 0, action.type);
-  EEPROM.update(address + 1, action.a);
-  EEPROM.update(address + 2, action.b);
-  EEPROM.update(address + 3, action.c);
+  mkStoreUpdate(address + 0, action.type);
+  mkStoreUpdate(address + 1, action.a);
+  mkStoreUpdate(address + 2, action.b);
+  mkStoreUpdate(address + 3, action.c);
 }
 
 Action makeKey(uint8_t modifiers, uint8_t keycode, uint8_t flags = KEYF_NONE) {
@@ -41,17 +41,21 @@ uint16_t Profile::keymapAddress(uint8_t key, uint8_t gesture) const {
 }
 
 bool Profile::begin() {
-  bool valid = EEPROM.read(MK_HEADER_OFFSET + H_MAGIC + 0) == MK_PROFILE_MAGIC0 &&
-               EEPROM.read(MK_HEADER_OFFSET + H_MAGIC + 1) == MK_PROFILE_MAGIC1 &&
-               EEPROM.read(MK_HEADER_OFFSET + H_MAGIC + 2) == MK_PROFILE_MAGIC2 &&
-               EEPROM.read(MK_HEADER_OFFSET + H_MAGIC + 3) == MK_PROFILE_MAGIC3 &&
-               EEPROM.read(MK_HEADER_OFFSET + H_SCHEMA) == MK_PROFILE_SCHEMA &&
-               EEPROM.read(MK_HEADER_OFFSET + H_KEYS) == MK_KEY_COUNT &&
-               EEPROM.read(MK_HEADER_OFFSET + H_GESTURES) == MK_KEYMAP_GESTURES;
+  // Before the first read, not once at the first write: on a flash-emulated
+  // store there is nothing to read until this has run.
+  mkStoreBegin();
+
+  bool valid = mkStoreRead(MK_HEADER_OFFSET + H_MAGIC + 0) == MK_PROFILE_MAGIC0 &&
+               mkStoreRead(MK_HEADER_OFFSET + H_MAGIC + 1) == MK_PROFILE_MAGIC1 &&
+               mkStoreRead(MK_HEADER_OFFSET + H_MAGIC + 2) == MK_PROFILE_MAGIC2 &&
+               mkStoreRead(MK_HEADER_OFFSET + H_MAGIC + 3) == MK_PROFILE_MAGIC3 &&
+               mkStoreRead(MK_HEADER_OFFSET + H_SCHEMA) == MK_PROFILE_SCHEMA &&
+               mkStoreRead(MK_HEADER_OFFSET + H_KEYS) == MK_KEY_COUNT &&
+               mkStoreRead(MK_HEADER_OFFSET + H_GESTURES) == MK_KEYMAP_GESTURES;
 
   if (valid) {
-    uint16_t stored = (uint16_t)EEPROM.read(MK_HEADER_OFFSET + H_CRC_LO) |
-                      ((uint16_t)EEPROM.read(MK_HEADER_OFFSET + H_CRC_HI) << 8);
+    uint16_t stored = (uint16_t)mkStoreRead(MK_HEADER_OFFSET + H_CRC_LO) |
+                      ((uint16_t)mkStoreRead(MK_HEADER_OFFSET + H_CRC_HI) << 8);
     valid = stored == bodyCrc();
   }
 
@@ -60,9 +64,9 @@ bool Profile::begin() {
     return false;
   }
 
-  brightness_ = EEPROM.read(MK_HEADER_OFFSET + H_BRIGHTNESS);
-  flags_ = EEPROM.read(MK_HEADER_OFFSET + H_FLAGS);
-  textDelayMs_ = EEPROM.read(MK_HEADER_OFFSET + H_TEXT_DELAY);
+  brightness_ = mkStoreRead(MK_HEADER_OFFSET + H_BRIGHTNESS);
+  flags_ = mkStoreRead(MK_HEADER_OFFSET + H_FLAGS);
+  textDelayMs_ = mkStoreRead(MK_HEADER_OFFSET + H_TEXT_DELAY);
   return true;
 }
 
@@ -73,10 +77,10 @@ Action Profile::action(uint8_t key, uint8_t gesture) const {
   // empty action rather than off the end of the region.
   if (key >= MK_KEY_COUNT || gesture >= MK_KEYMAP_GESTURES) return result;
   uint16_t address = keymapAddress(key, gesture);
-  result.type = EEPROM.read(address + 0);
-  result.a = EEPROM.read(address + 1);
-  result.b = EEPROM.read(address + 2);
-  result.c = EEPROM.read(address + 3);
+  result.type = mkStoreRead(address + 0);
+  result.a = mkStoreRead(address + 1);
+  result.b = mkStoreRead(address + 2);
+  result.c = mkStoreRead(address + 3);
   if (result.type >= ACT_TYPE_COUNT) result.type = ACT_NONE;
   return result;
 }
@@ -85,22 +89,22 @@ Rgb Profile::paletteColor(uint8_t led) const {
   Rgb color = {0, 0, 0};
   if (led >= MK_LED_COUNT) return color;
   uint16_t address = MK_PALETTE_OFFSET + (uint16_t)led * 3;
-  color.r = EEPROM.read(address + 0);
-  color.g = EEPROM.read(address + 1);
-  color.b = EEPROM.read(address + 2);
+  color.r = mkStoreRead(address + 0);
+  color.g = mkStoreRead(address + 1);
+  color.b = mkStoreRead(address + 2);
   return color;
 }
 
 uint8_t Profile::macroRecordCount(uint8_t slot) const {
   if (slot >= MK_MACRO_SLOTS) return 0;
-  return EEPROM.read(MK_MACRO_OFFSET + slot);
+  return mkStoreRead(MK_MACRO_OFFSET + slot);
 }
 
 uint16_t Profile::macroBase(uint8_t slot) const {
   if (slot >= MK_MACRO_SLOTS) return 0;
   uint16_t base = 0;
   for (uint8_t earlier = 0; earlier < slot; earlier++) {
-    base += EEPROM.read(MK_MACRO_OFFSET + earlier);
+    base += mkStoreRead(MK_MACRO_OFFSET + earlier);
   }
   return base;
 }
@@ -112,52 +116,55 @@ MacroStep Profile::macroRecord(uint16_t base, uint8_t index) const {
 
   uint16_t address =
       MK_MACRO_OFFSET + MK_MACRO_INDEX_SIZE + position * MK_MACRO_RECORD_SIZE;
-  record.type = EEPROM.read(address + 0);
-  record.a = EEPROM.read(address + 1);
-  record.b = EEPROM.read(address + 2);
+  record.type = mkStoreRead(address + 0);
+  record.a = mkStoreRead(address + 1);
+  record.b = mkStoreRead(address + 2);
   return record;
 }
 
 void Profile::readRaw(uint16_t offset, uint8_t *out, uint16_t length) const {
   for (uint16_t i = 0; i < length; i++) {
     uint16_t address = offset + i;
-    out[i] = address < MK_PROFILE_SIZE ? EEPROM.read(address) : 0;
+    out[i] = address < MK_PROFILE_SIZE ? mkStoreRead(address) : 0;
   }
 }
 
 uint16_t Profile::bodyCrc() const {
   uint16_t crc = 0xFFFF;
   for (uint16_t address = MK_HEADER_SIZE; address < MK_PROFILE_SIZE; address++) {
-    uint8_t byte = EEPROM.read(address);
+    uint8_t byte = mkStoreRead(address);
     crc = mkCrc16(&byte, 1, crc);
   }
   return crc;
 }
 
 void Profile::writeHeaderFields(uint16_t crc) {
-  EEPROM.update(MK_HEADER_OFFSET + H_MAGIC + 0, MK_PROFILE_MAGIC0);
-  EEPROM.update(MK_HEADER_OFFSET + H_MAGIC + 1, MK_PROFILE_MAGIC1);
-  EEPROM.update(MK_HEADER_OFFSET + H_MAGIC + 2, MK_PROFILE_MAGIC2);
-  EEPROM.update(MK_HEADER_OFFSET + H_MAGIC + 3, MK_PROFILE_MAGIC3);
-  EEPROM.update(MK_HEADER_OFFSET + H_SCHEMA, MK_PROFILE_SCHEMA);
-  EEPROM.update(MK_HEADER_OFFSET + H_LAYERS, 1);      // retired, kept for layout
-  EEPROM.update(MK_HEADER_OFFSET + H_KEYS, MK_KEY_COUNT);
-  EEPROM.update(MK_HEADER_OFFSET + H_GESTURES, MK_KEYMAP_GESTURES);
-  EEPROM.update(MK_HEADER_OFFSET + H_BRIGHTNESS, brightness_);
-  EEPROM.update(MK_HEADER_OFFSET + H_BASE_LAYER, 0);  // retired, kept for layout
-  EEPROM.update(MK_HEADER_OFFSET + H_FLAGS, flags_);
-  EEPROM.update(MK_HEADER_OFFSET + H_TEXT_DELAY, textDelayMs_);
-  EEPROM.update(MK_HEADER_OFFSET + H_CRC_LO, (uint8_t)(crc & 0xFF));
-  EEPROM.update(MK_HEADER_OFFSET + H_CRC_HI, (uint8_t)(crc >> 8));
-  EEPROM.update(MK_HEADER_OFFSET + 14, 0);
-  EEPROM.update(MK_HEADER_OFFSET + 15, 0);
+  mkStoreUpdate(MK_HEADER_OFFSET + H_MAGIC + 0, MK_PROFILE_MAGIC0);
+  mkStoreUpdate(MK_HEADER_OFFSET + H_MAGIC + 1, MK_PROFILE_MAGIC1);
+  mkStoreUpdate(MK_HEADER_OFFSET + H_MAGIC + 2, MK_PROFILE_MAGIC2);
+  mkStoreUpdate(MK_HEADER_OFFSET + H_MAGIC + 3, MK_PROFILE_MAGIC3);
+  mkStoreUpdate(MK_HEADER_OFFSET + H_SCHEMA, MK_PROFILE_SCHEMA);
+  mkStoreUpdate(MK_HEADER_OFFSET + H_LAYERS, 1);      // retired, kept for layout
+  mkStoreUpdate(MK_HEADER_OFFSET + H_KEYS, MK_KEY_COUNT);
+  mkStoreUpdate(MK_HEADER_OFFSET + H_GESTURES, MK_KEYMAP_GESTURES);
+  mkStoreUpdate(MK_HEADER_OFFSET + H_BRIGHTNESS, brightness_);
+  mkStoreUpdate(MK_HEADER_OFFSET + H_BASE_LAYER, 0);  // retired, kept for layout
+  mkStoreUpdate(MK_HEADER_OFFSET + H_FLAGS, flags_);
+  mkStoreUpdate(MK_HEADER_OFFSET + H_TEXT_DELAY, textDelayMs_);
+  mkStoreUpdate(MK_HEADER_OFFSET + H_CRC_LO, (uint8_t)(crc & 0xFF));
+  mkStoreUpdate(MK_HEADER_OFFSET + H_CRC_HI, (uint8_t)(crc >> 8));
+  mkStoreUpdate(MK_HEADER_OFFSET + 14, 0);
+  mkStoreUpdate(MK_HEADER_OFFSET + 15, 0);
+  // Every write path -- saveHeader, writeDefaults, stageCommit -- finishes
+  // here, which makes this the one place the store has to be flushed.
+  mkStoreCommit();
 }
 
 void Profile::saveHeader() { writeHeaderFields(bodyCrc()); }
 
 void Profile::writeDefaults() {
   for (uint16_t address = MK_HEADER_SIZE; address < MK_PROFILE_SIZE; address++) {
-    EEPROM.update(address, 0);
+    mkStoreUpdate(address, 0);
   }
 
   // Layer 0 taps: hyper (ctrl+alt+shift) plus 1..8. Nothing sane binds that
@@ -177,9 +184,9 @@ void Profile::writeDefaults() {
   const Rgb resting = {60, 80, 115};
   for (uint8_t led = 0; led < MK_LED_COUNT; led++) {
     uint16_t address = MK_PALETTE_OFFSET + led * 3;
-    EEPROM.update(address + 0, resting.r);
-    EEPROM.update(address + 1, resting.g);
-    EEPROM.update(address + 2, resting.b);
+    mkStoreUpdate(address + 0, resting.r);
+    mkStoreUpdate(address + 1, resting.g);
+    mkStoreUpdate(address + 2, resting.b);
   }
 
   brightness_ = MK_LED_DEFAULT_BRIGHTNESS;
@@ -218,7 +225,7 @@ bool Profile::stageCommit() {
             mkCrc16(stage_ + MK_HEADER_SIZE, stageBytes_ - MK_HEADER_SIZE) == stageCrc_;
   if (ok) {
     for (uint16_t address = MK_HEADER_SIZE; address < stageBytes_; address++) {
-      EEPROM.update(address, stage_[address]);
+      mkStoreUpdate(address, stage_[address]);
     }
     // The staged header carries the tunables; magic and CRC are ours to write.
     brightness_ = stage_[MK_HEADER_OFFSET + H_BRIGHTNESS];

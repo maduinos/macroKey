@@ -103,5 +103,4 @@ class LedController {
   uint16_t hostTimeoutMs_ = MK_LED_HOST_TIMEOUT_MS;
   uint8_t brightness_ = MK_LED_DEFAULT_BRIGHTNESS;
   bool hostMode_ = false;
-  bool dirty_ = true;
 };

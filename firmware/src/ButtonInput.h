@@ -17,7 +17,7 @@ class ButtonInput {
   // Pops one pending gesture. Returns false when the queue is empty.
   bool nextEvent(KeyEvent *out);
 
-  uint8_t pressedMask() const { return pressedMask_; }
+  mk_keymask_t pressedMask() const { return pressedMask_; }
   //: Set when a key has been held alone long enough to mean "program me".
   //: Cleared by reading it, so the engine sees each request exactly once.
   int8_t takeRecordRequest();
@@ -30,7 +30,7 @@ class ButtonInput {
   // Swallows every gesture from these keys until they are released. Used when
   // a record request claims the key, so letting go does not also fire its
   // binding: the person is programming the key, not using it.
-  void suppressUntilRelease(uint8_t mask);
+  void suppressUntilRelease(mk_keymask_t mask);
 
   // Keys whose current layer has a DOUBLE binding. Only these pay the double-tap
   // detection delay; every other key emits its tap the instant it is released.
@@ -40,7 +40,7 @@ class ButtonInput {
   // this mask is, by definition, the keys where it is not. The pair is spotted
   // from the gap between a release and the next press instead, which costs no
   // latency: an unbound key still fires its tap the instant it comes up.
-  void setDoubleTapMask(uint8_t mask) { doubleTapMask_ = mask; }
+  void setDoubleTapMask(mk_keymask_t mask) { doubleTapMask_ = mask; }
 
  private:
   enum Phase : uint8_t {
@@ -80,9 +80,9 @@ class ButtonInput {
   KeyEvent queue_[QUEUE_SIZE];
   uint8_t queueHead_ = 0;
   uint8_t queueCount_ = 0;
-  uint8_t pressedMask_ = 0;
+  mk_keymask_t pressedMask_ = 0;
   int8_t recordRequest_ = -1;
   uint8_t recordGesture_ = GESTURE_TAP;
-  uint8_t doubleTapMask_ = 0;
+  mk_keymask_t doubleTapMask_ = 0;
   uint32_t lastPressEdgeAt_ = 0;
 };

@@ -141,7 +141,7 @@ def key_name(keycode: int) -> str:
 
 
 # HID consumer page usages. Only reachable when the firmware is built with
-# MK_USE_HID_PROJECT=1; otherwise the device reports the action as unsupported.
+# MK_USE_HID_PROJECT=1; a build without it cannot send these at all.
 CONSUMER_USAGES: dict[str, int] = {
     "volume_up": 0x00E9,
     "volume_down": 0x00EA,

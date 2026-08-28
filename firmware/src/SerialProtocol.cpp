@@ -1,18 +1,29 @@
 #include "SerialProtocol.h"
 
-#include <avr/wdt.h>
 #include <stdlib.h>
 #include <string.h>
+
+#if defined(__AVR__)
+#include <avr/wdt.h>
+#endif
 
 #include "HidBackend.h"
 #include "Util.h"
 
 namespace {
 
+#if defined(__AVR__)
+
 // Caterina (the Leonardo bootloader) checks this RAM word after a watchdog
-// reset and stays in the bootloader when it holds the magic value.
+// reset and stays in the bootloader when it holds the magic value. Both halves
+// are specific to this bootloader on this architecture -- 0x0800 is a fixed
+// address in the 32u4's SRAM -- which is why they sit behind the guard rather
+// than in a header. A part with a different bootloader needs its own arm here
+// and nothing else in the firmware changes.
 uint16_t *const kBootKeyPtr = (uint16_t *)0x0800;
 const uint16_t kBootKey = 0x7777;
+
+#define MK_HAS_BOOTLOADER_ENTRY 1
 
 void enterBootloader() {
   *kBootKeyPtr = kBootKey;
@@ -20,6 +31,15 @@ void enterBootloader() {
   for (;;) {
   }
 }
+
+#else
+
+// No way in from here on this build. Answering `ERR code=unsupported` is the
+// point: a BOOT that silently did nothing would look exactly like a pad that
+// had stopped answering, at the moment someone is trying to re-flash it.
+#define MK_HAS_BOOTLOADER_ENTRY 0
+
+#endif
 
 }  // namespace
 
@@ -366,6 +386,11 @@ void SerialProtocol::cmdProfile(uint32_t now) {
   if (strcmp(sub_, "commit") == 0) {
     if (profile_->stageCommit()) {
       engine_->noteProfileChanged();
+      // The staged header carries a brightness, and the pixel is driven from
+      // the controller's copy of it -- so without this a profile written with
+      // a new brightness looked right in the app and unchanged on the pad
+      // until it was next unplugged.
+      leds_->setBrightness(profile_->brightness());
       sendOk();
     } else {
       sendErr("crc");
@@ -418,6 +443,12 @@ void SerialProtocol::handleLine(uint32_t now) {
     uint32_t defaults = 0;
     if (argUInt("defaults", &defaults) && defaults == 1) {
       profile_->writeDefaults();
+      // Exactly what a commit does, for exactly the same reasons. The keymap
+      // just changed under the engine, whose cached double-tap mask would
+      // otherwise keep deferring taps on keys whose double binding this call
+      // has just erased -- and the pixel would hold the old brightness.
+      engine_->noteProfileChanged();
+      leds_->setBrightness(profile_->brightness());
       sendOk();
     } else {
       sendErr("arg");
@@ -428,9 +459,13 @@ void SerialProtocol::handleLine(uint32_t now) {
     debug_ = on != 0;
     sendOk();
   } else if (strcmp(verb_, "BOOT") == 0) {
+#if MK_HAS_BOOTLOADER_ENTRY
     sendOk();
     Serial.flush();
     enterBootloader();
+#else
+    sendErr("unsupported");
+#endif
   } else {
     sendErr("verb");
   }

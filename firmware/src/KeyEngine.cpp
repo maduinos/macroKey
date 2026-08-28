@@ -17,10 +17,10 @@ void KeyEngine::setReportCallback(MkKeyReportFn key) {
 // Only keys that actually have a double-tap binding pay the detection delay;
 // everything else stays instant on release.
 void KeyEngine::refreshDoubleTapMask() {
-  uint8_t mask = 0;
+  mk_keymask_t mask = 0;
   for (uint8_t key = 0; key < MK_KEY_COUNT; key++) {
     if (profile_->action(key, GESTURE_DOUBLE).type != ACT_NONE) {
-      mask |= (uint8_t)(1 << key);
+      mask |= (mk_keymask_t)((mk_keymask_t)1 << key);
     }
   }
   input_->setDoubleTapMask(mask);
@@ -53,11 +53,6 @@ void KeyEngine::dispatch(const Action &action, uint8_t key, uint32_t now) {
   switch (action.type) {
     case ACT_KEY:
       dispatchKey(action);
-      if (action.c & KEYF_REPEAT) {
-        repeatAction_ = action;
-        repeatKey_ = (int8_t)key;
-        repeatNextAt_ = now + MK_HOLD_REPEAT_MS;
-      }
       break;
 
     case ACT_CONSUMER:
@@ -85,6 +80,8 @@ void KeyEngine::dispatch(const Action &action, uint8_t key, uint32_t now) {
       break;
 
     case ACT_LED_SCENE:
+      // Back to the profile's colour. `action.a` is reserved: one palette entry
+      // per pixel means there is no second scene to select.
       leds_->setHostMode(false, now);
       break;
 
@@ -132,7 +129,12 @@ void KeyEngine::macroPump() {
 
 uint8_t KeyEngine::runText(uint16_t base, uint8_t header, uint8_t length, uint8_t count) {
   uint8_t payload = (uint8_t)((length + 2) / 3);  // three characters per record
-  uint8_t next = (uint8_t)(header + 1 + payload);
+  // Widened deliberately. As a uint8_t this wrapped: a header at record 200
+  // claiming 200 characters computed 268, which truncated to 12 -- past the
+  // check below, and then *backwards*, so the macro replayed the same stretch
+  // for ever. The runaway deadline could not stop it either, because every
+  // character extends the deadline by exactly the pause it then waits out.
+  uint16_t next = (uint16_t)header + 1 + payload;
   // A run whose characters were cut off by the end of the slot. Typing what is
   // there would spray whatever the neighbouring records happen to hold.
   if (next > count) return count;
@@ -147,7 +149,7 @@ uint8_t KeyEngine::runText(uint16_t base, uint8_t header, uint8_t length, uint8_
       macroWait(profile_->textDelayMs());
     }
   }
-  return next;
+  return (uint8_t)next;
 }
 
 void KeyEngine::runMacro(uint8_t slot, uint8_t key, uint32_t now) {
@@ -205,11 +207,7 @@ void KeyEngine::runMacro(uint8_t slot, uint8_t key, uint32_t now) {
 
 void KeyEngine::handleEvent(const KeyEvent &event, uint32_t now) {
   if (event.released) {
-    // End of a hold. Stop any auto-repeat it armed.
-    if (repeatKey_ == (int8_t)event.key) {
-      repeatKey_ = -1;
-      repeatAction_.type = ACT_NONE;
-    }
+    // End of a hold. Nothing is bound to one, so this is a report and no more.
     if (onKey_ != NULL) onKey_(event.key, event.gesture, true);
     return;
   }
@@ -239,28 +237,6 @@ void KeyEngine::handleEvent(const KeyEvent &event, uint32_t now) {
   if (onKey_ != NULL) onKey_(event.key, event.gesture, false);
 }
 
-void KeyEngine::serviceRepeat(uint32_t now) {
-  if (repeatKey_ < 0 || repeatAction_.type != ACT_KEY) return;
-
-  // Disarmed from the physical state, not from a release event. Only a hold is
-  // reported with `released` set -- a tap is pushed with released=false and a
-  // suppressed key emits nothing at all -- so a repeating action armed by a tap
-  // was never disarmed, and the pad went on sending that keystroke eight times
-  // a second for ever. From the host that is indistinguishable from the
-  // keyboard having died.
-  if ((input_->pressedMask() & (uint8_t)(1 << repeatKey_)) == 0) {
-    repeatKey_ = -1;
-    repeatAction_.type = ACT_NONE;
-    return;
-  }
-
-  if ((int32_t)(now - repeatNextAt_) < 0) return;
-  repeatNextAt_ = now + MK_HOLD_REPEAT_MS;
-  Action once = repeatAction_;
-  once.c = (uint8_t)(once.c & ~KEYF_REPEAT);  // avoid re-arming on every tick
-  dispatchKey(once);
-}
-
 void KeyEngine::update(uint32_t now) {
   // Asked for before anything else this pass, so the request is reported even
   // if the same tick also produces ordinary key events.
@@ -268,7 +244,7 @@ void KeyEngine::update(uint32_t now) {
   if (recordKey >= 0 && onRecord_ != NULL) {
     // The key is still down. Suppressing it stops the release from firing the
     // binding as well: the person is programming the key, not using it.
-    input_->suppressUntilRelease((uint8_t)(1 << recordKey));
+    input_->suppressUntilRelease((mk_keymask_t)((mk_keymask_t)1 << recordKey));
     onRecord_((uint8_t)recordKey, input_->recordGesture());
   }
 
@@ -279,6 +255,5 @@ void KeyEngine::update(uint32_t now) {
     handleEvent(event, now);
   }
 
-  serviceRepeat(now);
   if (!doubleTapMaskReady_) refreshDoubleTapMask();
 }

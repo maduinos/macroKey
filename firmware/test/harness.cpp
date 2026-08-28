@@ -12,6 +12,7 @@
 //   profile           read a blob on stdin, print the keymap and macro records
 //   buttons           press patterns -> which slot a record request names
 //   replay <slot>     run a macro through the real KeyEngine, print HID calls
+//   serial            feed lines to the real SerialProtocol, print what changed
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -29,6 +30,7 @@
 #include "KeyEngine.h"
 #include "LedController.h"
 #include "Profile.h"
+#include "SerialProtocol.h"
 #undef private
 
 uint32_t gClock = 0;
@@ -44,6 +46,7 @@ static Profile gProfile;
 static ButtonInput gInput;
 static LedController gLeds;
 static KeyEngine gEngine;
+static SerialProtocol gSerial;
 
 static bool readBlob() {
   return fread(EEPROM.data, 1, sizeof(EEPROM.data), stdin) == sizeof(EEPROM.data);
@@ -196,12 +199,59 @@ static int modeReplay(int argc, char **argv) {
   return 0;
 }
 
+// ------------------------------------------------------------------ serial --
+
+// Brings the whole device up the way firmware.ino does, so a command runs
+// against the same objects it would on the pad.
+static void bootDevice() {
+  gInput.begin();
+  gProfile.begin();
+  gLeds.begin(&gProfile);
+  gEngine.begin(&gProfile, &gInput, &gLeds);
+  gSerial.begin(&gProfile, &gEngine, &gLeds);
+  gClock = MK_BOOT_GRACE_MS + 1;
+  gEngine.update(gClock);  // builds the double-tap mask, as the first loop does
+}
+
+// One pass of loop(), for the parts a command can disturb.
+static void pump() {
+  gSerial.update(gClock);
+  gEngine.update(gClock);
+  gLeds.update(gClock);
+}
+
+static void reportState(const char *when) {
+  printf("mask_%s %u\n", when, gInput.doubleTapMask_);
+  printf("bright_%s %u\n", when, gLeds.brightness());
+}
+
+static int modeSerial(int argc, char **argv) {
+  if (!readBlob()) return 2;
+  gClockStep = 0;  // this mode drives time itself
+  bootDevice();
+  reportState("before");
+
+  Serial.out_length = 0;
+  Serial.out[0] = '\0';
+  if (argc > 2) {
+    Serial.feed(argv[2]);
+    pump();
+  }
+  reportState("after");
+
+  // The transcript last: it is many lines, so anything parsed by position
+  // stays above it.
+  printf("--- transcript\n%s", Serial.out);
+  return 0;
+}
+
 int main(int argc, char **argv) {
   const char *mode = argc > 1 ? argv[1] : "layout";
   if (strcmp(mode, "layout") == 0) return modeLayout();
   if (strcmp(mode, "profile") == 0) return modeProfile();
   if (strcmp(mode, "buttons") == 0) return modeButtons();
   if (strcmp(mode, "replay") == 0) return modeReplay(argc, argv);
+  if (strcmp(mode, "serial") == 0) return modeSerial(argc, argv);
   fprintf(stderr, "unknown mode %s\n", mode);
   return 2;
 }

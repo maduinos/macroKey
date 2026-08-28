@@ -111,7 +111,10 @@ ACTION_TYPE_IDS: dict[str, int] = {
     "mouse_home": 13,
 }
 
-KEYF_REPEAT = 0x01
+#: 0x01 was KEYF_REPEAT, auto-repeat while a key is held. Nothing could reach
+#: it once hold stopped being bindable -- tap and double both fire on release,
+#: so the pad disarmed the repeat on the next scan without ever running it. The
+#: bit stays reserved because it is a wire format; the field is gone.
 KEYF_STICKY = 0x02
 
 #: `Action.mode` for kind="mouse_button", stored in the record's `b` byte.
@@ -148,9 +151,11 @@ class Action:
     dy: int = 0
     delta: int = 0         # kind="mouse_wheel"
     slot: int = 0          # kind="sequence"
-    scene: int = 0         # kind="led_scene"
+    scene: int = 0         # kind="led_scene", reserved: the pad has one scene
     delay_ms: int = 0      # kind="delay", macro steps only
-    repeat: bool = False
+    #: A one-shot modifier: arms the modifiers for the *next* key rather than
+    #: sending anything now. The firmware honours it; the editor does not offer
+    #: it yet, so nothing currently sets it.
     sticky: bool = False
 
     def __post_init__(self) -> None:
@@ -204,8 +209,7 @@ class Action:
         type_id = ACTION_TYPE_IDS[self.kind]
         if self.kind == "key":
             modifiers, code = keycodes.parse_hotkey(self.hotkey)
-            flags = (KEYF_REPEAT if self.repeat else 0) | (KEYF_STICKY if self.sticky else 0)
-            return type_id, modifiers, code, flags
+            return type_id, modifiers, code, KEYF_STICKY if self.sticky else 0
         if self.kind == "consumer":
             usage = keycodes.CONSUMER_USAGES.get(self.usage)
             if usage is None:
@@ -241,7 +245,6 @@ class Action:
             return cls(
                 kind="key",
                 hotkey=keycodes.format_hotkey(a, b),
-                repeat=bool(c & KEYF_REPEAT),
                 sticky=bool(c & KEYF_STICKY),
             )
         if kind == "consumer":
@@ -269,7 +272,7 @@ class Action:
     def describe(self) -> str:
         """Human-readable summary, shown before a recording is saved."""
         if self.kind == "key":
-            suffix = " (repeat)" if self.repeat else " (sticky)" if self.sticky else ""
+            suffix = " then the next key" if self.sticky else ""
             return f"{self.hotkey}{suffix}"
         if self.kind == "consumer":
             return f"media: {self.usage}"
