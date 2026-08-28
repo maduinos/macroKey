@@ -152,6 +152,96 @@ uint8_t KeyEngine::runText(uint16_t base, uint8_t header, uint8_t length, uint8_
   return (uint8_t)next;
 }
 
+void KeyEngine::pumpUntil(uint32_t at) {
+  while ((int32_t)(millis() - at) < 0) macroPump();
+}
+
+// A recorded move is a *slice* of motion, not a jump. The host sums 50 ms of
+// raw mouse counts into one record, so replaying it as a single HID report
+// hands the desktop one enormous delta where the mouse had sent fifty small
+// ones -- and pointer acceleration reads that as a very fast movement and
+// multiplies it. The macro then overshoots, by more the faster it was drawn.
+//
+// The recording already says how long the motion took: it is the pause that
+// follows. Spending that pause moving, a report at a time, replays the gesture
+// at the speed it was made, so whatever acceleration curve is in force applies
+// to the replay exactly as it applied to the hand. It cancels instead of
+// compounding, and nobody has to change a desktop setting for it.
+void KeyEngine::emitMove(int8_t dx, int8_t dy, uint16_t overMs) {
+  int16_t reachX = dx < 0 ? -dx : dx;
+  int16_t reachY = dy < 0 ? -dy : dy;
+  int16_t span = reachX > reachY ? reachX : reachY;
+  if (span == 0) {
+    if (overMs != 0) pumpUntil(millis() + overMs);
+    return;
+  }
+
+  // One report per millisecond at the most -- the USB frame is the floor --
+  // and never less than one count per report, which is what caps this at the
+  // distance itself. With no pause to spend, this is a single report: the old
+  // behaviour, for a macro that has no timing to honour.
+  uint16_t steps = overMs < (uint16_t)span ? overMs : (uint16_t)span;
+  if (steps == 0) steps = 1;
+
+  uint32_t startedAt = millis();
+  int16_t doneX = 0;
+  int16_t doneY = 0;
+  for (uint16_t step = 1; step <= steps; step++) {
+    int16_t x = (int16_t)((int32_t)dx * step / steps) - doneX;
+    int16_t y = (int16_t)((int32_t)dy * step / steps) - doneY;
+    doneX += x;
+    doneY += y;
+    if (x != 0 || y != 0) mkMouseMove((int8_t)x, (int8_t)y);
+    // An absolute target, so the millisecond a report itself costs comes out
+    // of the interval. Waiting a fixed amount after each one would stretch the
+    // gesture to twice the time it was recorded over.
+    if (overMs != 0) {
+      pumpUntil(startedAt + (uint32_t)overMs * step / steps);
+    }
+  }
+}
+
+uint8_t KeyEngine::runMoves(uint16_t base, uint8_t first, uint8_t count) {
+  // Consecutive move records are one slice that was too long for a signed
+  // byte, so they share the pause that follows them rather than each getting
+  // it. Splitting a slice must not stretch the gesture.
+  uint8_t end = first;
+  while (end < count && profile_->macroRecord(base, end).type == ACT_MOUSE_MOVE) end++;
+
+  uint8_t next = end;
+  uint16_t pauseMs = 0;
+  if (next < count) {
+    MacroStep following = profile_->macroRecord(base, next);
+    if (following.type == ACT_DELAY) {
+      pauseMs = (uint16_t)following.a * 10;
+      next++;
+    }
+  }
+
+  // The pause is consumed here, so the deadline has to grow by it exactly as
+  // it would have had ACT_DELAY reached macroWait.
+  if (macroDeadline_ != 0) macroDeadline_ += pauseMs;
+
+  // No pause after it means the recording ended here, not that the pointer
+  // teleported: it is still one slice of motion and gets a slice's worth.
+  uint16_t spread = pauseMs == 0 ? (uint16_t)MK_MACRO_MOVE_SLICE_MS
+                    : pauseMs > MK_MACRO_MOVE_SPREAD_MAX_MS
+                        ? (uint16_t)MK_MACRO_MOVE_SPREAD_MAX_MS
+                        : pauseMs;
+  if (pauseMs == 0 && macroDeadline_ != 0) macroDeadline_ += spread;
+  uint8_t moves = (uint8_t)(end - first);
+  uint16_t perMove = moves != 0 ? (uint16_t)(spread / moves) : 0;
+
+  for (uint8_t at = first; at < end; at++) {
+    MacroStep move = profile_->macroRecord(base, at);
+    emitMove((int8_t)move.a, (int8_t)move.b, perMove);
+  }
+
+  // Whatever of the pause was not spent moving is still a pause.
+  if (pauseMs > spread) pumpUntil(millis() + (uint16_t)(pauseMs - spread));
+  return next;
+}
+
 void KeyEngine::runMacro(uint8_t slot, uint8_t key, uint32_t now) {
   // No clamp against MK_MACRO_MAX_RECORDS: the count is one byte and the limit
   // is 255, which Profile.h asserts. Reading past the region is what actually
@@ -179,6 +269,10 @@ void KeyEngine::runMacro(uint8_t slot, uint8_t key, uint32_t now) {
 
     if (record.type == ACT_TEXT) {
       index = runText(base, index, record.a, count);
+      continue;
+    }
+    if (record.type == ACT_MOUSE_MOVE) {
+      index = runMoves(base, index, count);
       continue;
     }
     index++;

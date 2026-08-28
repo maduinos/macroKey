@@ -23,6 +23,7 @@ from pathlib import Path
 import pytest
 
 from macrokey.config import binary, model
+from macrokey.recorder.evdev_source import MOTION_SLICE_SECONDS
 from macrokey.recorder.normalize import reduce_to_device_macro
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -116,6 +117,12 @@ def test_the_two_layouts_are_the_same_layout(harness) -> None:
         "profile_size": binary.PROFILE_SIZE,
         "schema": binary.SCHEMA,
         "text_delay_default": FIRMWARE_TEXT_DELAY_MS,
+        # What one move record represents. The firmware replays a move over
+        # this long when nothing after it says otherwise, so if the recorder
+        # ever slices motion differently the pad would replay every drag at the
+        # wrong speed -- and pointer acceleration would turn that into landing
+        # somewhere else.
+        "move_slice_ms": int(MOTION_SLICE_SECONDS * 1000),
     }
 
 
@@ -280,10 +287,78 @@ def test_a_drag_holds_the_button_across_the_movement(harness) -> None:
     drag = mouse[homing:]
     assert drag[0] == "mouse press 1"
     moves = [line for line in drag if line.startswith("mouse move")]
-    assert len(moves) == 3
+    # Not the three records the host stored: the pad spreads each one over the
+    # time it was recorded over, so the count here is reports, not records.
+    # What has to hold is where the pointer ends up and that the button was
+    # down the whole way.
     assert sum(int(line.split()[2]) for line in moves) == 300
     assert sum(int(line.split()[3]) for line in moves) == -200
     assert "mouse release 1" in drag
+
+
+def moved(lines: list[str]) -> list[tuple[int, int]]:
+    return [
+        (int(line.split()[2]), int(line.split()[3]))
+        for line in lines
+        if line.startswith("mouse move")
+    ]
+
+
+def recorded_drag(counts: int, slices: int, *, per_record: int | None = None):
+    """A profile whose slot 0 is `slices` slices of steady rightward motion.
+
+    Built through the real recorder pipeline rather than by hand: the thing
+    under test is that the firmware reads back the timing the normalizer wrote.
+    """
+    from macrokey.recorder.events import MOUSE_MOVE, RawEvent
+    from macrokey.recorder.normalize import compile_device_macro, normalize
+
+    events = [
+        RawEvent(kind=MOUSE_MOVE, token="move", at=index * MOTION_SLICE_SECONDS,
+                 data=(counts, 0))
+        for index in range(slices)
+    ]
+    profile = model.default_profile()
+    profile.device_macros = [compile_device_macro(normalize(events))]
+    profile.set_action(0, "tap", model.Action(kind="sequence", slot=0))
+    return profile
+
+
+def test_a_move_is_replayed_at_the_speed_it_was_recorded_at(harness) -> None:
+    """One record is 50 ms of motion, not a jump.
+
+    The host sums raw mouse counts into 50 ms slices, so replaying a slice as a
+    single HID report hands the desktop one huge delta where the mouse had sent
+    fifty small ones. Pointer acceleration reads a delta that size as a very
+    fast movement and multiplies it, so the macro overshoots -- and by more the
+    faster the gesture was drawn. Spending the recorded pause on the movement
+    puts the replay back at the speed of the hand, which is what makes the
+    acceleration curve cancel instead of compound.
+    """
+    blob = binary.encode_profile(recorded_drag(counts=100, slices=5))
+
+    steps = moved(run(harness, "replay", "0", blob=blob))
+
+    assert sum(dx for dx, _ in steps) == 500, "the pointer must still land there"
+    assert all(dy == 0 for _, dy in steps)
+    # 100 counts over 50 ms is 2 counts per USB frame, which is what the mouse
+    # itself sent. Before this, it was five reports of 100.
+    assert max(abs(dx) for dx, _ in steps) <= 3
+    assert len(steps) >= 200
+
+
+def test_a_slice_too_long_for_one_record_is_still_one_slice(harness) -> None:
+    """A move past 127 counts becomes several records, and they share the pause
+    that follows rather than each taking it -- otherwise splitting a slice
+    would stretch the gesture to several times the time it was drawn in."""
+    blob = binary.encode_profile(recorded_drag(counts=500, slices=3))
+
+    steps = moved(run(harness, "replay", "0", blob=blob))
+
+    assert sum(dx for dx, _ in steps) == 1500
+    # 500 counts across one 50 ms slice is 10 a frame, however many records the
+    # host needed to write it down.
+    assert max(abs(dx) for dx, _ in steps) <= 11
 
 
 def test_authored_pauses_do_not_truncate_the_keys_after_them(harness) -> None:

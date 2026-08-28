@@ -177,3 +177,73 @@ def fix_capture(*, grant_devices: bool = True) -> tuple[bool, str]:
 
 def wayland_session() -> bool:
     return os.environ.get("XDG_SESSION_TYPE", "").lower() == "wayland"
+
+
+# ------------------------------------------------- pointer acceleration ----
+#
+# The pad is a relative mouse: it sends "move this far", and the desktop decides
+# how far that is on screen. With an adaptive acceleration curve that decision
+# depends on how *fast* the deltas arrive, so a replayed gesture only lands
+# where it was recorded if it is replayed at the speed it was made.
+#
+# The firmware does replay at that speed now, which is what makes the curve
+# cancel rather than compound. A flat profile removes the variable entirely --
+# the mapping is then a constant and replay is exact -- so it is worth offering,
+# but it is a preference on someone's desktop and not ours to change quietly.
+
+_ACCEL_SCHEMA = "org.gnome.desktop.peripherals.mouse"
+_ACCEL_KEY = "accel-profile"
+
+
+def _gsettings(*arguments: str) -> str | None:
+    """Runs gsettings, or returns None where there is no such setting to read."""
+    if sys.platform != "linux":
+        return None
+    try:
+        done = subprocess.run(
+            ["gsettings", *arguments],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if done.returncode != 0:
+        return None
+    return done.stdout.strip()
+
+
+def pointer_accel_profile() -> str | None:
+    """The desktop's pointer acceleration profile, or None if unreadable.
+
+    None on Windows, on a desktop that is not GNOME, and anywhere gsettings is
+    absent -- all of which mean the same thing here: there is nothing to offer,
+    so say nothing rather than guess.
+    """
+    value = _gsettings("get", _ACCEL_SCHEMA, _ACCEL_KEY)
+    return value.strip("'\"") if value else None
+
+
+def pointer_accel_is_flat() -> bool:
+    """True only when the profile is known to be flat. Unknown is not flat."""
+    return pointer_accel_profile() == "flat"
+
+
+def pointer_accel_can_be_flattened() -> bool:
+    """Whether there is a setting here worth offering to change."""
+    profile = pointer_accel_profile()
+    return profile is not None and profile != "flat"
+
+
+def set_pointer_accel_flat() -> tuple[bool, str]:
+    """Switches the desktop to flat pointer acceleration.
+
+    The user's own setting, changed only on an explicit yes, and reversible from
+    the same place -- so the message that offers it says how to put it back.
+    """
+    if _gsettings("set", _ACCEL_SCHEMA, _ACCEL_KEY, "flat") is None:
+        return False, "could not change the pointer acceleration setting"
+    if not pointer_accel_is_flat():
+        return False, "the pointer acceleration setting did not take"
+    return True, "pointer acceleration is now flat"

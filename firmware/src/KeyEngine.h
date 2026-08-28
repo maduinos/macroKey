@@ -58,6 +58,17 @@ class KeyEngine {
   void runMacro(uint8_t slot, uint8_t key, uint32_t now);
   // Types one text run. Returns the record index just past it.
   uint8_t runText(uint16_t base, uint8_t header, uint8_t length, uint8_t count);
+  // Replays a run of consecutive move records at the speed they were recorded
+  // at. Returns the record index just past the run, and past the pause it
+  // spent moving through.
+  uint8_t runMoves(uint16_t base, uint8_t first, uint8_t count);
+  // One move, delivered as a mouse would have delivered it: many small reports
+  // across `overMs`, rather than the whole distance in a single report.
+  void emitMove(int8_t dx, int8_t dy, uint16_t overMs);
+  // Keeps the pad alive until `at`. Unlike macroWait this takes an absolute
+  // deadline, so time spent inside HID reports comes out of the interval
+  // instead of being added to it.
+  void pumpUntil(uint32_t at);
   // delay(), but the pad stays awake. When a macro is running, intentional
   // pauses extend the runaway deadline so authored timing is not truncated.
   void macroWait(uint16_t milliseconds);
