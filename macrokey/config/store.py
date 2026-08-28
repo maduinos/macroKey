@@ -81,6 +81,10 @@ class Settings:
     #: When True, the editor will not offer the one-click capture fix again.
     #: Cleared automatically is not done: the person said "not now".
     capture_setup_declined: bool = False
+    #: Same, for the offer to flatten pointer acceleration. It is a preference
+    #: on someone's desktop, so a no stays no -- Help > Mouse macro accuracy
+    #: asks again for anyone who changes their mind.
+    pointer_accel_declined: bool = False
 
     @classmethod
     def load(cls) -> Settings:
@@ -113,6 +117,7 @@ class Settings:
             "recorder_capture_mouse",
             "recorder_anchor_mouse",
             "capture_setup_declined",
+            "pointer_accel_declined",
         ):
             value = data.get(field)
             if isinstance(value, bool):

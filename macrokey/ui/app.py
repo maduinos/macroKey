@@ -36,7 +36,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .. import __version__
+from .. import __version__, capture_setup
 from ..app import MacroKeyApp
 from ..config import (
     KEY_COUNT,
@@ -251,6 +251,9 @@ class MainWindow(QMainWindow):
         # the one-click fix once the window is up, not before connect: the pad
         # works without it, and a modal during splash feels like a failure.
         QTimer.singleShot(400, self._maybe_fix_capture)
+        # After the capture prompt, and only for someone who already records
+        # the mouse -- for a keyboard-only macro none of this matters.
+        QTimer.singleShot(900, self._offer_flat_pointer_at_startup)
 
     def _pin_minimum_width(self) -> None:
         """Keeps the window from being narrower than its toolbar.
@@ -368,11 +371,16 @@ class MainWindow(QMainWindow):
             "Mouse macro accuracy",
             "Default mouse replay is relative: clicks happen at the current pointer, "
             "and movement starts there. This is the reliable choice.\n\n"
+            "The keypad replays a recorded movement over the time it was recorded "
+            "over, rather than as one jump, so pointer acceleration affects the "
+            "replay the same way it affected your hand. Flat acceleration removes "
+            "the variable altogether -- macroKey will offer that next.\n\n"
             "Fixed position is experimental. It homes to the top-left and depends "
             "on the same monitor layout, scaling, pointer speed/acceleration, window "
             "positions, and application state. Test fixed-position macros on a safe "
             "target before assigning them to destructive actions.",
         )
+        self._offer_flat_pointer(asked_for=True)
 
     def _show_gesture_help(self) -> None:
         QMessageBox.information(
@@ -590,6 +598,75 @@ class MainWindow(QMainWindow):
         self.app.recorder.capture_mouse = checked
         self.anchor_mouse.setEnabled(checked and not self.session.recording)
         self.app.settings.save()
+        if checked:
+            self._offer_flat_pointer()
+
+    # ------------------------------------------------- pointer acceleration --
+
+    def _offer_flat_pointer(self, *, asked_for: bool = False) -> None:
+        """Offers to remove pointer acceleration from mouse replay.
+
+        The pad sends relative movement, so the desktop decides how far that is
+        on screen. An adaptive profile makes that decision depend on speed; the
+        firmware replays at the recorded speed so the curve mostly cancels, but
+        flat removes the variable and makes replay exact.
+
+        It is someone's desktop preference, so this asks and never assumes, and
+        a no is remembered. `asked_for` is the path from the Help menu, which
+        both ignores that no and says something when there is nothing to fix.
+        """
+        profile = capture_setup.pointer_accel_profile()
+        if profile is None:
+            if asked_for:
+                QMessageBox.information(
+                    self,
+                    "Pointer acceleration",
+                    "This desktop does not expose a pointer acceleration setting "
+                    "that macroKey can read, so there is nothing to change here.",
+                )
+            return
+        if profile == "flat":
+            if asked_for:
+                QMessageBox.information(
+                    self,
+                    "Pointer acceleration",
+                    "Pointer acceleration is already flat, which is the setting "
+                    "mouse macros replay most accurately under.",
+                )
+            return
+        if not asked_for and self.app.settings.pointer_accel_declined:
+            return
+
+        answer = QMessageBox.question(
+            self,
+            "Pointer acceleration",
+            f"Your desktop scales pointer movement by how fast it is "
+            f"(acceleration profile: {profile!r}).\n\n"
+            "The keypad replays a recorded movement at the speed it was made, "
+            "so this largely cancels out. Turning it off removes the variable "
+            "entirely and is what makes a mouse macro land exactly where it "
+            "was recorded.\n\n"
+            "Switch to flat pointer acceleration? It changes how the mouse "
+            "feels everywhere, not just in macros. To undo it later:\n\n"
+            "    gsettings set org.gnome.desktop.peripherals.mouse "
+            "accel-profile 'default'",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if answer != QMessageBox.Yes:
+            if not asked_for:
+                self.app.settings.pointer_accel_declined = True
+                self.app.settings.save()
+                self.statusBar().showMessage(
+                    "Left pointer acceleration alone. Help > Mouse macro accuracy "
+                    "offers it again."
+                )
+            return
+
+        ok, message = capture_setup.set_pointer_accel_flat()
+        self.statusBar().showMessage(message)
+        if not ok:
+            QMessageBox.warning(self, "Pointer acceleration", message)
 
     def _anchor_mouse_toggled(self, checked: bool) -> None:
         self.app.settings.recorder_anchor_mouse = checked
@@ -1293,6 +1370,11 @@ class MainWindow(QMainWindow):
             self.port_box.setCurrentText(AUTO_PORT)
             self.statusBar().showMessage(f"{chosen} is gone; looking for the keypad")
         self._toggle_connection(quiet=True)
+
+    def _offer_flat_pointer_at_startup(self) -> None:
+        if self._closing or not self.app.settings.recorder_capture_mouse:
+            return
+        self._offer_flat_pointer()
 
     def _retry_capture_setup(self) -> None:
         self.app.settings.capture_setup_declined = False

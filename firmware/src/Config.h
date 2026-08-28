@@ -6,7 +6,7 @@
 
 #include <Arduino.h>
 
-#define MK_FIRMWARE_VERSION "0.7.0"
+#define MK_FIRMWARE_VERSION "0.8.0"
 #define MK_PROTOCOL_VERSION 1
 #define MK_BOARD_NAME "promicro"
 
@@ -182,6 +182,26 @@ static const uint8_t MK_KEY_PINS[MK_KEY_COUNT] = {3, 4, 5, 6, 7, 8, 9, 10};
 // wide. 128 covers 16256 raw units, including two 8K-wide displays; the old
 // 6096-unit push stopped short on ordinary dual-4K horizontal layouts.
 #define MK_MOUSE_HOME_STEPS 128
+
+// A recorded pointer move is replayed spread across the pause that follows it,
+// so it travels at the speed it was made at instead of arriving as one jump.
+// This caps how much of that pause may be spent moving.
+//
+// The host slices raw motion into 50 ms pieces and flushes a resting pointer
+// after 120 ms, so anything past this is not a gesture that was still moving --
+// it is the person having stopped. Spreading a move across *that* would make
+// the pointer crawl for the length of a pause it was never moving through.
+#define MK_MACRO_MOVE_SPREAD_MAX_MS 150
+
+// How long one recorded move record represents. The host sums raw motion into
+// pieces this long (MOTION_SLICE_SECONDS in macrokey/recorder/evdev_source.py)
+// and the firmware agreement test holds the two to the same number.
+//
+// It matters for the last move of a recording, which has no pause after it to
+// read the duration from. It is still one slice of motion, so replaying it as
+// a single jump would put the overshoot this whole mechanism removes back on
+// the end of every drag -- which is exactly where a drag is aimed.
+#define MK_MACRO_MOVE_SLICE_MS 50
 
 // Between characters of a text run. The host needs a report boundary to see
 // them as separate keystrokes; below about 4 ms fast applications drop some.
