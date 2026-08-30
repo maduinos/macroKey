@@ -77,7 +77,8 @@ arduino-cli compile --upload --fqbn SparkFun:avr:promicro:cpu=16MHzatmega32U4 \
 | 문서 | 내용 |
 | --- | --- |
 | [`docs/manual.html`](docs/manual.html) | 사용 설명 |
-| [`docs/wiring.html`](docs/wiring.html) | 핀맵·조립 |
+| [`docs/wiring.html`](docs/wiring.html) | 핀맵·조립 (Pro Micro / ATmega32u4) |
+| [`docs/wiring-rp2040.html`](docs/wiring-rp2040.html) | 핀맵·조립·포팅 (ProMicro RP2040) |
 | [`docs/HARDWARE.md`](docs/HARDWARE.md) | 전력·부품 |
 | [`docs/PROTOCOL.md`](docs/PROTOCOL.md) | 시리얼 프로토콜 |
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | 내부 설계 |
