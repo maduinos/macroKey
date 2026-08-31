@@ -18,6 +18,12 @@ SPARKFUN_PRODUCTS = {0x9203, 0x9204, 0x9205, 0x9206}
 KNOWN_USB_IDS = {
     *((vendor, product) for vendor in (0x2341, 0x2A03) for product in ARDUINO_PRODUCTS),
     *((0x1B4F, product) for product in SPARKFUN_PRODUCTS),
+    # arduino-pico CDC-only and CDC+HID composite ids. The exact product id
+    # depends on which USB interfaces the sketch enables.
+    (0x2E8A, 0x000A),
+    (0x2E8A, 0xF009),
+    (0x2E8A, 0xF00A),
+    (0x2E8A, 0xF10A),
 }
 
 

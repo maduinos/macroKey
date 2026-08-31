@@ -35,7 +35,8 @@ HID 입력과 시리얼은 완전히 독립입니다. 시리얼을 아무도 열
 부팅 직후 한 번, 그리고 `IDENT` 요청마다 보냅니다.
 
 ```
-HELLO proto=1 fw=0.8.0 board=promicro keys=8 leds=1 bytes=1024
+HELLO proto=1 fw=0.9.0 board=promicro keys=8 leds=1 bytes=1024
+HELLO proto=1 fw=0.9.0 board=promicro-rp2040 keys=8 leds=1 bytes=65520
 ```
 
 호스트는 `proto`가 자신이 아는 버전보다 크면 연결을 거부하고 사용자에게 앱 업데이트를
@@ -124,11 +125,12 @@ LOG lvl=<d|i|w|e> msg=<base64>
 
 ### 프로필 전송
 
-프로필 블롭(**1024** 바이트)을 base64 청크로 나눠 보냅니다. 한 줄 96바이트 제한 때문에 청크당
-페이로드는 48바이트(base64 64자)입니다.
+프로필 블롭(AVR **1,024 B**, RP2040 **65,520 B**)을 base64 청크로 나눠 보냅니다.
+`HELLO bytes=`가 해당 장치의 크기이며, 호스트는 다른 크기를 잘라 보내지 않고 거부합니다.
+한 줄 96바이트 제한 때문에 청크당 페이로드는 48바이트(base64 64자)입니다.
 
 ```
-호스트: PROF begin bytes=1024 crc=<CRC16 hex>
+호스트: PROF begin bytes=<HELLO의 bytes> crc=<CRC16 hex>
 장치:   OK
 호스트: PROF data seq=0 b64=<64자>
 장치:   OK
@@ -145,7 +147,7 @@ LOG lvl=<d|i|w|e> msg=<base64>
 
 ```
 호스트: PROF read
-장치:   PROF begin bytes=1024 crc=<hex>
+장치:   PROF begin bytes=<HELLO의 bytes> crc=<hex>
         PROF data seq=0 b64=<…>
         …
         PROF end
@@ -155,7 +157,7 @@ LOG lvl=<d|i|w|e> msg=<base64>
 
 | 메시지 | 설명 |
 | --- | --- |
-| `SAVE` | 런타임 변경(밝기 등)을 EEPROM에 반영 |
+| `SAVE` | 런타임 변경(밝기 등)을 영구 저장소에 반영 |
 | `RESET defaults=1` | 공장 초기화 |
 | `BOOT` | 부트로더 진입 (펌웨어 업데이트용). 진입 방법이 없는 빌드는 `ERR code=unsupported` |
 

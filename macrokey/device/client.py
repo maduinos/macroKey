@@ -34,7 +34,7 @@ DisconnectCallback = Callable[[str], None]
 # The Leonardo re-enumerates when the port opens, so give it time before IDENT.
 OPEN_SETTLE_SECONDS = 2.0
 RESPONSE_TIMEOUT = 2.0
-PROFILE_READ_TIMEOUT = 8.0
+PROFILE_READ_TIMEOUT = 30.0
 # Committing a profile and restoring defaults write most of the AVR EEPROM.
 # EEPROM.update() is deliberately slow per changed byte, so a full profile can
 # legitimately take longer than an ordinary request without the link being bad.
@@ -167,10 +167,10 @@ class DeviceClient:
                 f"device speaks protocol v{hello.protocol}, this app speaks "
                 f"v{protocol.PROTOCOL_VERSION}. Update the side that is behind."
             )
-        if hello.profile_bytes != binary.PROFILE_SIZE:
+        if hello.profile_bytes not in binary.SUPPORTED_PROFILE_SIZES:
             raise DeviceError(
-                f"device profile is {hello.profile_bytes} bytes, this app builds "
-                f"{binary.PROFILE_SIZE}. Firmware and app are out of step."
+                f"device profile is {hello.profile_bytes} bytes, this app supports "
+                f"{sorted(binary.SUPPORTED_PROFILE_SIZES)}. Firmware and app are out of step."
             )
         if hello.keys != KEY_COUNT or hello.leds != LED_COUNT:
             raise DeviceError(
@@ -379,6 +379,7 @@ class DeviceClient:
             return self._read_profile_locked()
 
     def _read_profile_locked(self) -> bytes:
+        expected_size = self.hello.profile_bytes if self.hello is not None else binary.PROFILE_SIZE
         with self._request_lock:
             self._flush_responses()
             self.send(protocol.encode("PROF", "read"))
@@ -409,10 +410,10 @@ class DeviceClient:
                         declared_crc = int(message.get("crc", "") or "", 16)
                     except ValueError as exc:
                         raise DeviceError("device sent a malformed profile header") from exc
-                    if declared_bytes != binary.PROFILE_SIZE:
+                    if declared_bytes != expected_size:
                         raise DeviceError(
                             f"device declared {declared_bytes} profile bytes, "
-                            f"expected {binary.PROFILE_SIZE}"
+                            f"expected {expected_size}"
                         )
                 elif message.sub == "data":
                     if declared_bytes is None:
@@ -430,11 +431,11 @@ class DeviceClient:
                             f"device sent invalid base64 in profile chunk {sequence}"
                         ) from exc
                     offset = expected_sequence * binary.CHUNK_BYTES
-                    if offset >= binary.PROFILE_SIZE:
+                    if offset >= expected_size:
                         raise DeviceError(f"device sent unexpected extra profile chunk {sequence}")
                     expected_length = min(
                         binary.CHUNK_BYTES,
-                        binary.PROFILE_SIZE - offset,
+                        expected_size - offset,
                     )
                     if len(chunk) != expected_length:
                         raise DeviceError(
@@ -449,16 +450,17 @@ class DeviceClient:
                     break
 
         blob = b"".join(chunks[index] for index in sorted(chunks))
-        if len(blob) != binary.PROFILE_SIZE:
-            raise DeviceError(f"device sent {len(blob)} bytes, expected {binary.PROFILE_SIZE}")
+        if len(blob) != expected_size:
+            raise DeviceError(f"device sent {len(blob)} bytes, expected {expected_size}")
         if binary.blob_crc(blob) != declared_crc:
             raise DeviceError("device profile failed its checksum")
         return blob
 
     def write_profile(self, blob: bytes) -> None:
         """Stages the blob and commits it only if the device agrees on the CRC."""
-        if len(blob) != binary.PROFILE_SIZE:
-            raise DeviceError(f"profile must be {binary.PROFILE_SIZE} bytes")
+        expected_size = self.hello.profile_bytes if self.hello is not None else binary.PROFILE_SIZE
+        if len(blob) != expected_size:
+            raise DeviceError(f"profile must be {expected_size} bytes")
         with self._profile_lock:
             self._write_profile_locked(blob)
 

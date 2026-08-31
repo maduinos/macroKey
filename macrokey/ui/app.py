@@ -861,7 +861,8 @@ class MainWindow(QMainWindow):
 
     def _refresh_storage(self) -> None:
         used, capacity, used_pct, free_pct = macro_storage_usage(
-            self.app.profile.device_macros
+            self.app.profile.device_macros,
+            capacity=self.app.profile_layout.record_capacity,
         )
         self.storage_label.setText(
             f"Storage {used_pct}% used · {free_pct}% free ({used}/{capacity})"
@@ -1009,7 +1010,9 @@ class MainWindow(QMainWindow):
             )
             return
         try:
-            blob = binary.encode_profile(self.app.profile)
+            blob = binary.encode_profile(
+                self.app.profile, profile_size=self.app.profile_layout.size
+            )
         except ValueError as exc:
             self.statusMessage.emit(f"Could not build the keypad profile: {exc}")
             return

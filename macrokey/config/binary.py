@@ -6,6 +6,8 @@ If that header changes, this module changes with it and ``SCHEMA`` goes up.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from .model import (
     ACTION_TYPE_IDS,
     EDITABLE_GESTURES,
@@ -22,9 +24,8 @@ from .model import (
 )
 
 MAGIC = b"MKEY"
-#: Bumped from 1 with the layout below. The blob is the same 1024 bytes either
-#: way, so without this a pad holding the old arrangement would decode as
-#: nonsense rather than be recognised as out of date.
+#: Established ATmega32U4 schema. RP2040 uses schema 3 and a larger blob while
+#: this value and its byte layout stay unchanged for existing Pro Micro pads.
 SCHEMA = 2
 
 HEADER_SIZE = 16
@@ -62,6 +63,35 @@ _TEXT_TYPE = ACTION_TYPE_IDS["text"]
 CHUNK_BYTES = 48  # 48 raw bytes -> 64 base64 chars, inside the 96 byte line cap
 
 
+@dataclass(frozen=True)
+class ProfileLayout:
+    size: int
+    schema: int
+    count_bytes: int
+    max_records_per_slot: int
+
+    @property
+    def index_size(self) -> int:
+        return MACRO_SLOTS * self.count_bytes
+
+    @property
+    def record_capacity(self) -> int:
+        return (self.size - MACRO_OFFSET - self.index_size) // RECORD_SIZE
+
+
+AVR_LAYOUT = ProfileLayout(PROFILE_SIZE, SCHEMA, 1, MACRO_MAX_RECORDS)
+RP2040_PROFILE_SIZE = 65520
+RP2040_LAYOUT = ProfileLayout(RP2040_PROFILE_SIZE, 3, 2, 21800)
+SUPPORTED_PROFILE_SIZES = {layout.size for layout in (AVR_LAYOUT, RP2040_LAYOUT)}
+
+
+def layout_for_size(profile_size: int) -> ProfileLayout:
+    for layout in (AVR_LAYOUT, RP2040_LAYOUT):
+        if layout.size == profile_size:
+            return layout
+    raise ProfileError(f"unsupported device profile size: {profile_size}")
+
+
 def crc16(data: bytes) -> int:
     """CRC-16/CCITT-FALSE, the same polynomial and seed the firmware uses."""
     crc = 0xFFFF
@@ -87,11 +117,12 @@ def _parse_color(text: str) -> tuple[int, int, int]:
     return (packed >> 16) & 0xFF, (packed >> 8) & 0xFF, packed & 0xFF
 
 
-def encode_profile(profile: Profile) -> bytes:
-    blob = bytearray(PROFILE_SIZE)
+def encode_profile(profile: Profile, *, profile_size: int = PROFILE_SIZE) -> bytes:
+    layout = layout_for_size(profile_size)
+    blob = bytearray(layout.size)
 
     blob[0:4] = MAGIC
-    blob[4] = SCHEMA
+    blob[4] = layout.schema
     # Byte 5 was the layer count and byte 9 the base layer. Both are written as
     # the constants they became rather than reused: the firmware validates the
     # topology bytes on boot, so moving anything here would reject every pad.
@@ -115,7 +146,7 @@ def encode_profile(profile: Profile) -> bytes:
     red, green, blue = _parse_color(profile.resting_color)
     blob[PALETTE_OFFSET : PALETTE_OFFSET + 3] = bytes((red, green, blue))
 
-    _encode_macros(blob, profile)
+    _encode_macros(blob, profile, layout)
 
     crc = crc16(bytes(blob[HEADER_SIZE:]))
     blob[12] = crc & 0xFF
@@ -123,26 +154,29 @@ def encode_profile(profile: Profile) -> bytes:
     return bytes(blob)
 
 
-def _encode_macros(blob: bytearray, profile: Profile) -> None:
+def _encode_macros(blob: bytearray, profile: Profile, layout: ProfileLayout) -> None:
     """Packs every slot's records back to back, counts only in the index."""
-    records_base = MACRO_OFFSET + MACRO_INDEX_SIZE
+    records_base = MACRO_OFFSET + layout.index_size
     cursor = 0
     for slot_index, macro in enumerate(profile.device_macros[:MACRO_SLOTS]):
         records: list[tuple[int, int, int]] = []
         for action in macro:
             records.extend(action.records())
-        if len(records) > MACRO_MAX_RECORDS:
+        if len(records) > layout.max_records_per_slot:
             raise ProfileError(
                 f"macro slot {slot_index} needs {len(records)} records; "
-                f"a slot holds at most {MACRO_MAX_RECORDS}."
+                f"a slot holds at most {layout.max_records_per_slot}."
             )
-        if cursor + len(records) > MACRO_RECORD_CAPACITY:
+        if cursor + len(records) > layout.record_capacity:
             raise ProfileError(
                 f"device macro storage exhausted at slot {slot_index}: "
-                f"{MACRO_RECORD_CAPACITY} records available. "
+                f"{layout.record_capacity} records available. "
                 "Shorten a macro or clear unused keys."
             )
-        blob[MACRO_OFFSET + slot_index] = len(records)
+        count_address = MACRO_OFFSET + slot_index * layout.count_bytes
+        blob[count_address : count_address + layout.count_bytes] = len(records).to_bytes(
+            layout.count_bytes, "little"
+        )
         for record_index, record in enumerate(records):
             address = records_base + (cursor + record_index) * RECORD_SIZE
             blob[address : address + RECORD_SIZE] = bytes(record)
@@ -150,13 +184,12 @@ def _encode_macros(blob: bytearray, profile: Profile) -> None:
 
 
 def decode_profile(blob: bytes, *, name: str = "device") -> Profile:
-    if len(blob) != PROFILE_SIZE:
-        raise ProfileError(f"expected {PROFILE_SIZE} bytes, got {len(blob)}")
+    layout = layout_for_size(len(blob))
     if bytes(blob[0:4]) != MAGIC:
         raise ProfileError("bad magic: this is not a macroKey profile")
-    if blob[4] != SCHEMA:
+    if blob[4] != layout.schema:
         raise ProfileError(
-            f"device profile is schema {blob[4]}, this app builds {SCHEMA}. "
+            f"device profile is schema {blob[4]}, this layout needs {layout.schema}. "
             "Firmware and app are out of step -- re-flash the pad."
         )
 
@@ -169,11 +202,12 @@ def decode_profile(blob: bytes, *, name: str = "device") -> Profile:
         keys.append(KeySlot(**actions))
 
     macros: list[list[Action]] = []
-    records_base = MACRO_OFFSET + MACRO_INDEX_SIZE
+    records_base = MACRO_OFFSET + layout.index_size
     cursor = 0  # slots are packed in order, so this is each slot's start
     for slot_index in range(MACRO_SLOTS):
-        count = blob[MACRO_OFFSET + slot_index]
-        macros.append(_decode_macro(blob, records_base, cursor, count))
+        count_address = MACRO_OFFSET + slot_index * layout.count_bytes
+        count = int.from_bytes(blob[count_address : count_address + layout.count_bytes], "little")
+        macros.append(_decode_macro(blob, records_base, cursor, count, layout.size))
         cursor += count
     # Trailing empty slots carry no information; drop them so a decoded profile
     # compares equal to the one that produced it.
@@ -190,7 +224,9 @@ def decode_profile(blob: bytes, *, name: str = "device") -> Profile:
     )
 
 
-def _decode_macro(blob: bytes, base: int, start: int, count: int) -> list[Action]:
+def _decode_macro(
+    blob: bytes, base: int, start: int, count: int, profile_size: int
+) -> list[Action]:
     """Reads one slot back, folding text payload records into their run.
 
     A text header says how many characters follow, packed three to a record.
@@ -201,7 +237,7 @@ def _decode_macro(blob: bytes, base: int, start: int, count: int) -> list[Action
     index = 0
     while index < count:
         address = base + (start + index) * RECORD_SIZE
-        if address + RECORD_SIZE > PROFILE_SIZE:
+        if address + RECORD_SIZE > profile_size:
             break
         type_id, a, b = blob[address], blob[address + 1], blob[address + 2]
 

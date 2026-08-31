@@ -95,21 +95,26 @@ Rgb Profile::paletteColor(uint8_t led) const {
   return color;
 }
 
-uint8_t Profile::macroRecordCount(uint8_t slot) const {
+uint16_t Profile::macroRecordCount(uint8_t slot) const {
   if (slot >= MK_MACRO_SLOTS) return 0;
-  return mkStoreRead(MK_MACRO_OFFSET + slot);
+  uint16_t address = MK_MACRO_OFFSET + (uint16_t)slot * MK_MACRO_COUNT_BYTES;
+  uint16_t count = mkStoreRead(address);
+#if MK_MACRO_COUNT_BYTES == 2
+  count |= (uint16_t)mkStoreRead(address + 1) << 8;
+#endif
+  return count;
 }
 
 uint16_t Profile::macroBase(uint8_t slot) const {
   if (slot >= MK_MACRO_SLOTS) return 0;
   uint16_t base = 0;
   for (uint8_t earlier = 0; earlier < slot; earlier++) {
-    base += mkStoreRead(MK_MACRO_OFFSET + earlier);
+    base += macroRecordCount(earlier);
   }
   return base;
 }
 
-MacroStep Profile::macroRecord(uint16_t base, uint8_t index) const {
+MacroStep Profile::macroRecord(uint16_t base, uint16_t index) const {
   MacroStep record = {ACT_NONE, 0, 0};
   uint16_t position = base + index;
   if (position >= MK_MACRO_RECORD_CAPACITY) return record;
@@ -210,12 +215,15 @@ bool Profile::stageBegin(uint16_t byteCount, uint16_t crc) {
   return true;
 }
 
-bool Profile::stageChunk(uint8_t sequence, const uint8_t *data, uint8_t length) {
+bool Profile::stageChunk(uint16_t sequence, const uint8_t *data, uint8_t length) {
   if (stage_ == NULL) return false;
-  uint16_t offset = (uint16_t)sequence * MK_PROFILE_CHUNK_BYTES;
+  uint32_t wideOffset = (uint32_t)sequence * MK_PROFILE_CHUNK_BYTES;
+  if (wideOffset > 65535) return false;
+  uint16_t offset = (uint16_t)wideOffset;
   if (offset + length > stageBytes_) return false;
   memcpy(stage_ + offset, data, length);
   stageReceived_ += length;
+  stageStartedAt_ = millis();
   return true;
 }
 

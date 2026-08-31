@@ -19,6 +19,8 @@ from macrokey.ui.app import MainWindow  # noqa: E402
 
 
 class FakeDevice:
+    hello = None
+
     def __init__(self, connected: bool = True, fails: bool = False) -> None:
         self.connected = connected
         self._fails = fails
