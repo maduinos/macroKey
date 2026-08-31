@@ -241,13 +241,19 @@ class MacroKeyApp:
 
     # --------------------------------------------------------------- profile --
 
+    @property
+    def profile_layout(self) -> binary.ProfileLayout:
+        hello = self.device.hello
+        size = hello.profile_bytes if hello is not None else binary.PROFILE_SIZE
+        return binary.layout_for_size(size)
+
     def save(self) -> None:
         save_profile(self.profile)
         self.status("Profile saved")
 
     def push_profile(self) -> None:
         """Writes the host profile to the device, then says so on the pad."""
-        blob = binary.encode_profile(self.profile)
+        blob = binary.encode_profile(self.profile, profile_size=self.profile_layout.size)
         self.device.write_profile(blob)
         self.confirm_on_device()
 
@@ -273,7 +279,9 @@ class MacroKeyApp:
     def device_matches_host(self) -> bool:
         """True when device and host hold the same profile bytes."""
         try:
-            return self.device.read_profile() == binary.encode_profile(self.profile)
+            return self.device.read_profile() == binary.encode_profile(
+                self.profile, profile_size=self.profile_layout.size
+            )
         except (DeviceError, ValueError):
             return False
 
@@ -328,12 +336,13 @@ class MacroKeyApp:
         `also_free` is a slot that will be released when the binding that owns it
         is replaced -- counted as empty for capacity and reuse.
         """
-        from .config.model import MACRO_RECORD_CAPACITY, MACRO_SLOTS, macro_records
+        from .config.model import MACRO_SLOTS, macro_records
 
         macros = self.profile.device_macros
         needed = macro_records(macro)
         used = self._macro_capacity_used(ignore_slot=also_free)
-        if used + needed > MACRO_RECORD_CAPACITY:
+        layout = getattr(self, "profile_layout", binary.AVR_LAYOUT)
+        if used + needed > layout.record_capacity:
             return None
 
         limit = max(len(macros), MACRO_SLOTS)
@@ -351,7 +360,9 @@ class MacroKeyApp:
         if self.recorder.device_action(steps) is not None:
             return True
         macro = self.recorder.device_macro(
-            steps, anchor_pointer=getattr(self.recorder, "anchor_mouse", False)
+            steps,
+            anchor_pointer=getattr(self.recorder, "anchor_mouse", False),
+            max_records=self.profile_layout.max_records_per_slot,
         )
         if macro is None:
             return False
@@ -383,7 +394,9 @@ class MacroKeyApp:
         # whose recording contains one key the pad cannot send sends them off
         # trimming a macro that was never too long.
         macro = compile_device_macro(
-            steps, anchor_pointer=getattr(self.recorder, "anchor_mouse", False)
+            steps,
+            anchor_pointer=getattr(self.recorder, "anchor_mouse", False),
+            max_records=self.profile_layout.max_records_per_slot,
         )
         previous = self.profile.action(key, gesture)
         also_free = previous.slot if previous.kind == "sequence" else None

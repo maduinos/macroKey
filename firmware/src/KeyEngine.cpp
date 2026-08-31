@@ -127,7 +127,8 @@ void KeyEngine::macroPump() {
   if (onYield_ != NULL) onYield_();
 }
 
-uint8_t KeyEngine::runText(uint16_t base, uint8_t header, uint8_t length, uint8_t count) {
+uint16_t KeyEngine::runText(
+    uint16_t base, uint16_t header, uint8_t length, uint16_t count) {
   uint8_t payload = (uint8_t)((length + 2) / 3);  // three characters per record
   // Widened deliberately. As a uint8_t this wrapped: a header at record 200
   // claiming 200 characters computed 268, which truncated to 12 -- past the
@@ -140,7 +141,7 @@ uint8_t KeyEngine::runText(uint16_t base, uint8_t header, uint8_t length, uint8_
   if (next > count) return count;
 
   for (uint8_t record = 0; record < payload; record++) {
-    MacroStep packed = profile_->macroRecord(base, (uint8_t)(header + 1 + record));
+    MacroStep packed = profile_->macroRecord(base, header + 1 + record);
     uint8_t bytes[3] = {packed.type, packed.a, packed.b};
     for (uint8_t offset = 0; offset < 3; offset++) {
       uint8_t index = (uint8_t)(record * 3 + offset);
@@ -149,7 +150,7 @@ uint8_t KeyEngine::runText(uint16_t base, uint8_t header, uint8_t length, uint8_
       macroWait(profile_->textDelayMs());
     }
   }
-  return (uint8_t)next;
+  return next;
 }
 
 void KeyEngine::pumpUntil(uint32_t at) {
@@ -201,14 +202,14 @@ void KeyEngine::emitMove(int8_t dx, int8_t dy, uint16_t overMs) {
   }
 }
 
-uint8_t KeyEngine::runMoves(uint16_t base, uint8_t first, uint8_t count) {
+uint16_t KeyEngine::runMoves(uint16_t base, uint16_t first, uint16_t count) {
   // Consecutive move records are one slice that was too long for a signed
   // byte, so they share the pause that follows them rather than each getting
   // it. Splitting a slice must not stretch the gesture.
-  uint8_t end = first;
+  uint16_t end = first;
   while (end < count && profile_->macroRecord(base, end).type == ACT_MOUSE_MOVE) end++;
 
-  uint8_t next = end;
+  uint16_t next = end;
   uint16_t pauseMs = 0;
   if (next < count) {
     MacroStep following = profile_->macroRecord(base, next);
@@ -229,10 +230,10 @@ uint8_t KeyEngine::runMoves(uint16_t base, uint8_t first, uint8_t count) {
                         ? (uint16_t)MK_MACRO_MOVE_SPREAD_MAX_MS
                         : pauseMs;
   if (pauseMs == 0 && macroDeadline_ != 0) macroDeadline_ += spread;
-  uint8_t moves = (uint8_t)(end - first);
+  uint16_t moves = end - first;
   uint16_t perMove = moves != 0 ? (uint16_t)(spread / moves) : 0;
 
-  for (uint8_t at = first; at < end; at++) {
+  for (uint16_t at = first; at < end; at++) {
     MacroStep move = profile_->macroRecord(base, at);
     emitMove((int8_t)move.a, (int8_t)move.b, perMove);
   }
@@ -246,7 +247,7 @@ void KeyEngine::runMacro(uint8_t slot, uint8_t key, uint32_t now) {
   // No clamp against MK_MACRO_MAX_RECORDS: the count is one byte and the limit
   // is 255, which Profile.h asserts. Reading past the region is what actually
   // needs guarding, and macroRecord does that per record.
-  uint8_t count = profile_->macroRecordCount(slot);
+  uint16_t count = profile_->macroRecordCount(slot);
   uint16_t base = profile_->macroBase(slot);
 
   leds_->noteMacroBusy(key, now);
@@ -255,7 +256,7 @@ void KeyEngine::runMacro(uint8_t slot, uint8_t key, uint32_t now) {
   // asked for a pause, so a long drag-then-Esc macro is not truncated mid-way.
   macroDeadline_ = now + MK_MACRO_MAX_RUN_MS;
 
-  uint8_t index = 0;
+  uint16_t index = 0;
   while (index < count) {
     // Every record, not only the pauses: a macro with no delay in it -- a drag
     // is exactly that -- would otherwise never yield at all.

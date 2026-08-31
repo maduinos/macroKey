@@ -13,27 +13,9 @@
 #pragma once
 
 #include <Arduino.h>
-#include <EEPROM.h>
-
 #include "Config.h"
 
-#if MK_STORAGE_FLASH_EMULATED
-
-inline void mkStoreBegin() { EEPROM.begin(MK_EEPROM_SIZE); }
-inline void mkStoreCommit() { EEPROM.commit(); }
-
-#else
-
-// AVR: the array is already there and every write is its own commit.
-inline void mkStoreBegin() {}
-inline void mkStoreCommit() {}
-
-#endif
-
-inline uint8_t mkStoreRead(uint16_t address) { return EEPROM.read(address); }
-
-// update(), not write(): a byte that already holds this value costs no erase
-// cycle. A full profile write is 1 KB, and most of it is usually unchanged.
-inline void mkStoreUpdate(uint16_t address, uint8_t value) {
-  EEPROM.update(address, value);
-}
+void mkStoreBegin();
+void mkStoreCommit();
+uint8_t mkStoreRead(uint16_t address);
+void mkStoreUpdate(uint16_t address, uint8_t value);

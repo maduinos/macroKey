@@ -6,9 +6,13 @@
 
 #include <Arduino.h>
 
-#define MK_FIRMWARE_VERSION "0.8.0"
+#define MK_FIRMWARE_VERSION "0.9.0"
 #define MK_PROTOCOL_VERSION 1
+#if defined(ARDUINO_ARCH_RP2040)
+#define MK_BOARD_NAME "promicro-rp2040"
+#else
 #define MK_BOARD_NAME "promicro"
+#endif
 
 // ---------------------------------------------------------------- topology --
 
@@ -40,32 +44,46 @@ static_assert(MK_KEY_COUNT <= (int)(sizeof(mk_keymask_t) * 8),
 
 // Button pins, active-low with the internal pull-up. Index order is the key
 // index reported over serial, so reordering this array remaps the keypad.
+#if defined(ARDUINO_ARCH_RP2040)
+static const uint8_t MK_KEY_PINS[MK_KEY_COUNT] = {2, 3, 4, 5, 6, 7, 8, 9};
+#else
 static const uint8_t MK_KEY_PINS[MK_KEY_COUNT] = {3, 4, 5, 6, 7, 8, 9, 10};
+#endif
 
 // WS2812B data pin. The Pro Micro does not break out D11 at all -- D11/D12/D13
 // exist on the ATmega32u4 but have no pads on this board. Of what is exposed,
 // D2/D3 are SDA/SCL and D14/D15/D16 are SPI, which leaves A0. It sits on the
 // same header as VCC and GND, so the LED module wires to one side of the board.
 // A0 is digital 18 on the 32u4.
+#if defined(ARDUINO_ARCH_RP2040)
+#define MK_LED_PIN 21
+#else
 #define MK_LED_PIN 18
+#endif
 
 // ---------------------------------------------------------------- storage --
 
-// Bytes the profile gets. The ATmega32u4 has exactly this much EEPROM and the
-// profile is the only thing in it, so the two numbers are the same one. It
-// lives here rather than in Profile.h because it is a fact about the board:
-// a part with more room changes this line and the macro region grows into it.
+// Bytes the logical profile gets. AVR retains its complete 1 KB EEPROM layout;
+// RP2040 keeps a larger image in LittleFS. Storage size is a board property.
+#if defined(ARDUINO_ARCH_RP2040)
+#define MK_EEPROM_SIZE 65520
+#define MK_MACRO_COUNT_BYTES 2
+#else
 #define MK_EEPROM_SIZE 1024
+#define MK_MACRO_COUNT_BYTES 1
+#endif
 
 // 0: AVR-style EEPROM. Memory-mapped, every write lands on its own, and reads
 //    work from the first instruction -- so begin() and commit() are no-ops.
-// 1: flash-emulated EEPROM (RP2040, ESP32). The library holds a RAM copy that
-//    must be filled by begin() before the first read and written back by
-//    commit() after the last write. Without both, reads return rubbish and
-//    nothing survives a power cycle.
+// 1: flash-backed store. RP2040 uses a RAM image plus an atomic LittleFS file;
+//    begin() loads it and commit() replaces it after a validated transfer.
 // Profile only ever goes through Storage.h, so this is the whole switch.
 #ifndef MK_STORAGE_FLASH_EMULATED
+#if defined(ARDUINO_ARCH_RP2040)
+#define MK_STORAGE_FLASH_EMULATED 1
+#else
 #define MK_STORAGE_FLASH_EMULATED 0
+#endif
 #endif
 
 // -------------------------------------------------------------- HID backend --
@@ -169,7 +187,11 @@ static const uint8_t MK_KEY_PINS[MK_KEY_COUNT] = {3, 4, 5, 6, 7, 8, 9, 10};
 // command line was one 3 byte key action per character and past 32 before it
 // was half over -- so recordings fell back to host actions and the pad stopped
 // working with the app closed, which is the one thing it exists to do.
+#if defined(ARDUINO_ARCH_RP2040)
+#define MK_MACRO_MAX_RECORDS 21800
+#else
 #define MK_MACRO_MAX_RECORDS 255
+#endif
 // Budget for HID *work* inside one macro (moves, clicks, keys), not for
 // authored pauses. ACT_DELAY / text char waits extend the deadline via
 // macroWait -- otherwise a drag with thinking-time pauses dies before its

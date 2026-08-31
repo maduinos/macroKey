@@ -8,6 +8,8 @@ import time
 from collections.abc import Callable
 from typing import Any
 
+from macrokey.config.model import MACRO_MAX_RECORDS
+
 from . import evdev_source
 from .evdev_source import MOTION_DEAD_ZONE, MOTION_SLICE_SECONDS
 from .events import KEY_DOWN, KEY_UP, MOUSE_CLICK, MOUSE_MOVE, MOUSE_RELEASE, SCROLL, RawEvent
@@ -222,10 +224,13 @@ class Recorder:
 
     @staticmethod
     def device_macro(
-        steps: list[dict[str, Any]], *, anchor_pointer: bool = False
+        steps: list[dict[str, Any]], *, anchor_pointer: bool = False,
+        max_records: int = MACRO_MAX_RECORDS
     ):
         """The whole recording as firmware sequence steps, or None."""
-        return reduce_to_device_macro(steps, anchor_pointer=anchor_pointer)
+        return reduce_to_device_macro(
+            steps, anchor_pointer=anchor_pointer, max_records=max_records
+        )
 
     # -------------------------------------------------------------- listeners --
 

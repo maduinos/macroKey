@@ -57,11 +57,11 @@ class KeyEngine {
   void dispatchKey(const Action &action);
   void runMacro(uint8_t slot, uint8_t key, uint32_t now);
   // Types one text run. Returns the record index just past it.
-  uint8_t runText(uint16_t base, uint8_t header, uint8_t length, uint8_t count);
+  uint16_t runText(uint16_t base, uint16_t header, uint8_t length, uint16_t count);
   // Replays a run of consecutive move records at the speed they were recorded
   // at. Returns the record index just past the run, and past the pause it
   // spent moving through.
-  uint8_t runMoves(uint16_t base, uint8_t first, uint8_t count);
+  uint16_t runMoves(uint16_t base, uint16_t first, uint16_t count);
   // One move, delivered as a mouse would have delivered it: many small reports
   // across `overMs`, rather than the whole distance in a single report.
   void emitMove(int8_t dx, int8_t dy, uint16_t overMs);

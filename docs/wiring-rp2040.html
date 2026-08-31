@@ -441,9 +441,8 @@ WS2812B 1개는 <b>외부 모듈로 3.3 V에서 구동</b>합니다 — GP17의 
 
 <h2 id="fw"><span class="n">05</span>펌웨어에서 바꿀 것</h2>
 
-<p>펌웨어는 이미 이 포팅을 예상하고 이음매를 내 둔 상태입니다(0.8.0의 "RP2040 기본작업").
-EEPROM 접근은 전부 <code>Storage.h</code>를 지나고, 부트로더 진입은 아키텍처 분기 뒤에 있으며,
-키 마스크는 <code>static_assert</code>가 지킵니다. 남은 것은 아래 네 곳입니다.</p>
+<p>0.9.0 펌웨어는 ATmega32U4와 RP2040을 같은 소스에서 빌드합니다. AVR의 기존 1 KB
+프로필은 그대로 두고, RP2040 빌드에서만 LittleFS 기반 대용량 프로필을 선택합니다.</p>
 
 <p><b><code>firmware/src/Config.h</code></b></p>
 
@@ -456,16 +455,14 @@ static const uint8_t MK_KEY_PINS[MK_KEY_COUNT] = {2, 3, 4, 5, 6, 7, 8, 9};
 // GP17의 온보드 LED는 WS2812가 아니라 여기 쓸 수 없습니다(07절).
 #define MK_LED_PIN 21
 
-// RP2040에는 진짜 EEPROM이 없습니다. 코어가 플래시 마지막 섹터를 RAM 버퍼로
-// 흉내 내므로 begin()/commit()이 반드시 필요합니다.
+// RP2040은 14 MB LittleFS 파티션에 프로필 파일을 원자적으로 교체합니다.
 #define MK_STORAGE_FLASH_EMULATED 1</code></pre>
 
 <div class="note">
-  <p><b><code>MK_EEPROM_SIZE</code>는 1024 그대로 둡니다.</b> 코어가 잡아 주는 에뮬레이션
-  섹터는 4096 바이트지만, 프로필 레이아웃과 호스트가 받는 <code>bytes=1024</code>가 그대로
-  유지돼야 두 보드 사이에서 프로필을 그대로 주고받을 수 있습니다. 매크로 저장 공간을 넓히는
-  것은 별도의 결정이고, <code>MK_PROFILE_SIZE</code>의 <code>static_assert</code>가 걸려 있어
-  한 줄로 끝나지 않습니다.</p>
+  <p><b>두 보드는 용량만 다르고 동작 모델은 같습니다.</b> AVR은 1,024 B/schema 2와
+  308 레코드를 그대로 유지합니다. RP2040은 65,520 B/schema 3, 2바이트 슬롯 카운트와
+  총 21,801 레코드를 사용합니다. 앱은 <code>HELLO bytes=</code>를 보고 자동 선택하며,
+  큰 프로필을 AVR로 잘라 보내지 않고 명시적으로 거부합니다.</p>
 </div>
 
 <p><b><code>firmware/src/Storage.h</code></b> — 빌드가
@@ -526,14 +523,13 @@ arduino-cli core install rp2040:rp2040
 arduino-cli lib install "Adafruit NeoPixel"
 
 arduino-cli compile --upload \
-  --fqbn rp2040:rp2040:generic:flash=16777216_0 \
+  --fqbn rp2040:rp2040:generic:flash=16777216_14680064,freq=133 \
   -p /dev/ttyACM0 firmware</code></pre>
 
 <div class="note stop">
   <p><b><code>flash=</code> 값을 보드와 맞추세요.</b> 산 것은 <b>16 MB</b> 판이므로
-  <code>16777216_0</code>(플래시 16 MB, 파일시스템 0 B)입니다. 이 값이 중요한 이유는 에뮬레이션
-  EEPROM이 <b>플래시의 마지막 4 KB 섹터</b>에 놓이기 때문입니다 — 크기를 잘못 선언하면 프로필이
-  엉뚱한 주소에 저장되고, 아무 에러 없이 재부팅마다 사라집니다. 보드 뒷면 실크의
+  <code>16777216_14680064</code>(플래시 16 MB, LittleFS 14 MB)입니다. 펌웨어 영역은 2 MB이고
+  프로필은 LittleFS 안의 고정 65,520 B 파일로 저장됩니다. 보드 뒷면 실크의
   <code>2M / 4M / 8M / 16M</code> 중 표시된 칸이 정답이고, 옵션 문자열은
   <code>arduino-cli board details --fqbn rp2040:rp2040:generic</code>로 확인할 수 있습니다.</p>
 </div>
@@ -551,8 +547,8 @@ arduino-cli compile --upload \
 <ol>
   <li><b>BOOT</b> 버튼을 누른 채로 USB를 꽂습니다(또는 BOOT를 누른 채 RESET을 눌렀다 뗍니다).</li>
   <li><code>RPI-RP2</code> 이름의 USB 드라이브가 뜹니다.</li>
-  <li><code>arduino-cli compile --fqbn rp2040:rp2040:generic:flash=16777216_0 --output-dir build firmware</code>로
-  만든 <code>build/firmware.ino.uf2</code>를 그 드라이브에 복사합니다.</li>
+  <li><code>arduino-cli compile --fqbn rp2040:rp2040:generic:flash=16777216_14680064,freq=133 --output-dir build/rp2040-large firmware</code>로
+  만든 <code>build/rp2040-large/firmware.ino.uf2</code>를 그 드라이브에 복사합니다.</li>
   <li>복사가 끝나면 보드가 알아서 재부팅하고 드라이브가 사라집니다.</li>
 </ol>
 
@@ -838,7 +834,7 @@ digitalWrite(17, LOW);   // 안 꺼지면 HIGH로</code></pre>
     <tr><td>버튼 핀</td><td>D3–D9 + D10 <b>혼자 반대쪽 줄</b></td><td>GP2–GP9, <b>한 열에 연속</b></td></tr>
     <tr><td>WS2812 급전</td><td>외부 모듈, <b>5 V</b>(VCC)에서 급전. 레벨 문제 없음</td><td>외부 모듈, <b>3.3 V</b>에서 급전. 5 V로 물면 데이터 레벨 미달</td></tr>
     <tr><td>온보드 LED</td><td>RX/TX LED뿐 (상태 표시에 못 씀)</td><td>GP17에 RGB LED가 있으나 <b>WS2812가 아니라 못 씀</b></td></tr>
-    <tr><td>프로필 저장</td><td>진짜 EEPROM 1 KB, 바이트 단위 쓰기</td><td>플래시 에뮬레이션. 저장 1회 = 4 KB 섹터 지우기 1회</td></tr>
+    <tr><td>프로필 저장</td><td>진짜 EEPROM 1 KB/schema 2</td><td>LittleFS 65,520 B/schema 3</td></tr>
     <tr><td>부트로더 진입</td><td>RST–GND 더블탭, 8초 창</td><td><b>BOOT 버튼</b>. 시간 제한 없음</td></tr>
     <tr><td>시리얼 <code>BOOT</code> 명령</td><td>지원 (Caterina 매직 워드)</td><td><code>reset_usb_boot()</code> 추가 필요 (05절)</td></tr>
     <tr><td>볼륨·재생 키</td><td>HID-Project로 가능</td><td>아직 불가 (HID-Project는 AVR 전용)</td></tr>
@@ -850,9 +846,9 @@ digitalWrite(17, LOW);   // 안 꺼지면 HIGH로</code></pre>
 </div>
 
 <div class="note warn">
-  <p><b>저장 한 번의 무게가 달라집니다.</b> 32u4는 바뀐 바이트만 EEPROM에 쓰고 끝이었지만,
-  RP2040은 <code>commit()</code> 한 번이 4 KB 섹터를 통째로 지우고 다시 씁니다. 프로필 저장
-  경로가 모두 <code>Profile.cpp</code>의 커밋 한 곳으로 모여 있어 저장 1회에 섹터 1회로
+  <p><b>저장 방식이 다릅니다.</b> 32u4는 바뀐 바이트만 EEPROM에 쓰고 끝이지만,
+  RP2040은 완성된 프로필을 임시 파일에 쓴 뒤 기존 파일과 교체합니다. 프로필 저장
+  경로가 모두 <code>Profile.cpp</code>의 커밋 한 곳으로 모여 있어
   끝나지만, 앱에서 밝기 슬라이더를 끌면서 매 프레임 저장하는 식의 사용은 피하세요.
   플래시 수명은 섹터당 약 10만 회이므로 정상적인 사용에서는 문제가 되지 않습니다.</p>
 </div>
@@ -869,7 +865,7 @@ digitalWrite(17, LOW);   // 안 꺼지면 HIGH로</code></pre>
     <tr><td>외부 LED의 파랑·초록이 안 켜짐</td><td>3.3 V가 그 모듈의 V<sub>f</sub>에 못 미침</td><td>정상적인 실패입니다. <a href="#ext">07절</a>의 1N4001 다이오드 방식으로</td></tr>
     <tr><td>외부 LED 색이 되다 안 되다 함</td><td>모듈을 <code>5V</code>에 물림</td><td><code>3V3</code>로 옮기세요. 5 V 급전은 임계값이 3.5 V라 3.3 V 데이터가 미달입니다</td></tr>
     <tr><td>온보드 LED가 켜진 채로 거슬림</td><td>펌웨어가 GP17을 건드리지 않음</td><td>출력으로 잡아 끄되, 꺼지는 레벨은 결선에 따라 LOW/HIGH (<a href="#ext">07절</a>)</td></tr>
-    <tr><td>설정이 재부팅마다 사라짐</td><td><code>MK_STORAGE_FLASH_EMULATED</code>가 0이거나 <code>flash=</code> 크기가 틀림</td><td>1로 두고, FQBN의 <code>flash=16777216_0</code>이 보드 뒷면 표기와 맞는지 확인</td></tr>
+    <tr><td>설정이 재부팅마다 사라짐</td><td>LittleFS 파티션이나 프로필 파일 문제</td><td>FQBN이 <code>flash=16777216_14680064,freq=133</code>인지 확인</td></tr>
     <tr><td>프로필을 읽으면 쓰레기 값</td><td><code>begin()</code> 없이 읽음</td><td>모든 접근이 <code>Storage.h</code>를 지나는지. <code>Profile::begin()</code>이 <code>mkStoreBegin()</code>을 먼저 부릅니다</td></tr>
     <tr><td>컴파일이 <code>Mouse.h</code>/<code>Keyboard.h</code>에서 깨짐</td><td>AVR용 라이브러리를 따로 설치함</td><td><code>arduino-cli lib uninstall Keyboard Mouse</code>. 코어 내장본을 씁니다</td></tr>
     <tr><td><code>EEPROMClass has no member 'update'</code></td><td>코어의 EEPROM API 차이</td><td><a href="#fw">05절</a>의 <code>mkStoreUpdate</code> 래퍼</td></tr>

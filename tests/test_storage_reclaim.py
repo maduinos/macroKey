@@ -40,10 +40,17 @@ class FakeRecorder:
         return reduce_to_device_macro(steps, anchor_pointer=anchor_pointer)
 
 
+class FakeDevice:
+    #: Nothing is plugged in, so the layout falls back to the AVR profile size,
+    #: which is the record budget these tests are about.
+    hello = None
+
+
 def fake_app() -> MacroKeyApp:
     app = MacroKeyApp.__new__(MacroKeyApp)
     app.profile = default_profile()
     app.recorder = FakeRecorder()
+    app.device = FakeDevice()
     app._status_callbacks = []
     app._event_callbacks = []
     return app

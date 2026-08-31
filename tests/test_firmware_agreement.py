@@ -39,7 +39,7 @@ pytestmark = pytest.mark.skipif(
 #: it, and SerialProtocol because a command's effect on the device -- not merely
 #: its reply -- is the thing worth testing.
 SOURCES = ("Profile.cpp", "Util.cpp", "KeyEngine.cpp", "ButtonInput.cpp",
-           "LedController.cpp", "LedEffects.cpp", "SerialProtocol.cpp")
+           "LedController.cpp", "LedEffects.cpp", "SerialProtocol.cpp", "Storage.cpp")
 
 
 @pytest.fixture(scope="session")

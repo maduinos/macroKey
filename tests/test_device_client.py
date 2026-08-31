@@ -22,12 +22,15 @@ from macrokey.device.client import DeviceClient, DeviceError
 class FakeSerial:
     """Records how the reader asks for bytes, and answers each line with OK."""
 
-    def __init__(self, reply_after: float = 0.0) -> None:
+    def __init__(
+        self, reply_after: float = 0.0, profile_size: int = binary.PROFILE_SIZE
+    ) -> None:
         self._pending = bytearray()
         self._lock = threading.Lock()
         self.read_sizes: list[tuple[int, int]] = []
         self.written: list[bytes] = []
         self.reply_after = reply_after
+        self.profile_size = profile_size
         self.is_open = True
         self.fail_reads = False
         self.fail_writes = False
@@ -65,7 +68,7 @@ class FakeSerial:
         # claiming a profile size the app no longer speaks.
         reply = (
             f"HELLO proto=1 fw=0.3.0 board=promicro keys={KEY_COUNT} "
-            f"leds={LED_COUNT} bytes={binary.PROFILE_SIZE}\r\n"
+            f"leds={LED_COUNT} bytes={self.profile_size}\r\n"
         ).encode()
         if verb != "IDENT":
             reply = b"OK\r\n"
@@ -272,6 +275,7 @@ def test_usb_identity_requires_matching_vendor_and_product() -> None:
 
     assert PortCandidate("a", "", 0x2341, 0x8036).likely
     assert PortCandidate("promicro", "", 0x1B4F, 0x9206).likely
+    assert PortCandidate("rp2040", "", 0x2E8A, 0xF009).likely
     assert not PortCandidate("b", "", 0x2341, 0xBEEF).likely
     assert not PortCandidate("c", "", 0xCAFE, 0x8036).likely
 
@@ -316,6 +320,18 @@ def test_connect_rejects_a_protocol_it_does_not_speak(monkeypatch) -> None:
     monkeypatch.setattr("macrokey.device.client.OPEN_SETTLE_SECONDS", 0.0)
     with pytest.raises(DeviceError, match="protocol"):
         DeviceClient().connect("/dev/fake")
+
+
+def test_connect_accepts_the_rp2040_large_profile(monkeypatch) -> None:
+    fake = FakeSerial(profile_size=binary.RP2040_PROFILE_SIZE)
+    monkeypatch.setattr("macrokey.device.client.serial.Serial", lambda *a, **k: fake)
+    monkeypatch.setattr("macrokey.device.client.OPEN_SETTLE_SECONDS", 0.0)
+    device = DeviceClient()
+    device.connect("/dev/fake")
+
+    assert device.hello is not None
+    assert device.hello.profile_bytes == binary.RP2040_PROFILE_SIZE
+    device.disconnect()
 
 
 @pytest.mark.parametrize(
@@ -396,6 +412,19 @@ def _answer_next_write(fake: FakeSerial, lines: list[bytes]) -> None:
 def test_a_framed_profile_dump_round_trips(client) -> None:
     device, fake = client
     blob = binary.encode_profile(default_profile())
+    _answer_next_write(fake, _profile_lines(blob))
+
+    assert device.read_profile() == blob
+
+
+def test_a_large_rp2040_profile_dump_round_trips(client) -> None:
+    device, fake = client
+    device.hello = protocol.Hello(
+        1, "test", "promicro-rp2040", KEY_COUNT, LED_COUNT, binary.RP2040_PROFILE_SIZE
+    )
+    blob = binary.encode_profile(
+        default_profile(), profile_size=binary.RP2040_PROFILE_SIZE
+    )
     _answer_next_write(fake, _profile_lines(blob))
 
     assert device.read_profile() == blob

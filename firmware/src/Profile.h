@@ -14,10 +14,14 @@
 #define MK_PROFILE_MAGIC1 'K'
 #define MK_PROFILE_MAGIC2 'E'
 #define MK_PROFILE_MAGIC3 'Y'
-// Bumped from 1 with the layout below. The profile is the same 1024 bytes
-// either way, so without this a pad holding the old arrangement would be read
-// as nonsense rather than recognised as out of date and rewritten.
+// AVR keeps the established 1024-byte schema 2 layout. RP2040 uses schema 3:
+// a larger profile and two-byte macro counts. A mismatched image is rejected
+// and replaced with defaults rather than interpreted as another layout.
+#if defined(ARDUINO_ARCH_RP2040)
+#define MK_PROFILE_SCHEMA 3
+#else
 #define MK_PROFILE_SCHEMA 2
+#endif
 
 // Flat EEPROM layout. Every region is a fixed-stride array so lookups are
 // address arithmetic with no scanning.
@@ -30,12 +34,12 @@ static const uint16_t MK_KEYMAP_SIZE =
 static const uint16_t MK_PALETTE_OFFSET = MK_KEYMAP_OFFSET + MK_KEYMAP_SIZE;
 static const uint16_t MK_PALETTE_SIZE = (uint16_t)MK_LED_COUNT * 3;
 static const uint16_t MK_MACRO_OFFSET = MK_PALETTE_OFFSET + MK_PALETTE_SIZE;
-// One byte per slot: how many records it uses. There is no stored offset --
+// One count per slot (one byte on AVR, two on RP2040). There is no stored offset --
 // slots are packed in order, so a slot's start is the sum of the counts before
 // it (see Profile::macroBase). That is 32 bytes back on a 1 KB part, and it
 // retires a whole class of bug: an index and a region that disagreed about
 // where a macro began.
-static const uint16_t MK_MACRO_INDEX_SIZE = MK_MACRO_SLOTS;
+static const uint16_t MK_MACRO_INDEX_SIZE = MK_MACRO_SLOTS * MK_MACRO_COUNT_BYTES;
 static const uint16_t MK_MACRO_RECORD_SIZE = 3;
 
 // Everything left after the fixed regions. Derived rather than written down: it
@@ -48,9 +52,7 @@ static const uint16_t MK_MACRO_RECORD_CAPACITY =
     (MK_MACRO_REGION_SIZE - MK_MACRO_INDEX_SIZE) / MK_MACRO_RECORD_SIZE;
 
 static_assert(MK_PROFILE_SIZE == MK_EEPROM_SIZE, "the profile is meant to be the whole EEPROM");
-// A slot's record count is one byte, so no macro may run past 255 records
-// however much room the region has, and every slot must be reachable.
-static_assert(MK_MACRO_MAX_RECORDS <= 255, "a slot's record count is one byte");
+static_assert(MK_MACRO_MAX_RECORDS <= 65535, "macro count exceeds its 16-bit API");
 static_assert(MK_MACRO_RECORD_CAPACITY >= MK_MACRO_MAX_RECORDS,
               "one full slot must fit in the region");
 
@@ -75,7 +77,7 @@ class Profile {
   Action action(uint8_t key, uint8_t gesture) const;
   Rgb paletteColor(uint8_t led) const;
 
-  uint8_t macroRecordCount(uint8_t slot) const;
+  uint16_t macroRecordCount(uint8_t slot) const;
   // Where a slot's records start, in records from the base of the region. Sums
   // the counts of the slots before it, so read it once per macro rather than
   // once per record.
@@ -83,7 +85,7 @@ class Profile {
   // The three raw bytes of one record. Raw on purpose: the payload of a text
   // run is ASCII, and sanitising it against the action table would corrupt it.
   // Callers that expect an action check the type themselves.
-  MacroStep macroRecord(uint16_t base, uint8_t index) const;
+  MacroStep macroRecord(uint16_t base, uint16_t index) const;
 
   uint8_t brightness() const { return brightness_; }
   void setBrightness(uint8_t value) { brightness_ = value; }
@@ -103,10 +105,10 @@ class Profile {
 
   // ---- staged whole-profile transfer (see docs/PROTOCOL.md) ----------------
   //
-  // Chunks land in a heap buffer, never in EEPROM, until the CRC checks out.
+  // Chunks land in a heap buffer, never in persistent storage, until the CRC checks out.
   // A cable yanked mid-transfer leaves the stored profile untouched.
   //
-  // That buffer is MK_PROFILE_SIZE -- 1024 of the ATmega32u4's 2560 bytes --
+  // On AVR that buffer is MK_PROFILE_SIZE -- 1024 of the ATmega32u4's 2560 bytes --
   // and it is held for the whole transfer, which now happens every time a
   // recording is saved. The margin, measured rather than assumed:
   //
@@ -128,7 +130,7 @@ class Profile {
   // outright fails is the safe case -- stageBegin returns false and the host is
   // told `nomem`.
   bool stageBegin(uint16_t byteCount, uint16_t crc);
-  bool stageChunk(uint8_t sequence, const uint8_t *data, uint8_t length);
+  bool stageChunk(uint16_t sequence, const uint8_t *data, uint8_t length);
   bool stageCommit();
   void stageAbort();
   bool staging() const { return stage_ != NULL; }

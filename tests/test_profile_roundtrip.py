@@ -200,6 +200,27 @@ def test_the_profile_uses_the_whole_eeprom() -> None:
     assert binary.PROFILE_SIZE == binary.EEPROM_SIZE == 1024
 
 
+def test_rp2040_large_profile_round_trips_without_changing_avr_layout() -> None:
+    profile = default_profile()
+    profile.device_macros = _fill(4000)
+
+    blob = binary.encode_profile(profile, profile_size=binary.RP2040_PROFILE_SIZE)
+    restored = binary.decode_profile(blob)
+
+    assert len(blob) == 65520
+    assert blob[4] == 3
+    assert sum(len(macro) for macro in restored.device_macros) == 4000
+    assert len(binary.encode_profile(default_profile())) == 1024
+
+
+def test_large_profile_is_refused_by_legacy_avr_encoder() -> None:
+    profile = default_profile()
+    profile.device_macros = _fill(4000)
+
+    with pytest.raises(ProfileError, match="at most 255|exhausted"):
+        binary.encode_profile(profile)
+
+
 def test_a_macro_can_start_past_the_old_one_byte_offset() -> None:
     """The index held an 8-bit record offset, so no slot could begin past 255
     however much room the region had. Offsets are implied by the counts before

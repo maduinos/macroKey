@@ -5,6 +5,8 @@
 
 #if defined(__AVR__)
 #include <avr/wdt.h>
+#elif defined(ARDUINO_ARCH_RP2040)
+#include <pico/bootrom.h>
 #endif
 
 #include "HidBackend.h"
@@ -31,6 +33,12 @@ void enterBootloader() {
   for (;;) {
   }
 }
+
+#elif defined(ARDUINO_ARCH_RP2040)
+
+#define MK_HAS_BOOTLOADER_ENTRY 1
+
+void enterBootloader() { reset_usb_boot(0, 0); }
 
 #else
 
@@ -316,7 +324,7 @@ void SerialProtocol::profileDump() {
   Serial.print(F(" crc="));
   Serial.println(crcHex);
 
-  uint8_t sequence = 0;
+  uint16_t sequence = 0;
   for (uint16_t offset = 0; offset < MK_PROFILE_SIZE; offset += MK_PROFILE_CHUNK_BYTES) {
     uint16_t length = MK_PROFILE_SIZE - offset;
     if (length > MK_PROFILE_CHUNK_BYTES) length = MK_PROFILE_CHUNK_BYTES;
@@ -364,7 +372,7 @@ void SerialProtocol::cmdProfile(uint32_t now) {
   if (strcmp(sub_, "data") == 0) {
     uint32_t sequence = 0;
     const char *encoded = arg("b64");
-    if (!argUInt("seq", &sequence) || encoded == NULL || sequence > 255) {
+    if (!argUInt("seq", &sequence) || encoded == NULL || sequence > 65535) {
       sendErr("arg");
       return;
     }
@@ -375,7 +383,7 @@ void SerialProtocol::cmdProfile(uint32_t now) {
       sendErr("arg");
       return;
     }
-    if (!profile_->stageChunk((uint8_t)sequence, decoded, (uint8_t)length)) {
+    if (!profile_->stageChunk((uint16_t)sequence, decoded, (uint8_t)length)) {
       sendErr("range");
       return;
     }

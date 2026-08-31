@@ -3,7 +3,7 @@
 8버튼 Pro Micro 매크로 키패드. **패드는 앱 없이 USB 키보드/마우스로 동작**하고,
 PC 앱은 설정·녹음할 때만 켭니다.
 
-버전: 펌웨어 `0.8.0` / 앱 `0.8.0`
+버전: 펌웨어 `0.9.0` / 앱 `0.9.0`
 
 ## 구성
 
@@ -15,6 +15,7 @@ macroKey/
 ├── macrokey/               # 설정 앱 코드
 ├── firmware/               # Pro Micro 스케치
 ├── tests/
+├── tools/setup_linux_serial.sh # Ubuntu USB 시리얼 권한 설정
 ├── docs/                   # 사용·배선·설계 (필요할 때)
 │   ├── manual.html
 │   ├── wiring.html
@@ -31,6 +32,16 @@ macroKey/
 python3 -m venv .venv && source .venv/bin/activate
 python -m pip install -r requirements.txt
 python main.py
+```
+
+Ubuntu에서 설정 앱이 Pro Micro/RP2040의 USB 시리얼 포트를 열 수 있게 한 번 실행합니다.
+이미 `dialout` 그룹에 속한 계정에는 아무 변경도 하지 않습니다. 실행 후에는 로그아웃했다가
+다시 로그인해야 합니다. 키보드·마우스 HID 동작만 쓸 때는 필요하지 않습니다.
+
+```bash
+./tools/setup_linux_serial.sh
+# 로그인 계정을 자동 판별할 수 없는 환경에서는:
+./tools/setup_linux_serial.sh <ubuntu-user>
 ```
 
 배포용 단일 실행 파일:
@@ -71,6 +82,16 @@ arduino-cli compile --upload --fqbn SparkFun:avr:promicro:cpu=16MHzatmega32U4 \
 
 보드: **5 V / 16 MHz Pro Micro**. 배선은 [`docs/wiring.html`](docs/wiring.html).  
 업로드 전 `RST`–`GND` 더블탭으로 부트로더를 띄우세요.
+
+16 MB ProMicro RP2040은 기존 AVR 프로필과 동작을 유지하면서 매크로 저장소만
+확장합니다. AVR은 1,024 B/schema 2(308 레코드), RP2040은 65,520 B/schema 3
+(21,801 레코드)이며 앱이 `HELLO bytes=`로 자동 선택합니다.
+
+```bash
+arduino-cli compile \
+  --fqbn rp2040:rp2040:generic:flash=16777216_14680064,freq=133 \
+  --output-dir build/rp2040-large firmware
+```
 
 ## 참고
 
