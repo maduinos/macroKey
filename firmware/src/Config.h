@@ -6,7 +6,7 @@
 
 #include <Arduino.h>
 
-#define MK_FIRMWARE_VERSION "0.9.0"
+#define MK_FIRMWARE_VERSION "0.9.1"
 #define MK_PROTOCOL_VERSION 1
 #if defined(ARDUINO_ARCH_RP2040)
 #define MK_BOARD_NAME "promicro-rp2040"

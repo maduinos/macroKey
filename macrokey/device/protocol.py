@@ -100,6 +100,10 @@ class Hello:
     keys: int
     leds: int
     profile_bytes: int
+    #: The pad could not read its stored profile at boot and wrote the factory
+    #: defaults over it. Absent on firmware older than 0.9.1, which reported it
+    #: only as a boot-time LOG line that no host was listening for.
+    profile_was_reset: bool = False
 
     @classmethod
     def from_message(cls, message: Message) -> Hello:
@@ -112,6 +116,7 @@ class Hello:
             keys=message.int("keys", 0) or 0,
             leds=message.int("leds", 0) or 0,
             profile_bytes=message.int("bytes", 0) or 0,
+            profile_was_reset=(message.int("reset", 0) or 0) == 1,
         )
 
     @property

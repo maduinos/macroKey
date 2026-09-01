@@ -73,6 +73,9 @@ void setup() {
   gEngine.setRecordCallback(reportRecordRequest);
   gEngine.setMacroYield(macroYield);
   gSerial.begin(&gProfile, &gEngine, &gLeds);
+  // Latched, not just logged: the LOG below lands in the window the host
+  // flushes on connect, so without this the pad losing its profile is silent.
+  gSerial.setProfileReset(!profileValid);
 
   // Announce ourselves unconditionally: a host that opens the port later will
   // send IDENT, and one that was already listening gets the greeting for free.

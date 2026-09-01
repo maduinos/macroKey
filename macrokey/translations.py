@@ -1,0 +1,476 @@
+"""Translation tables, keyed by the English source string.
+
+One dict per language. A string missing from a table falls back to the English
+it was keyed by, so a partial table is a partial translation rather than a
+broken window -- see `i18n.tr`.
+
+Placeholders are named (`{path}`, not `{}`) because word order moves between
+languages: Korean puts the verb last, so several of these sentences reorder
+their inserts and positional slots would silently swap them.
+
+Keep the keys byte-identical to the source, including the `…` ellipsis and the
+`--` and `·` punctuation. A key that does not match exactly is not an error
+anywhere; it just never translates.
+"""
+
+from __future__ import annotations
+
+KO: dict[str, str] = {
+    # -- window, banner, storage ---------------------------------------------
+    "Hold any key on its own for 3 seconds to record into it - the pixel turns "
+    "red. Hold the same key again to store what you did. After setup you can "
+    "quit this app; the pad keeps working as a keyboard.": (
+        "아무 키나 단독으로 3초 홀드하면 그 키에 녹음됩니다 — 픽셀이 빨갛게 바뀝니다. "
+        "같은 키를 다시 홀드하면 방금 한 동작이 저장됩니다. 설정이 끝나면 이 앱을 종료해도 "
+        "됩니다. 패드는 키보드로 계속 동작합니다."
+    ),
+    "  ● RECORDING - hold the same key again to finish  ": (
+        "  ● 녹음 중 - 같은 키를 다시 홀드하면 종료  "
+    ),
+    "  ● RECORDING key {key} · {gesture} — hold the same key again to finish  ": (
+        "  ● 녹음 중 · 키 {key} · {gesture} — 같은 키를 다시 홀드하면 종료  "
+    ),
+    "Shared keypad macro storage (keyboard + mouse steps).\n"
+    "All 16 slots draw from the same 308-record pool.": (
+        "키패드 매크로 공용 저장소 (키보드 + 마우스 단계).\n"
+        "16개 슬롯이 같은 308레코드 풀을 나눠 씁니다."
+    ),
+    "Storage {used_pct}% used · {free_pct}% free ({used}/{capacity})": (
+        "저장소 {used_pct}% 사용 · {free_pct}% 여유 ({used}/{capacity})"
+    ),
+    "Not connected": "연결 안 됨",
+    "Connected": "연결됨",
+    "Connected — profiles still differ. Local edits will not overwrite the "
+    "keypad until Sync… is resolved.": (
+        "연결됨 — 프로필이 아직 다릅니다. 동기화…를 처리하기 전까지 이 컴퓨터의 편집은 "
+        "키패드를 덮어쓰지 않습니다."
+    ),
+    "Disconnected": "연결 끊김",
+    "Keypad disconnected; looking for it again…": "키패드 연결이 끊겼습니다. 다시 찾는 중…",
+    "Connect failed": "연결 실패",
+    "No keypad found: {detail}": "키패드를 찾을 수 없습니다: {detail}",
+    "Auto-connect is disabled": "자동 연결이 꺼져 있습니다",
+    "{port} is gone; looking for the keypad": "{port}이(가) 사라졌습니다. 키패드를 찾는 중",
+    "no keypad": "키패드 없음",
+    " - firmware {firmware}": " - 펌웨어 {firmware}",
+    " · profiles differ": " · 프로필 불일치",
+    # -- menus ---------------------------------------------------------------
+    "Profile": "프로필",
+    "Import…": "가져오기…",
+    "Export…": "내보내기…",
+    "Restore previous version…": "이전 버전 복원…",
+    "Help": "도움말",
+    "Language": "언어",
+    "Mouse macro accuracy": "마우스 매크로 정확도",
+    "Recording gestures": "녹음 제스처",
+    "Recording setup": "녹음 설정",
+    # -- import / export / restore -------------------------------------------
+    "Import macroKey profile": "macroKey 프로필 가져오기",
+    "Export macroKey profile": "macroKey 프로필 내보내기",
+    "macroKey profiles (*.json);;All files (*)": "macroKey 프로필 (*.json);;모든 파일 (*)",
+    "Imported {path}": "{path}에서 가져왔습니다",
+    "Import failed": "가져오기 실패",
+    "Exported profile to {path}": "{path}(으)로 프로필을 내보냈습니다",
+    "Export failed": "내보내기 실패",
+    "No previous version": "이전 버전 없음",
+    "No profile backup exists yet.": "아직 프로필 백업이 없습니다.",
+    "Restore previous profile?": "이전 프로필로 복원할까요?",
+    "Replace the current local profile with one of the kept copies? "
+    "Newest first. The keypad is not changed until you resolve Sync….": (
+        "현재 로컬 프로필을 보관된 사본 중 하나로 교체할까요? "
+        "최신순입니다. 동기화…를 처리하기 전까지 키패드는 바뀌지 않습니다."
+    ),
+    "{stamp} — unreadable": "{stamp} — 읽을 수 없음",
+    "{stamp} — empty (factory defaults)": "{stamp} — 비어 있음 (공장 기본값)",
+    "{stamp} — {macros} recorded macros": "{stamp} — 녹음된 매크로 {macros}개",
+    "Restored the previous local profile": "이전 로컬 프로필을 복원했습니다",
+    "Restore failed": "복원 실패",
+    "Could not save profile": "프로필을 저장할 수 없습니다",
+    " — use Sync… to update the keypad": " — 키패드에 반영하려면 동기화…를 쓰세요",
+    # -- help texts ----------------------------------------------------------
+    "Default mouse replay is relative: clicks happen at the current pointer, "
+    "and movement starts there. This is the reliable choice.\n\n"
+    "The keypad replays a recorded movement over the time it was recorded "
+    "over, rather than as one jump, so pointer acceleration affects the "
+    "replay the same way it affected your hand. Flat acceleration removes "
+    "the variable altogether -- macroKey will offer that next.\n\n"
+    "Fixed position is experimental. It homes to the top-left and depends on "
+    "the same monitor layout, scaling, pointer speed/acceleration, window "
+    "positions, and application state. Test fixed-position macros on a safe "
+    "target before assigning them to destructive actions.": (
+        "마우스 재생의 기본은 상대 방식입니다. 클릭은 현재 포인터 위치에서 일어나고 이동도 "
+        "거기서 시작합니다. 이쪽이 믿을 만한 선택입니다.\n\n"
+        "키패드는 녹화된 이동을 한 번에 점프시키지 않고 녹화에 걸린 시간에 맞춰 재생합니다. "
+        "그래서 포인터 가속이 손으로 움직였을 때와 같은 방식으로 재생에도 적용됩니다. 가속을 "
+        "flat으로 두면 이 변수가 아예 사라집니다 — macroKey가 이어서 그걸 제안합니다.\n\n"
+        "위치 고정은 실험 기능입니다. 좌측 상단으로 포인터를 옮긴 뒤 동작하며, 모니터 배치·"
+        "배율·포인터 속도/가속·창 위치·프로그램 상태가 모두 같아야 합니다. 되돌릴 수 없는 "
+        "동작에 붙이기 전에 안전한 대상에서 먼저 시험하세요."
+    ),
+    "Tap slot: hold a key by itself for 3 seconds.\n\n"
+    "Double slot: tap, then press and hold the same key within 250 ms; keep "
+    "holding for 3 seconds.\n\n"
+    "The pixel turns red while all keyboard input is being captured. Hold the "
+    "same key again to save, or use Discard recording in this window.": (
+        "탭 슬롯: 키 하나를 단독으로 3초 홀드합니다.\n\n"
+        "더블 슬롯: 한 번 탭한 뒤 250 ms 안에 같은 키를 다시 눌러 3초 홀드합니다.\n\n"
+        "키보드 입력을 캡처하는 동안 픽셀이 빨갛게 유지됩니다. 같은 키를 다시 홀드하면 "
+        "저장되고, 이 창의 '녹음 버리기'로 취소할 수 있습니다."
+    ),
+    # -- toolbar -------------------------------------------------------------
+    "Port": "포트",
+    "Leave as Auto to use whichever board identifies itself as a keypad.": (
+        "Auto로 두면 키패드로 식별되는 보드를 자동으로 씁니다."
+    ),
+    "Connect": "연결",
+    "Connecting...": "연결 중...",
+    "Disconnect": "연결 해제",
+    "Sync…": "동기화…",
+    "Sync needed": "동기화 필요",
+    "Resolve which profile wins when this computer and the keypad differ.": (
+        "이 컴퓨터와 키패드의 프로필이 다를 때 어느 쪽을 쓸지 정합니다."
+    ),
+    "Brightness": "밝기",
+    "Brightness {value}": "밝기 {value}",
+    "Typing": "타이핑",
+    "Typing speed {value} ms per character": "타이핑 속도 문자당 {value} ms",
+    "Typing speed {value} ms per character (saving…)": (
+        "타이핑 속도 문자당 {value} ms (저장 중…)"
+    ),
+    "Pause between characters when the pad replays typed text.\n"
+    "5 ms is what the pad does out of the box. Drop it to 1 ms for the\n"
+    "fastest replay, or raise it if the receiving window misses the start.": (
+        "패드가 입력한 텍스트를 재생할 때 문자 사이의 간격입니다.\n"
+        "패드 기본값은 5 ms입니다. 가장 빠르게 하려면 1 ms로 낮추고,\n"
+        "받는 창이 앞부분을 놓치면 값을 올리세요."
+    ),
+    "Clears every binding and every recorded macro -- on this computer\n"
+    "and on the keypad -- and puts the hyper + 1..8 defaults back.": (
+        "이 컴퓨터와 키패드 양쪽에서 모든 바인딩과 녹음된 매크로를 지우고\n"
+        "hyper + 1..8 기본값으로 되돌립니다."
+    ),
+    # -- keys / LED ----------------------------------------------------------
+    "Key": "키",
+    "Key {key} {gesture}": "키 {key} {gesture}",
+    "Key {key} {gesture} - {where}": "키 {key} {gesture} - {where}",
+    "LED": "LED",
+    "Resting LED colour": "대기 LED 색",
+    "Resting LED #{value}": "대기 LED #{value}",
+    "Colour the pad rests at when nothing is happening.": (
+        "아무 일도 없을 때 패드가 유지하는 색입니다."
+    ),
+    "off": "꺼짐",
+    "Preview unavailable: {detail}": "미리보기를 쓸 수 없습니다: {detail}",
+    "Preview stopped: {detail}": "미리보기가 중지되었습니다: {detail}",
+    # -- recording panel -----------------------------------------------------
+    "Recording": "녹음",
+    "Setup": "설정",
+    "Check or retry permission setup for global keyboard and mouse recording.": (
+        "전역 키보드·마우스 녹음 권한 설정을 확인하거나 다시 시도합니다."
+    ),
+    "Include mouse": "마우스 포함",
+    "Clicks, wheel, and pointer movement. By default clicks happen at the "
+    "current pointer and movement is relative to it.": (
+        "클릭·휠·포인터 이동을 포함합니다. 기본적으로 클릭은 현재 포인터 위치에서 "
+        "일어나고 이동은 그 위치를 기준으로 합니다."
+    ),
+    "Fixed screen": "화면 고정",
+    "Homes the pointer before recording and replay. Fixed clicks are only "
+    "repeatable with the same monitor layout, scaling, pointer speed, and "
+    "window positions. Relative/current-pointer replay is safer.": (
+        "녹음과 재생 전에 포인터를 기준 위치로 옮깁니다. 고정 클릭은 모니터 배치·배율·"
+        "포인터 속도·창 위치가 모두 같을 때만 재현됩니다. 상대/현재 포인터 재생이 더 "
+        "안전합니다."
+    ),
+    "Discard recording": "녹음 버리기",
+    "Stop global capture and discard everything recorded this time.": (
+        "전역 캡처를 멈추고 이번에 녹음한 내용을 모두 버립니다."
+    ),
+    "Recording discarded": "녹음을 버렸습니다",
+    "Hold a pad key for 3 seconds to record. Captured steps appear here.": (
+        "패드 키를 3초 홀드하면 녹음이 시작됩니다. 캡처된 단계가 여기에 표시됩니다."
+    ),
+    "(listening…)": "(대기 중…)",
+    "Recording into key {key} ({gesture}) - hold it again to finish": (
+        "키 {key}({gesture})에 녹음 중 - 다시 홀드하면 종료"
+    ),
+    "Recording key {key} · {gesture}": "녹음 중 · 키 {key} · {gesture}",
+    "! {count} step(s) removed: looked like a password": (
+        "! {count}개 단계를 제거했습니다: 비밀번호로 보였습니다"
+    ),
+    "nothing was captured": "캡처된 것이 없습니다",
+    # -- reset ---------------------------------------------------------------
+    "Reset everything?": "전부 초기화할까요?",
+    "Every key binding and every recorded macro is cleared -- on this computer "
+    "and on the keypad -- and the hyper + 1..8 defaults go back.\n\n"
+    "The previous local profile remains available under Profile > Restore "
+    "previous version.": (
+        "이 컴퓨터와 키패드 양쪽에서 모든 키 바인딩과 녹음된 매크로가 지워지고 "
+        "hyper + 1..8 기본값으로 돌아갑니다.\n\n"
+        "직전의 로컬 프로필은 프로필 > 이전 버전 복원에서 계속 꺼낼 수 있습니다."
+    ),
+    "Reset": "초기화",
+    "Cancel": "취소",
+    "Reset cancelled": "초기화를 취소했습니다",
+    "Reset failed": "초기화 실패",
+    "Finish or discard the recording before resetting": (
+        "초기화하기 전에 녹음을 끝내거나 버리세요"
+    ),
+    "Resetting the keypad…": "키패드를 초기화하는 중…",
+    "Reset. The keypad and this computer are back to defaults.": (
+        "초기화했습니다. 키패드와 이 컴퓨터가 모두 기본값으로 돌아갔습니다."
+    ),
+    "Reset this computer. The keypad still holds its own bindings until you "
+    "connect and choose Push in Sync….": (
+        "이 컴퓨터를 초기화했습니다. 연결한 뒤 동기화…에서 '키패드로 보내기'를 고르기 "
+        "전까지 키패드는 자기 바인딩을 그대로 갖고 있습니다."
+    ),
+    "The keypad kept its profile: {message}": "키패드는 프로필을 유지했습니다: {message}",
+    "The keypad was cleared, but could not save: {detail}": (
+        "키패드는 지워졌지만 저장하지 못했습니다: {detail}"
+    ),
+    # -- sync ----------------------------------------------------------------
+    "Profile differs": "프로필 불일치",
+    "The keypad lost its profile": "키패드가 프로필을 잃었습니다",
+    "The keypad is holding factory defaults -- no recorded macros and the "
+    "plain hyper + 1..8 bindings. This computer still has yours.\n\n"
+    "Push: put this computer's profile back on the keypad.\n"
+    "Pull: accept the empty one, losing what is on this computer.\n"
+    "Cancel: leave both as they are.\n\n"
+    "Profile > Restore previous version keeps earlier copies if this "
+    "computer's profile is already the empty one.": (
+        "키패드가 공장 기본값을 들고 있습니다 — 녹음된 매크로가 없고 바인딩도 "
+        "기본 hyper + 1..8입니다. 이 컴퓨터에는 아직 매드님 프로필이 남아 있습니다.\n\n"
+        "보내기: 이 컴퓨터의 프로필을 키패드에 다시 넣습니다.\n"
+        "가져오기: 비어 있는 쪽을 받아들이고, 이 컴퓨터의 내용을 잃습니다.\n"
+        "취소: 양쪽 모두 그대로 둡니다.\n\n"
+        "이 컴퓨터의 프로필마저 이미 비어 있다면, 프로필 > 이전 버전 복원에 "
+        "그 전 사본들이 남아 있습니다."
+    ),
+    "This computer and the keypad have different profiles.\n\n"
+    "Pull: use what is on the keypad.\n"
+    "Push: overwrite the keypad with this computer's profile.\n"
+    "Cancel: leave both as they are.": (
+        "이 컴퓨터와 키패드의 프로필이 다릅니다.\n\n"
+        "가져오기: 키패드에 있는 것을 씁니다.\n"
+        "보내기: 이 컴퓨터의 프로필로 키패드를 덮어씁니다.\n"
+        "취소: 양쪽 모두 그대로 둡니다."
+    ),
+    "Pull from keypad": "키패드에서 가져오기",
+    "Push to keypad": "키패드로 보내기",
+    "Finish or discard the recording before synchronizing profiles": (
+        "프로필을 동기화하기 전에 녹음을 끝내거나 버리세요"
+    ),
+    "Reading the keypad profile…": "키패드 프로필을 읽는 중…",
+    "Writing this computer's profile to the keypad…": (
+        "이 컴퓨터의 프로필을 키패드에 쓰는 중…"
+    ),
+    "Adopted the keypad profile": "키패드 프로필을 적용했습니다",
+    "Keypad updated from this computer": "이 컴퓨터의 내용으로 키패드를 갱신했습니다",
+    "Sync failed": "동기화 실패",
+    "Read succeeded, but the profile could not be saved: {detail}": (
+        "읽기는 성공했지만 프로필을 저장하지 못했습니다: {detail}"
+    ),
+    # -- saving --------------------------------------------------------------
+    "{what} saved; writing to the keypad…": "{what} 저장됨. 키패드에 쓰는 중…",
+    "{what} saved. It reaches the keypad on the next connect.": (
+        "{what} 저장됨. 다음 연결 때 키패드에 반영됩니다."
+    ),
+    "{what} saved locally. The current device operation will finish first.": (
+        "{what}을(를) 로컬에 저장했습니다. 진행 중인 장치 작업이 먼저 끝납니다."
+    ),
+    "{what} saved locally. Profiles still differ; use Sync… to choose a side.": (
+        "{what}을(를) 로컬에 저장했습니다. 프로필이 아직 다릅니다. 동기화…에서 한쪽을 "
+        "고르세요."
+    ),
+    "Done - {what} written to the keypad": "완료 - {what}을(를) 키패드에 썼습니다",
+    "{what} saved, but the device write failed: {detail}": (
+        "{what}은(는) 저장됐지만 장치 쓰기에 실패했습니다: {detail}"
+    ),
+    "Could not save: {detail}": "저장할 수 없습니다: {detail}",
+    "Could not build the keypad profile: {detail}": (
+        "키패드 프로필을 만들 수 없습니다: {detail}"
+    ),
+    "Could not update the keypad: {detail}": "키패드를 갱신할 수 없습니다: {detail}",
+    # -- capture setup -------------------------------------------------------
+    "Recording cannot see the keyboard on this session.": (
+        "이 세션에서는 녹음이 키보드를 볼 수 없습니다."
+    ),
+    "Enable recording?": "녹음을 활성화할까요?",
+    "{detail}\n\nAllow macroKey to set this up? You will be asked for your "
+    "administrator password once. This grants your account access to all "
+    "keyboard and mouse input, including passwords; macroKey opens that input "
+    "only while the pixel and banner show recording. The keypad still works "
+    "either way — only recording needs this.": (
+        "{detail}\n\nmacroKey가 설정하도록 허용할까요? 관리자 비밀번호를 한 번 묻습니다. "
+        "이 권한은 비밀번호를 포함한 모든 키보드·마우스 입력에 계정이 접근할 수 있게 "
+        "합니다. macroKey는 픽셀과 배너가 녹음 중임을 표시하는 동안에만 입력을 엽니다. "
+        "키패드 자체는 어느 쪽이든 동작합니다 — 녹음에만 필요합니다."
+    ),
+    "Preparing recording support…": "녹음 지원을 준비하는 중…",
+    "Recording setup skipped — hold-to-record will not capture": (
+        "녹음 설정을 건너뛰었습니다 — 홀드 녹음이 캡처하지 못합니다"
+    ),
+    "Recording is ready": "녹음 준비 완료",
+    "Recording ready": "녹음 준비됨",
+    "Hold a key for 3 seconds to record. If a brand-new keyboard appears after "
+    "reboot and recording fails again, log out and back in once so the input "
+    "group applies.": (
+        "키를 3초 홀드하면 녹음됩니다. 재부팅 후 새 키보드가 인식되면서 녹음이 다시 "
+        "실패하면, input 그룹이 적용되도록 로그아웃했다가 다시 로그인하세요."
+    ),
+    "Could not finish setup": "설정을 마치지 못했습니다",
+    "{message}\n\nYou can retry next launch, or run:\n"
+    "  sudo usermod -aG input $USER\nthen log out and back in.": (
+        "{message}\n\n다음 실행에서 다시 시도하거나 아래를 실행하세요:\n"
+        "  sudo usermod -aG input $USER\n그 뒤 로그아웃했다가 다시 로그인하세요."
+    ),
+    # -- pointer acceleration ------------------------------------------------
+    "Pointer acceleration": "포인터 가속",
+    "This desktop does not expose a pointer acceleration setting that macroKey "
+    "can read, so there is nothing to change here.": (
+        "이 데스크톱은 macroKey가 읽을 수 있는 포인터 가속 설정을 제공하지 않아서 여기서 "
+        "바꿀 것이 없습니다."
+    ),
+    "Pointer acceleration is already flat, which is the setting mouse macros "
+    "replay most accurately under.": (
+        "포인터 가속이 이미 flat입니다. 마우스 매크로가 가장 정확하게 재생되는 설정입니다."
+    ),
+    "Your desktop scales pointer movement by how fast it is (acceleration "
+    "profile: {profile}).\n\nThe keypad replays a recorded movement at the "
+    "speed it was made, so this largely cancels out. Turning it off removes "
+    "the variable entirely and is what makes a mouse macro land exactly where "
+    "it was recorded.\n\nSwitch to flat pointer acceleration? It changes how "
+    "the mouse feels everywhere, not just in macros. To undo it later:\n\n"
+    "{undo}": (
+        "이 데스크톱은 포인터 이동 속도에 따라 이동 거리를 조절합니다 (가속 프로필: "
+        "{profile}).\n\n키패드는 녹화된 이동을 녹화 당시 속도로 재생하므로 이 효과는 대체로 "
+        "상쇄됩니다. 가속을 끄면 이 변수가 완전히 사라져서, 마우스 매크로가 녹화된 위치에 "
+        "정확히 떨어집니다.\n\n포인터 가속을 flat으로 바꿀까요? 매크로뿐 아니라 평소 마우스 "
+        "감각도 함께 바뀝니다. 나중에 되돌리려면:\n\n{undo}"
+    ),
+    "Left pointer acceleration alone. Help > Mouse macro accuracy offers it "
+    "again.": (
+        "포인터 가속을 그대로 두었습니다. 도움말 > 마우스 매크로 정확도에서 다시 제안합니다."
+    ),
+    "pointer acceleration is now flat": "포인터 가속을 flat으로 바꿨습니다",
+    "could not change the pointer acceleration setting": (
+        "포인터 가속 설정을 바꿀 수 없었습니다"
+    ),
+    "the pointer acceleration setting did not take": (
+        "포인터 가속 설정이 적용되지 않았습니다"
+    ),
+    # -- language ------------------------------------------------------------
+    "System default": "시스템 기본값",
+    "Restart required": "재시작 필요",
+    "The language changes the next time macroKey starts.": (
+        "언어는 macroKey를 다시 시작할 때 바뀝니다."
+    ),
+    # -- slot dialog ---------------------------------------------------------
+    "Key {key} · {gesture}": "키 {key} · {gesture}",
+    "Now: {description}": "현재: {description}",
+    "Press keys": "키 입력받기",
+    "Fills the field from the next combination pressed. The field can also "
+    "just be typed into.": (
+        "다음에 누르는 조합으로 칸을 채웁니다. 칸에 직접 입력해도 됩니다."
+    ),
+    "Set": "적용",
+    "Send a shortcut": "단축키 보내기",
+    "Or use the mouse at its current position": "또는 현재 위치에서 마우스 사용",
+    "Or replay something you do": "또는 직접 한 동작을 재생",
+    "Left click": "왼쪽 클릭",
+    "Right click": "오른쪽 클릭",
+    "Middle click": "가운데 클릭",
+    "Wheel up": "휠 위로",
+    "Wheel down": "휠 아래로",
+    "Runs at the current pointer. This direct action does not move or home "
+    "the cursor.": (
+        "현재 포인터 위치에서 실행됩니다. 이 동작은 커서를 옮기지 않습니다."
+    ),
+    "Include mouse when recording": "녹음할 때 마우스 포함",
+    "Records clicks, wheel, and pointer movement. By default clicks use the "
+    "current pointer and movement is relative. Applies to the next "
+    "hold-to-record on the pad.": (
+        "클릭·휠·포인터 이동을 녹음합니다. 기본적으로 클릭은 현재 포인터를 쓰고 이동은 "
+        "상대 방식입니다. 패드에서 다음에 하는 홀드 녹음부터 적용됩니다."
+    ),
+    "Replay from a fixed screen position (experimental)": (
+        "고정된 화면 위치에서 재생 (실험 기능)"
+    ),
+    "Moves the pointer to the top-left before both recording and replay. Use "
+    "only with the same monitor layout, scaling, pointer speed, and window "
+    "positions; otherwise the click can land elsewhere.": (
+        "녹음과 재생 모두 시작 전에 포인터를 좌측 상단으로 옮깁니다. 모니터 배치·배율·"
+        "포인터 속도·창 위치가 같을 때만 쓰세요. 아니면 클릭이 엉뚱한 곳에 떨어질 수 "
+        "있습니다."
+    ),
+    "Tap key {key}, then press and hold it within 250 ms for 3 seconds": (
+        "키 {key}을(를) 탭한 뒤 250 ms 안에 다시 눌러 3초 홀드"
+    ),
+    "Hold key {key} on its own for 3 seconds": "키 {key}을(를) 단독으로 3초 홀드",
+    "{trigger} to record into this {gesture} slot (pixel turns red). Hold the "
+    "same key again to finish. What is captured appears in the main window as "
+    "it happens.": (
+        "{trigger}하면 이 {gesture} 슬롯에 녹음됩니다 (픽셀이 빨갛게 바뀝니다). 같은 키를 "
+        "다시 홀드하면 종료됩니다. 캡처되는 내용은 메인 창에 실시간으로 표시됩니다."
+    ),
+    "Clear {gesture} binding": "{gesture} 바인딩 지우기",
+    "That is not a shortcut this keypad can send": (
+        "이 키패드가 보낼 수 없는 단축키입니다"
+    ),
+    # -- gesture names -------------------------------------------------------
+    # Lowercase forms are inserted into sentences; the capitalised ones are the
+    # two column headers over the key grid.
+    "tap": "탭",
+    "double": "더블",
+    "Tap": "탭",
+    "Double": "더블",
+    # -- widgets -------------------------------------------------------------
+    # `AUTO_PORT` ("Auto") is deliberately absent: it is compared against the
+    # combo box text in `_chosen_port`, so it is a sentinel before it is a word.
+    "Press the shortcut...": "단축키를 누르세요...",
+    # -- binding descriptions ------------------------------------------------
+    "nothing": "없음",
+    "(nothing)": "(없음)",
+    "empty": "비어 있음",
+    "recording, {detail} (on the keypad)": "녹음됨, {detail} (키패드에 저장)",
+    "{typed} characters": "{typed}자",
+    "{others} key": "{others}개 동작",
+    "{others} keys": "{others}개 동작",
+    "Nothing was captured. Hold a pad key for 3 seconds, do the thing, hold "
+    "again to finish.": (
+        "캡처된 것이 없습니다. 패드 키를 3초 홀드하고, 할 동작을 한 뒤, 다시 홀드해 "
+        "종료하세요."
+    ),
+    "Nothing was captured. On Wayland, prefer being in the `input` group so "
+    "capture uses evdev (every window). Without it, only X11 windows are "
+    "visible to the fallback recorder.": (
+        "캡처된 것이 없습니다. Wayland에서는 `input` 그룹에 속해야 evdev로 캡처해 모든 창을 "
+        "볼 수 있습니다. 그렇지 않으면 대체 녹음기에는 X11 창만 보입니다."
+    ),
+    "Nothing was captured. {reason}": "캡처된 것이 없습니다. {reason}",
+    # -- session -------------------------------------------------------------
+    "Recording into key {key} ({gesture}). Hold it again to finish.": (
+        "키 {key}({gesture})에 녹음 중입니다. 다시 홀드하면 종료됩니다."
+    ),
+    "Already recording into key {key}. Hold key {key} again to finish.": (
+        "이미 키 {key}에 녹음 중입니다. 키 {key}을(를) 다시 홀드하면 종료됩니다."
+    ),
+    "Cannot record: {detail}": "녹음할 수 없습니다: {detail}",
+    "Recording ran for {minutes} minutes; storing it now": (
+        "녹음이 {minutes}분 동안 진행되어 지금 저장합니다"
+    ),
+    "Could not store the recording: {detail}": "녹음을 저장할 수 없습니다: {detail}",
+    "Could not stop recording: {detail}": "녹음을 멈출 수 없습니다: {detail}",
+    "Recorded, but could not write it to the keypad: {detail}": (
+        "녹음했지만 키패드에 쓰지 못했습니다: {detail}"
+    ),
+    "Key {key} ({gesture}): {where}": "키 {key}({gesture}): {where}",
+    "{hint} Key {key} ({gesture}) is unchanged.": (
+        "{hint} 키 {key}({gesture})은(는) 그대로입니다."
+    ),
+}
+
+#: Every language the UI can be set to, by code. English is absent on purpose:
+#: it is the source, so `tr` returning its argument already is English.
+TRANSLATIONS: dict[str, dict[str, str]] = {"ko": KO}

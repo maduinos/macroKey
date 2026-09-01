@@ -10,6 +10,8 @@ from __future__ import annotations
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QComboBox, QLabel, QLineEdit
 
+from ..i18n import tr
+
 
 class ShortcutEdit(QLineEdit):
     """Records a shortcut by having it pressed, the way desktop settings do.
@@ -70,7 +72,7 @@ class ShortcutEdit(QLineEdit):
         """Next combination pressed fills the field."""
         self.capturing = True
         self.clear()
-        self.setPlaceholderText("Press the shortcut...")
+        self.setPlaceholderText(tr("Press the shortcut..."))
         self.setFocus()
 
     def stop_capture(self) -> None:

@@ -87,7 +87,11 @@ void SerialProtocol::sendHello() {
   Serial.print(F(" leds="));
   Serial.print(MK_LED_COUNT);
   Serial.print(F(" bytes="));
-  Serial.println(MK_PROFILE_SIZE);
+  Serial.print(MK_PROFILE_SIZE);
+  // Only when true. An absent key means "no", which is what every older host
+  // already assumes, and what PROTOCOL.md requires of an added key.
+  if (profileReset_) Serial.print(F(" reset=1"));
+  Serial.println();
 }
 
 void SerialProtocol::sendState() {

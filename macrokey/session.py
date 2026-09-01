@@ -20,6 +20,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from .device import DeviceError
+from .i18n import tr
 
 log = logging.getLogger(__name__)
 
@@ -111,8 +112,9 @@ class RecordingSession:
             # the recording is kept for the key it started on and the second
             # request is ignored with a visible complaint.
             self.app.status(
-                f"Already recording into key {self.active_key + 1}. "
-                f"Hold key {self.active_key + 1} again to finish."
+                tr("Already recording into key {key}. Hold key {key} again to finish.").format(
+                    key=self.active_key + 1
+                )
             )
             self._flash(REJECTED_COLOR)
 
@@ -168,7 +170,7 @@ class RecordingSession:
         try:
             self.app.start_recording(on_event=self._on_live_event)
         except Exception as exc:  # noqa: BLE001 - capture backends fail environmentally
-            self.app.status(f"Cannot record: {exc}")
+            self.app.status(tr("Cannot record: {detail}").format(detail=exc))
             self._flash(REJECTED_COLOR)
             return
         self.active_key = key
@@ -187,7 +189,9 @@ class RecordingSession:
             return
         self._start_watchdog()
         self.app.status(
-            f"Recording into key {key + 1} ({gesture}). Hold it again to finish."
+            tr("Recording into key {key} ({gesture}). Hold it again to finish.").format(
+                key=key + 1, gesture=tr(gesture)
+            )
         )
         self._on_change()
 
@@ -228,7 +232,11 @@ class RecordingSession:
 
             if time.monotonic() - self._started_at >= MAX_RECORDING_SECONDS:
                 minutes = int(MAX_RECORDING_SECONDS // 60)
-                self.app.status(f"Recording ran for {minutes} minutes; storing it now")
+                self.app.status(
+                    tr("Recording ran for {minutes} minutes; storing it now").format(
+                        minutes=minutes
+                    )
+                )
                 # Through the record worker, not inline: finishing writes the
                 # whole profile, and that belongs on the one thread that owns
                 # starting and finishing so the two cannot interleave.
@@ -252,7 +260,7 @@ class RecordingSession:
                 "",
                 False,
                 gesture=self.active_gesture,
-                error=f"Could not stop recording: {exc}",
+                error=tr("Could not stop recording: {detail}").format(detail=exc),
             )
             self.app.status(self.last_outcome.error)
             self._flash(REJECTED_COLOR)
@@ -276,7 +284,9 @@ class RecordingSession:
                 key, 0, "", False, gesture=self.active_gesture, error=hint
             )
             self.app.status(
-                f"{hint} Key {key + 1} ({self.active_gesture}) is unchanged."
+                tr("{hint} Key {key} ({gesture}) is unchanged.").format(
+                    hint=hint, key=key + 1, gesture=tr(self.active_gesture)
+                )
             )
             self._flash(REJECTED_COLOR)
             self._on_change()
@@ -288,7 +298,9 @@ class RecordingSession:
             self.last_outcome = RecordOutcome(
                 key, len(steps), "", False, gesture=self.active_gesture, error=str(exc)
             )
-            self.app.status(f"Could not store the recording: {exc}")
+            self.app.status(
+                tr("Could not store the recording: {detail}").format(detail=exc)
+            )
             self._flash(REJECTED_COLOR)
             self._on_change()
             return
@@ -308,12 +320,20 @@ class RecordingSession:
             self.app.push_profile()
         except (DeviceError, ValueError, OSError) as exc:
             self.last_outcome.error = str(exc)
-            self.app.status(f"Recorded, but could not write it to the keypad: {exc}")
+            self.app.status(
+                tr("Recorded, but could not write it to the keypad: {detail}").format(
+                    detail=exc
+                )
+            )
             self._flash(REJECTED_COLOR)
             self._on_change()
             return
 
-        self.app.status(f"Key {key + 1} ({self.active_gesture}): {where}")
+        self.app.status(
+            tr("Key {key} ({gesture}): {where}").format(
+                key=key + 1, gesture=tr(self.active_gesture), where=where
+            )
+        )
         # The captured steps were logged above; this is what the pad will
         # actually do with them, which is not the same list. Fixed-screen mouse
         # capture gains a home step before its relative moves.

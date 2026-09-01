@@ -54,6 +54,110 @@ def test_a_change_that_did_not_take_is_reported_as_failure(monkeypatch) -> None:
     assert "did not take" in message
 
 
+# ----------------------------------------------------------------- windows --
+#
+# Windows keeps the same setting behind "Enhance pointer precision", which is
+# the third member of the SPI_GETMOUSE triple. None of this can run on the
+# machine it was written on, so the Win32 call is faked at the one seam that
+# touches it -- enough to prove the branch reads the right member, preserves
+# the two thresholds, and reports a write that did not take.
+
+
+class FakeMouseParams:
+    """Stands in for SystemParametersInfoW over the SPI_GETMOUSE triple."""
+
+    GET, SET = 0x0003, 0x0004
+
+    def __init__(self, values, *, writable=True):
+        self.values = list(values)
+        self.writable = writable
+        self.written = None
+        self.flags = None
+
+    def __call__(self, action, _ui, pv, flags):
+        array = pv._obj
+        if action == self.GET:
+            for index, value in enumerate(self.values):
+                array[index] = value
+            return 1
+        if action == self.SET:
+            if not self.writable:
+                return 0
+            self.written = [array[0], array[1], array[2]]
+            self.flags = flags
+            self.values = list(self.written)
+            return 1
+        raise AssertionError(action)
+
+
+@pytest.fixture
+def windows(monkeypatch):
+    import ctypes
+    import types
+
+    monkeypatch.setattr(capture_setup.sys, "platform", "win32")
+
+    def install(params: FakeMouseParams) -> FakeMouseParams:
+        user32 = types.SimpleNamespace(SystemParametersInfoW=params)
+        monkeypatch.setattr(
+            ctypes, "windll", types.SimpleNamespace(user32=user32), raising=False
+        )
+        return params
+
+    return install
+
+
+def test_enhance_pointer_precision_on_reads_as_not_flat(windows) -> None:
+    windows(FakeMouseParams([6, 10, 1]))
+
+    assert capture_setup.pointer_accel_profile() == "enhanced"
+    assert not capture_setup.pointer_accel_is_flat()
+    assert capture_setup.pointer_accel_can_be_flattened()
+
+
+def test_enhance_pointer_precision_off_reads_as_flat(windows) -> None:
+    windows(FakeMouseParams([6, 10, 0]))
+
+    assert capture_setup.pointer_accel_profile() == "flat"
+    assert not capture_setup.pointer_accel_can_be_flattened()
+
+
+def test_flattening_keeps_the_speed_thresholds(windows) -> None:
+    """Only the acceleration member is cleared.
+
+    Writing [0, 0, 0] would also discard a tuned pointer speed, which is a
+    different setting the person did not ask us to touch.
+    """
+    params = windows(FakeMouseParams([6, 10, 1]))
+
+    ok, _message = capture_setup.set_pointer_accel_flat()
+
+    assert ok
+    assert params.written == [6, 10, 0]
+    # Persisted across a reboot, and visible to programs already running.
+    assert params.flags == (
+        capture_setup._SPIF_UPDATEINIFILE | capture_setup._SPIF_SENDCHANGE
+    )
+
+
+def test_a_refused_windows_write_is_reported_as_failure(windows) -> None:
+    windows(FakeMouseParams([6, 10, 1], writable=False))
+
+    ok, message = capture_setup.set_pointer_accel_flat()
+
+    assert not ok
+    assert "could not change" in message
+
+
+def test_the_undo_hint_names_the_windows_checkbox(windows) -> None:
+    windows(FakeMouseParams([6, 10, 1]))
+    assert "Enhance pointer precision" in capture_setup.pointer_accel_undo_hint()
+
+
+def test_the_undo_hint_is_the_gsettings_line_off_windows() -> None:
+    assert "gsettings set" in capture_setup.pointer_accel_undo_hint()
+
+
 # ------------------------------------------------------------- the offer --
 
 

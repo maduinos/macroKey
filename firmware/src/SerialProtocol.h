@@ -17,6 +17,13 @@ class SerialProtocol {
   void update(uint32_t now);
 
   void sendHello();
+  // Latched at boot so `HELLO` can carry it. The pad losing its profile is
+  // reported by a LOG line in setup(), which the host is not listening for
+  // yet -- it opens the port, waits for the board to settle and flushes
+  // whatever arrived before asking IDENT. Anything that only happens once at
+  // boot is therefore invisible, so this rides on the greeting instead, which
+  // is re-sent for every IDENT.
+  void setProfileReset(bool wasReset) { profileReset_ = wasReset; }
   void sendState();
   //: The pad asking the host to start or finish recording into this key.
   void sendRecordRequest(uint8_t key, uint8_t gesture);
@@ -47,6 +54,8 @@ class SerialProtocol {
   Profile *profile_ = NULL;
   KeyEngine *engine_ = NULL;
   LedController *leds_ = NULL;
+
+  bool profileReset_ = false;
 
   char line_[MK_LINE_MAX + 1];
   uint8_t lineLength_ = 0;

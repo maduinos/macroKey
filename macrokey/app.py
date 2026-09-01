@@ -12,7 +12,16 @@ import queue
 import threading
 from collections.abc import Callable
 
-from .config import KEY_COUNT, Profile, ProfileError, Settings, binary, load_profile, save_profile
+from .config import (
+    KEY_COUNT,
+    Profile,
+    ProfileError,
+    Settings,
+    binary,
+    is_factory_default,
+    load_profile,
+    save_profile,
+)
 from .device import (
     DeviceClient,
     DeviceError,
@@ -278,12 +287,27 @@ class MacroKeyApp:
 
     def device_matches_host(self) -> bool:
         """True when device and host hold the same profile bytes."""
+        return self.compare_with_device()[0]
+
+    def compare_with_device(self) -> tuple[bool, bool]:
+        """``(profiles match, the pad is holding nothing)``, from one read.
+
+        Both answers come from the same blob because they are asked together and
+        a second read costs a round trip on a link that is already the slow part
+        of connecting.
+
+        The second answer is the one that matters: a pad that differs and a pad
+        that has *forgotten* look identical to a byte comparison, and only one
+        of them must never be copied over a computer that still has the macros.
+        """
         try:
-            return self.device.read_profile() == binary.encode_profile(
+            blob = self.device.read_profile()
+            matches = blob == binary.encode_profile(
                 self.profile, profile_size=self.profile_layout.size
             )
+            return matches, is_factory_default(binary.decode_profile(blob))
         except (DeviceError, ValueError):
-            return False
+            return False, False
 
     # -------------------------------------------------------------- recording --
 

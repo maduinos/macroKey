@@ -551,3 +551,25 @@ def default_profile() -> Profile:
         profile.set_action(key, "tap", Action(kind="key", hotkey=f"ctrl+alt+shift+{key + 1}"))
 
     return profile
+
+
+def is_factory_default(profile: Profile) -> bool:
+    """True when nothing has been bound or recorded onto this profile.
+
+    Only the bindings and the recorded macros are compared -- those are the work
+    someone would lose. Brightness, resting colour and typing speed are settings
+    rather than content, and a pad whose brightness was nudged is still empty.
+
+    Used to tell two situations apart that look identical to a byte comparison:
+    a keypad that holds a different profile, and a keypad that has forgotten the
+    one it had. The second must not be quietly copied over a computer that still
+    has the macros.
+    """
+    if any(profile.device_macros):
+        return False
+    reference = default_profile()
+    return all(
+        profile.action(key, gesture) == reference.action(key, gesture)
+        for key in range(KEY_COUNT)
+        for gesture in EDITABLE_GESTURES
+    )
