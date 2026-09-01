@@ -21,6 +21,8 @@ import subprocess
 import sys
 from dataclasses import dataclass
 
+from .i18n import tr
+
 log = logging.getLogger(__name__)
 
 
@@ -214,13 +216,50 @@ def _gsettings(*arguments: str) -> str | None:
     return done.stdout.strip()
 
 
-def pointer_accel_profile() -> str | None:
-    """The desktop's pointer acceleration profile, or None if unreadable.
+# Windows keeps the same idea behind a different switch: "Enhance pointer
+# precision", which is the third member of the SPI_GETMOUSE triple. Zero is
+# off, and off is what flat means here. The first two members are the speed
+# thresholds the curve uses; they are read back and written unchanged, so
+# turning acceleration off does not quietly reset a tuned pointer speed.
+_SPI_GETMOUSE = 0x0003
+_SPI_SETMOUSE = 0x0004
+_SPIF_UPDATEINIFILE = 0x01
+_SPIF_SENDCHANGE = 0x02
 
-    None on Windows, on a desktop that is not GNOME, and anywhere gsettings is
-    absent -- all of which mean the same thing here: there is nothing to offer,
+
+def _windows_mouse_params() -> list[int] | None:
+    """The SPI_GETMOUSE triple, or None where it cannot be read."""
+    if not sys.platform.startswith("win"):
+        return None
+    try:
+        import ctypes
+
+        values = (ctypes.c_int * 3)()
+        ok = ctypes.windll.user32.SystemParametersInfoW(  # type: ignore[attr-defined]
+            _SPI_GETMOUSE, 0, ctypes.byref(values), 0
+        )
+        return [values[0], values[1], values[2]] if ok else None
+    except (OSError, AttributeError, ValueError) as exc:
+        log.debug("could not read the Windows mouse parameters: %s", exc)
+        return None
+
+
+def pointer_accel_profile() -> str | None:
+    """The desktop's pointer acceleration setting, or None if unreadable.
+
+    Two platforms, one question. GNOME names its curves, so its own name is
+    returned; Windows has a checkbox, so it reports "flat" or "enhanced" -- the
+    caller only ever compares against "flat".
+
+    None on a desktop that is not GNOME, anywhere gsettings is absent, and on
+    macOS -- all of which mean the same thing here: there is nothing to offer,
     so say nothing rather than guess.
     """
+    if sys.platform.startswith("win"):
+        values = _windows_mouse_params()
+        if values is None:
+            return None
+        return "flat" if values[2] == 0 else "enhanced"
     value = _gsettings("get", _ACCEL_SCHEMA, _ACCEL_KEY)
     return value.strip("'\"") if value else None
 
@@ -236,14 +275,55 @@ def pointer_accel_can_be_flattened() -> bool:
     return profile is not None and profile != "flat"
 
 
+def pointer_accel_undo_hint() -> str:
+    """How to put the setting back, in the words of the platform it is on.
+
+    Part of the offer rather than a footnote: this changes how the mouse feels
+    everywhere, so the dialog that asks has to show the way back before the
+    answer, not after.
+    """
+    if sys.platform.startswith("win"):
+        return (
+            "    Settings > Bluetooth & devices > Mouse >\n"
+            "    Additional mouse settings > Pointer Options >\n"
+            "    Enhance pointer precision"
+        )
+    return "    gsettings set org.gnome.desktop.peripherals.mouse accel-profile 'default'"
+
+
 def set_pointer_accel_flat() -> tuple[bool, str]:
     """Switches the desktop to flat pointer acceleration.
 
     The user's own setting, changed only on an explicit yes, and reversible from
     the same place -- so the message that offers it says how to put it back.
     """
+    if sys.platform.startswith("win"):
+        values = _windows_mouse_params()
+        if values is None:
+            return False, tr("could not change the pointer acceleration setting")
+        try:
+            import ctypes
+
+            # Thresholds preserved, acceleration off. UPDATEINIFILE so it
+            # survives a reboot, SENDCHANGE so open programs see it now.
+            wanted = (ctypes.c_int * 3)(values[0], values[1], 0)
+            ok = ctypes.windll.user32.SystemParametersInfoW(  # type: ignore[attr-defined]
+                _SPI_SETMOUSE,
+                0,
+                ctypes.byref(wanted),
+                _SPIF_UPDATEINIFILE | _SPIF_SENDCHANGE,
+            )
+        except (OSError, AttributeError, ValueError) as exc:
+            log.debug("could not set the Windows mouse parameters: %s", exc)
+            ok = False
+        if not ok:
+            return False, tr("could not change the pointer acceleration setting")
+        if not pointer_accel_is_flat():
+            return False, tr("the pointer acceleration setting did not take")
+        return True, tr("pointer acceleration is now flat")
+
     if _gsettings("set", _ACCEL_SCHEMA, _ACCEL_KEY, "flat") is None:
-        return False, "could not change the pointer acceleration setting"
+        return False, tr("could not change the pointer acceleration setting")
     if not pointer_accel_is_flat():
-        return False, "the pointer acceleration setting did not take"
-    return True, "pointer acceleration is now flat"
+        return False, tr("the pointer acceleration setting did not take")
+    return True, tr("pointer acceleration is now flat")

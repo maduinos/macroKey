@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 
 from ..config import Action, Profile
+from ..i18n import tr
 from ..recorder.recorder import Recorder
 
 SECRET_TEXT_LENGTH = 12
@@ -33,7 +34,7 @@ def describe_binding(profile: Profile, action: Action) -> str:
     would produce.
     """
     if action.kind == "none":
-        return "nothing"
+        return tr("nothing")
     if action.kind == "sequence":
         macros = profile.device_macros
         steps = macros[action.slot] if action.slot < len(macros) else []
@@ -44,11 +45,14 @@ def describe_binding(profile: Profile, action: Action) -> str:
         others = sum(1 for step in steps if step.kind not in ("text", "delay"))
         parts = []
         if typed:
-            parts.append(f"{typed} characters")
+            parts.append(tr("{typed} characters").format(typed=typed))
         if others:
-            parts.append(f"{others} key{'s' if others != 1 else ''}")
-        detail = " + ".join(parts) or "empty"
-        return f"recording, {detail} (on the keypad)"
+            # Two keys rather than one plural rule: Korean has no plural -s, so
+            # the choice has to be a lookup, not an appended letter.
+            singular_or_plural = "{others} key" if others == 1 else "{others} keys"
+            parts.append(tr(singular_or_plural).format(others=others))
+        detail = " + ".join(parts) or tr("empty")
+        return tr("recording, {detail} (on the keypad)").format(detail=detail)
     return action.describe()
 
 
@@ -56,14 +60,17 @@ def nothing_captured_hint() -> str:
     """Why a recording can come back empty, when that has a known cause."""
     usable, reason = Recorder.available()
     if not usable:
-        return f"Nothing was captured. {reason}"
+        return tr("Nothing was captured. {reason}").format(reason=reason)
     if os.environ.get("XDG_SESSION_TYPE", "").lower() == "wayland":
-        return (
+        return tr(
             "Nothing was captured. On Wayland, prefer being in the `input` group "
             "so capture uses evdev (every window). Without it, only X11 windows "
             "are visible to the fallback recorder."
         )
-    return "Nothing was captured. Hold a pad key for 3 seconds, do the thing, hold again to finish."
+    return tr(
+        "Nothing was captured. Hold a pad key for 3 seconds, do the thing, "
+        "hold again to finish."
+    )
 
 
 #: A typed run at least this long is worth pointing at before it is stored.

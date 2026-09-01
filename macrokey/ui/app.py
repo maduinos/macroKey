@@ -6,6 +6,7 @@ keeps every other module in the package runnable headless.
 
 from __future__ import annotations
 
+import datetime
 import logging
 import queue
 import sys
@@ -14,7 +15,7 @@ import time
 from collections.abc import Callable
 
 from PySide6.QtCore import Qt, QTimer, Signal
-from PySide6.QtGui import QAction, QColor
+from PySide6.QtGui import QAction, QActionGroup, QColor
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -23,9 +24,11 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QGridLayout,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QListWidget,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QPushButton,
     QScrollArea,
@@ -40,10 +43,12 @@ from .. import __version__, capture_setup
 from ..app import MacroKeyApp
 from ..config import (
     KEY_COUNT,
+    Settings,
     binary,
     export_profile,
+    is_factory_default,
     load_profile_file,
-    profile_backup_path,
+    profile_backup_paths,
 )
 from ..config.model import (
     EDITABLE_GESTURES,
@@ -55,6 +60,7 @@ from ..config.model import (
     text_speed_stored,
 )
 from ..device import DeviceError, candidates
+from ..i18n import LANGUAGES, active_language, language_name, set_language, tr
 from ..session import RecordingSession
 from .describe import describe_binding
 from .slot_dialog import SlotDialog
@@ -125,6 +131,10 @@ class MainWindow(QMainWindow):
         self._profile_prompt_open = False
         self._capture_setup_running = False
         self._profiles_diverged = False
+        # Set on connect: the pad is holding factory defaults while this
+        # computer still has work. Changes what the mismatch dialog says and
+        # which way it leans, because the two cases need opposite answers.
+        self._device_lost_its_profile = False
         self._closing = False
         # Reconnect state. `_allowed` is cleared by an explicit Disconnect: the
         # link going away because someone asked for it is not something to undo.
@@ -149,9 +159,11 @@ class MainWindow(QMainWindow):
         # The pad's main feature is invisible: nothing about eight buttons
         # suggests that holding one opens a recorder. One line, stated once.
         hint = QLabel(
-            "Hold any key on its own for 3 seconds to record into it - the pixel "
-            "turns red. Hold the same key again to store what you did. "
-            "After setup you can quit this app; the pad keeps working as a keyboard."
+            tr(
+                "Hold any key on its own for 3 seconds to record into it - the pixel "
+                "turns red. Hold the same key again to store what you did. "
+                "After setup you can quit this app; the pad keeps working as a keyboard."
+            )
         )
         hint.setWordWrap(True)
         hint.setStyleSheet("color: palette(window-text); padding: 2px 8px;")
@@ -166,7 +178,7 @@ class MainWindow(QMainWindow):
         self._toolbar = toolbar
         self._central_layout = layout
 
-        self.record_banner = QLabel("  ● RECORDING - hold the same key again to finish  ")
+        self.record_banner = QLabel(tr("  ● RECORDING - hold the same key again to finish  "))
         self.record_banner.setStyleSheet(
             "background: #c0392b; color: white; font-weight: 600; padding: 6px;"
         )
@@ -176,10 +188,12 @@ class MainWindow(QMainWindow):
 
         self.storage_label = QLabel()
         self.storage_label.setToolTip(
-            "Shared keypad macro storage (keyboard + mouse steps).\n"
-            "All 16 slots draw from the same 308-record pool."
+            tr(
+                "Shared keypad macro storage (keyboard + mouse steps).\n"
+                "All 16 slots draw from the same 308-record pool."
+            )
         )
-        self.statusBar().showMessage("Not connected")
+        self.statusBar().showMessage(tr("Not connected"))
         self.statusBar().addPermanentWidget(self.storage_label)
         self.statusMessage.connect(self.statusBar().showMessage)
         self.failed.connect(self._show_error)
@@ -272,83 +286,161 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------ build --
 
     def _build_menus(self) -> None:
-        profile_menu = self.menuBar().addMenu("Profile")
+        profile_menu = self.menuBar().addMenu(tr("Profile"))
         self._profile_menu = profile_menu
-        import_action = QAction("Import…", self)
+        import_action = QAction(tr("Import…"), self)
         import_action.triggered.connect(lambda: self._import_profile())
-        export_action = QAction("Export…", self)
+        export_action = QAction(tr("Export…"), self)
         export_action.triggered.connect(lambda: self._export_profile())
-        restore_action = QAction("Restore previous version…", self)
+        restore_action = QAction(tr("Restore previous version…"), self)
         restore_action.triggered.connect(lambda: self._restore_profile_backup())
         profile_menu.addAction(import_action)
         profile_menu.addAction(export_action)
         profile_menu.addSeparator()
         profile_menu.addAction(restore_action)
 
-        help_menu = self.menuBar().addMenu("Help")
-        mouse_help = QAction("Mouse macro accuracy", self)
+        help_menu = self.menuBar().addMenu(tr("Help"))
+        mouse_help = QAction(tr("Mouse macro accuracy"), self)
         mouse_help.triggered.connect(lambda: self._show_mouse_help())
-        gesture_help = QAction("Recording gestures", self)
+        gesture_help = QAction(tr("Recording gestures"), self)
         gesture_help.triggered.connect(lambda: self._show_gesture_help())
-        setup_help = QAction("Recording setup…", self)
+        setup_help = QAction(tr("Recording setup"), self)
         self._setup_help_action = setup_help
         setup_help.triggered.connect(lambda: self._retry_capture_setup())
         help_menu.addAction(mouse_help)
         help_menu.addAction(gesture_help)
         help_menu.addSeparator()
         help_menu.addAction(setup_help)
+        help_menu.addSeparator()
+        help_menu.addMenu(self._build_language_menu())
+
+    def _build_language_menu(self) -> QMenu:
+        """The language picker, under Help because it is set once and forgotten.
+
+        Every entry names its language in that language, so someone who has
+        landed in the wrong one can still find their way out.
+        """
+        menu = QMenu(tr("Language"), self)
+        group = QActionGroup(self)
+        group.setExclusive(True)
+        current = self.app.settings.language or "system"
+        for code in LANGUAGES:
+            label = language_name(code)
+            if code == "system":
+                # The only entry whose name is a description rather than a
+                # language, so it is the only one worth translating.
+                label = f"{tr('System default')} ({language_name(active_language())})"
+            action = QAction(label, self)
+            action.setCheckable(True)
+            action.setChecked(code == current)
+            action.triggered.connect(lambda _checked=False, c=code: self._set_language(c))
+            group.addAction(action)
+            menu.addAction(action)
+        self._language_menu = menu
+        return menu
+
+    def _set_language(self, code: str) -> None:
+        """Stores the choice and says when it takes effect.
+
+        Nothing is retranslated here. Every label, tooltip and pinned button
+        width in this window was computed from the language it was built with,
+        so switching in place would leave a half-translated window with clipped
+        buttons -- the restart is the honest version of that.
+        """
+        if code == (self.app.settings.language or "system"):
+            return
+        self.app.settings.language = code
+        self.app.settings.save()
+        QMessageBox.information(
+            self,
+            tr("Restart required"),
+            tr("The language changes the next time macroKey starts."),
+        )
 
     def _import_profile(self) -> None:
         path, _filter = QFileDialog.getOpenFileName(
             self,
-            "Import macroKey profile",
+            tr("Import macroKey profile"),
             "",
-            "macroKey profiles (*.json);;All files (*)",
+            tr("macroKey profiles (*.json);;All files (*)"),
         )
         if not path:
             return
         try:
             profile = load_profile_file(path)
-            self._adopt_local_profile(profile, f"Imported {path}")
+            self._adopt_local_profile(profile, tr("Imported {path}").format(path=path))
         except (OSError, ValueError, KeyError, TypeError) as exc:
-            QMessageBox.critical(self, "Import failed", str(exc))
+            QMessageBox.critical(self, tr("Import failed"), str(exc))
 
     def _export_profile(self) -> None:
         path, _filter = QFileDialog.getSaveFileName(
             self,
-            "Export macroKey profile",
+            tr("Export macroKey profile"),
             "macrokey-profile.json",
-            "macroKey profiles (*.json);;All files (*)",
+            tr("macroKey profiles (*.json);;All files (*)"),
         )
         if not path:
             return
         try:
             export_profile(self.app.profile, path)
         except (OSError, ValueError) as exc:
-            QMessageBox.critical(self, "Export failed", str(exc))
+            QMessageBox.critical(self, tr("Export failed"), str(exc))
             return
-        self.statusBar().showMessage(f"Exported profile to {path}")
+        self.statusBar().showMessage(tr("Exported profile to {path}").format(path=path))
 
-    def _restore_profile_backup(self) -> None:
-        path = profile_backup_path()
-        if not path.exists():
-            QMessageBox.information(self, "No previous version", "No profile backup exists yet.")
-            return
-        answer = QMessageBox.question(
-            self,
-            "Restore previous profile?",
-            "Replace the current local profile with the previous saved version? "
-            "The keypad is not changed until you resolve Sync….",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No,
+    def _backup_label(self, path) -> str:
+        """When it was kept, and whether it has anything in it.
+
+        The time alone is not enough to choose by: the copies made either side
+        of a keypad losing its profile are seconds apart, and the only thing
+        that distinguishes them is that one still has the macros.
+        """
+        stamp = datetime.datetime.fromtimestamp(path.stat().st_mtime).strftime(
+            "%Y-%m-%d %H:%M:%S"
         )
-        if answer != QMessageBox.Yes:
-            return
         try:
             profile = load_profile_file(path)
-            self._adopt_local_profile(profile, "Restored the previous local profile")
+        except (OSError, ValueError, KeyError, TypeError):
+            return tr("{stamp} — unreadable").format(stamp=stamp)
+        if is_factory_default(profile):
+            return tr("{stamp} — empty (factory defaults)").format(stamp=stamp)
+        macros = sum(1 for macro in profile.device_macros if macro)
+        return tr("{stamp} — {macros} recorded macros").format(stamp=stamp, macros=macros)
+
+    def _restore_profile_backup(self) -> None:
+        """Restores one of the kept copies, chosen by the person restoring.
+
+        A single most-recent backup was not a recovery path for the case it
+        exists for: an empty profile saved twice puts the empty one in the slot
+        and the good one out of it, and the restore offers the empty one back.
+        """
+        paths = profile_backup_paths()
+        if not paths:
+            QMessageBox.information(
+                self, tr("No previous version"), tr("No profile backup exists yet.")
+            )
+            return
+
+        labels = [self._backup_label(path) for path in paths]
+        chosen, accepted = QInputDialog.getItem(
+            self,
+            tr("Restore previous profile?"),
+            tr(
+                "Replace the current local profile with one of the kept copies? "
+                "Newest first. The keypad is not changed until you resolve Sync…."
+            ),
+            labels,
+            0,
+            False,
+        )
+        if not accepted or chosen not in labels:
+            return
+        path = paths[labels.index(chosen)]
+        try:
+            profile = load_profile_file(path)
+            self._adopt_local_profile(profile, tr("Restored the previous local profile"))
         except (OSError, ValueError, KeyError, TypeError) as exc:
-            QMessageBox.critical(self, "Restore failed", str(exc))
+            QMessageBox.critical(self, tr("Restore failed"), str(exc))
 
     def _adopt_local_profile(self, profile, message: str) -> None:
         previous = self.app.profile
@@ -357,40 +449,44 @@ class MainWindow(QMainWindow):
             self.app.save()
         except OSError as exc:
             self.app.profile = previous
-            QMessageBox.critical(self, "Could not save profile", str(exc))
+            QMessageBox.critical(self, tr("Could not save profile"), str(exc))
             return
         self._profiles_diverged = self.app.device.connected
         self._refresh_all()
         self._refresh_connection()
-        suffix = " — use Sync… to update the keypad" if self._profiles_diverged else ""
+        suffix = tr(" — use Sync… to update the keypad") if self._profiles_diverged else ""
         self.statusBar().showMessage(message + suffix)
 
     def _show_mouse_help(self) -> None:
         QMessageBox.information(
             self,
-            "Mouse macro accuracy",
-            "Default mouse replay is relative: clicks happen at the current pointer, "
-            "and movement starts there. This is the reliable choice.\n\n"
-            "The keypad replays a recorded movement over the time it was recorded "
-            "over, rather than as one jump, so pointer acceleration affects the "
-            "replay the same way it affected your hand. Flat acceleration removes "
-            "the variable altogether -- macroKey will offer that next.\n\n"
-            "Fixed position is experimental. It homes to the top-left and depends "
-            "on the same monitor layout, scaling, pointer speed/acceleration, window "
-            "positions, and application state. Test fixed-position macros on a safe "
-            "target before assigning them to destructive actions.",
+            tr("Mouse macro accuracy"),
+            tr(
+                "Default mouse replay is relative: clicks happen at the current pointer, "
+                "and movement starts there. This is the reliable choice.\n\n"
+                "The keypad replays a recorded movement over the time it was recorded "
+                "over, rather than as one jump, so pointer acceleration affects the "
+                "replay the same way it affected your hand. Flat acceleration removes "
+                "the variable altogether -- macroKey will offer that next.\n\n"
+                "Fixed position is experimental. It homes to the top-left and depends "
+                "on the same monitor layout, scaling, pointer speed/acceleration, window "
+                "positions, and application state. Test fixed-position macros on a safe "
+                "target before assigning them to destructive actions."
+            ),
         )
         self._offer_flat_pointer(asked_for=True)
 
     def _show_gesture_help(self) -> None:
         QMessageBox.information(
             self,
-            "Recording gestures",
-            "Tap slot: hold a key by itself for 3 seconds.\n\n"
-            "Double slot: tap, then press and hold the same key within 250 ms; "
-            "keep holding for 3 seconds.\n\n"
-            "The pixel turns red while all keyboard input is being captured. Hold "
-            "the same key again to save, or use Discard recording in this window.",
+            tr("Recording gestures"),
+            tr(
+                "Tap slot: hold a key by itself for 3 seconds.\n\n"
+                "Double slot: tap, then press and hold the same key within 250 ms; "
+                "keep holding for 3 seconds.\n\n"
+                "The pixel turns red while all keyboard input is being captured. Hold "
+                "the same key again to save, or use Discard recording in this window."
+            ),
         )
 
     def _build_toolbar(self, port: str) -> QWidget:
@@ -420,32 +516,45 @@ class MainWindow(QMainWindow):
             max(150, metrics.horizontalAdvance("/dev/ttyACM0") + metrics.height() * 2)
         )
         self.port_box.setToolTip(
-            "Leave as Auto to use whichever board identifies itself as a keypad."
+            tr("Leave as Auto to use whichever board identifies itself as a keypad.")
         )
         self._rescan_ports()
         self.port_box.setCurrentText(port or self.app.settings.port or AUTO_PORT)
 
-        self.connect_button = QPushButton("Connect")
+        self.connect_button = QPushButton(tr("Connect"))
         # A button elides its label rather than refuse to shrink, so a toolbar
         # that does not fit squeezes it silently. Pin it to the widest text it
         # will ever carry -- the row then demands its real width instead, and
         # the label stops changing size as the state changes.
+        # Sized against the translated labels, not the English ones: a button
+        # pinned to the width of "Connect" elides "연결 해제".
         self.connect_button.setMinimumWidth(
-            _button_width(self.connect_button, "Connecting...", "Disconnect", "Connect")
+            _button_width(
+                self.connect_button,
+                tr("Connecting..."),
+                tr("Disconnect"),
+                tr("Connect"),
+            )
         )
         self.connect_button.clicked.connect(self._toggle_connection)
 
         self.link_label = QLabel()
-        port_label = QLabel("Port")
+        port_label = QLabel(tr("Port"))
         port_label.setBuddy(self.port_box)
         connection_row.addWidget(port_label)
         connection_row.addWidget(self.port_box)
         connection_row.addWidget(self.connect_button)
         connection_row.addWidget(self.link_label)
 
-        self.sync_button = QPushButton("Sync…")
+        self.sync_button = QPushButton(tr("Sync…"))
+        # Same hazard as Connect: the label swaps to "Sync needed" at runtime.
+        # That one is a state, not an action, so it has no ellipsis; the base
+        # label keeps its own, because the dialog it opens asks which side wins.
+        self.sync_button.setMinimumWidth(
+            _button_width(self.sync_button, tr("Sync…"), tr("Sync needed"))
+        )
         self.sync_button.setToolTip(
-            "Resolve which profile wins when this computer and the keypad differ."
+            tr("Resolve which profile wins when this computer and the keypad differ.")
         )
         self.sync_button.clicked.connect(self._resolve_profile_mismatch)
         connection_row.addStretch(1)
@@ -488,29 +597,34 @@ class MainWindow(QMainWindow):
         self.text_speed.setFixedWidth(self.text_speed.sizeHint().width())
         self.text_speed.setValue(text_speed_shown(self.app.profile.text_speed_ms))
         self.text_speed.setToolTip(
-            "Pause between characters when the pad replays typed text.\n"
-            "5 ms is what the pad does out of the box. Drop it to 1 ms for the\n"
-            "fastest replay, or raise it if the receiving window misses the start."
+            tr(
+                "Pause between characters when the pad replays typed text.\n"
+                "5 ms is what the pad does out of the box. Drop it to 1 ms for the\n"
+                "fastest replay, or raise it if the receiving window misses the start."
+            )
         )
         self.text_speed.valueChanged.connect(self._text_speed_changed)
 
         # Destructive, and the only control here that is, so it sits apart from
-        # the knobs and says so with an ellipsis: nothing happens on the click.
-        self.reset_button = QPushButton("Reset\u2026")
-        self.reset_button.setMinimumWidth(_button_width(self.reset_button, "Reset\u2026"))
+        # the knobs. No ellipsis: that marks a control that needs more input
+        # before it can act, and this one only raises a yes/no confirmation.
+        self.reset_button = QPushButton(tr("Reset"))
+        self.reset_button.setMinimumWidth(_button_width(self.reset_button, tr("Reset")))
         self.reset_button.setToolTip(
-            "Clears every binding and every recorded macro -- on this computer\n"
-            "and on the keypad -- and puts the hyper + 1..8 defaults back."
+            tr(
+                "Clears every binding and every recorded macro -- on this computer\n"
+                "and on the keypad -- and puts the hyper + 1..8 defaults back."
+            )
         )
         self.reset_button.clicked.connect(self._reset_everything)
 
-        brightness_label = QLabel("Brightness")
+        brightness_label = QLabel(tr("Brightness"))
         brightness_label.setBuddy(self.brightness)
         controls_row.addWidget(brightness_label)
         controls_row.addWidget(self.brightness)
         controls_row.addWidget(self.brightness_value)
         controls_row.addSpacing(12)
-        typing_label = QLabel("Typing")
+        typing_label = QLabel(tr("Typing"))
         typing_label.setBuddy(self.text_speed)
         controls_row.addWidget(typing_label)
         controls_row.addWidget(self.text_speed)
@@ -524,12 +638,16 @@ class MainWindow(QMainWindow):
         if stored == self.app.profile.text_speed_ms:
             return
         self.app.profile.text_speed_ms = stored
-        self.statusMessage.emit(f"Typing speed {value} ms per character (saving…)")
+        self.statusMessage.emit(
+            tr("Typing speed {value} ms per character (saving…)").format(value=value)
+        )
         self._text_speed_timer.start()
 
     def _text_speed_settled(self) -> None:
         self._apply(
-            f"Typing speed {text_speed_shown(self.app.profile.text_speed_ms)} ms per character"
+            tr("Typing speed {value} ms per character").format(
+                value=text_speed_shown(self.app.profile.text_speed_ms)
+            )
         )
 
     def _build_capture(self) -> QWidget:
@@ -544,34 +662,38 @@ class MainWindow(QMainWindow):
         column.setContentsMargins(8, 0, 8, 4)
 
         row = QHBoxLayout()
-        self.capture_title = QLabel("Recording")
+        self.capture_title = QLabel(tr("Recording"))
         self.capture_title.setStyleSheet("font-weight: 600;")
-        self.capture_setup_button = QPushButton("Setup…")
+        self.capture_setup_button = QPushButton(tr("Setup"))
         self.capture_setup_button.setToolTip(
-            "Check or retry permission setup for global keyboard and mouse recording."
+            tr("Check or retry permission setup for global keyboard and mouse recording.")
         )
         self.capture_setup_button.clicked.connect(self._retry_capture_setup)
-        self.capture_mouse = QCheckBox("Include mouse")
+        self.capture_mouse = QCheckBox(tr("Include mouse"))
         self.capture_mouse.setChecked(bool(self.app.settings.recorder_capture_mouse))
         self.capture_mouse.setToolTip(
-            "Clicks, wheel, and pointer movement. By default clicks happen at "
-            "the current pointer and movement is relative to it."
+            tr(
+                "Clicks, wheel, and pointer movement. By default clicks happen at "
+                "the current pointer and movement is relative to it."
+            )
         )
         self.capture_mouse.toggled.connect(self._mouse_capture_toggled)
 
-        self.anchor_mouse = QCheckBox("Fixed screen")
+        self.anchor_mouse = QCheckBox(tr("Fixed screen"))
         self.anchor_mouse.setChecked(bool(self.app.settings.recorder_anchor_mouse))
         self.anchor_mouse.setEnabled(self.capture_mouse.isChecked())
         self.anchor_mouse.setToolTip(
-            "Homes the pointer before recording and replay. Fixed clicks are only "
-            "repeatable with the same monitor layout, scaling, pointer speed, and "
-            "window positions. Relative/current-pointer replay is safer."
+            tr(
+                "Homes the pointer before recording and replay. Fixed clicks are only "
+                "repeatable with the same monitor layout, scaling, pointer speed, and "
+                "window positions. Relative/current-pointer replay is safer."
+            )
         )
         self.anchor_mouse.toggled.connect(self._anchor_mouse_toggled)
 
-        self.cancel_recording_button = QPushButton("Discard recording")
+        self.cancel_recording_button = QPushButton(tr("Discard recording"))
         self.cancel_recording_button.setToolTip(
-            "Stop global capture and discard everything recorded this time."
+            tr("Stop global capture and discard everything recorded this time.")
         )
         self.cancel_recording_button.clicked.connect(self._cancel_recording)
         self.cancel_recording_button.setVisible(False)
@@ -586,7 +708,7 @@ class MainWindow(QMainWindow):
         self.capture_list.setMaximumHeight(140)
         self.capture_list.setStyleSheet("font-family: monospace;")
         self.capture_list.addItem(
-            "Hold a pad key for 3 seconds to record. Captured steps appear here."
+            tr("Hold a pad key for 3 seconds to record. Captured steps appear here.")
         )
 
         column.addLayout(row)
@@ -612,26 +734,34 @@ class MainWindow(QMainWindow):
         flat removes the variable and makes replay exact.
 
         It is someone's desktop preference, so this asks and never assumes, and
-        a no is remembered. `asked_for` is the path from the Help menu, which
-        both ignores that no and says something when there is nothing to fix.
+        a no is remembered. Yes is the default button: the dialog only appears
+        because the user is recording mouse movement, flat is the better setting
+        for that, and the text says both what else it changes and how to put it
+        back -- so the recommended answer should not be the one that takes an
+        extra keystroke. `asked_for` is the path from the Help menu, which both
+        ignores that no and says something when there is nothing to fix.
         """
         profile = capture_setup.pointer_accel_profile()
         if profile is None:
             if asked_for:
                 QMessageBox.information(
                     self,
-                    "Pointer acceleration",
-                    "This desktop does not expose a pointer acceleration setting "
-                    "that macroKey can read, so there is nothing to change here.",
+                    tr("Pointer acceleration"),
+                    tr(
+                        "This desktop does not expose a pointer acceleration setting "
+                        "that macroKey can read, so there is nothing to change here."
+                    ),
                 )
             return
         if profile == "flat":
             if asked_for:
                 QMessageBox.information(
                     self,
-                    "Pointer acceleration",
-                    "Pointer acceleration is already flat, which is the setting "
-                    "mouse macros replay most accurately under.",
+                    tr("Pointer acceleration"),
+                    tr(
+                        "Pointer acceleration is already flat, which is the setting "
+                        "mouse macros replay most accurately under."
+                    ),
                 )
             return
         if not asked_for and self.app.settings.pointer_accel_declined:
@@ -639,27 +769,30 @@ class MainWindow(QMainWindow):
 
         answer = QMessageBox.question(
             self,
-            "Pointer acceleration",
-            f"Your desktop scales pointer movement by how fast it is "
-            f"(acceleration profile: {profile!r}).\n\n"
-            "The keypad replays a recorded movement at the speed it was made, "
-            "so this largely cancels out. Turning it off removes the variable "
-            "entirely and is what makes a mouse macro land exactly where it "
-            "was recorded.\n\n"
-            "Switch to flat pointer acceleration? It changes how the mouse "
-            "feels everywhere, not just in macros. To undo it later:\n\n"
-            "    gsettings set org.gnome.desktop.peripherals.mouse "
-            "accel-profile 'default'",
+            tr("Pointer acceleration"),
+            tr(
+                "Your desktop scales pointer movement by how fast it is "
+                "(acceleration profile: {profile}).\n\n"
+                "The keypad replays a recorded movement at the speed it was made, "
+                "so this largely cancels out. Turning it off removes the variable "
+                "entirely and is what makes a mouse macro land exactly where it "
+                "was recorded.\n\n"
+                "Switch to flat pointer acceleration? It changes how the mouse "
+                "feels everywhere, not just in macros. To undo it later:\n\n"
+                "{undo}"
+            ).format(profile=profile, undo=capture_setup.pointer_accel_undo_hint()),
             QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No,
+            QMessageBox.Yes,
         )
         if answer != QMessageBox.Yes:
             if not asked_for:
                 self.app.settings.pointer_accel_declined = True
                 self.app.settings.save()
                 self.statusBar().showMessage(
-                    "Left pointer acceleration alone. Help > Mouse macro accuracy "
-                    "offers it again."
+                    tr(
+                        "Left pointer acceleration alone. Help > Mouse macro accuracy "
+                        "offers it again."
+                    )
                 )
             return
 
@@ -675,7 +808,7 @@ class MainWindow(QMainWindow):
 
     def _cancel_recording(self) -> None:
         if self.session.recording:
-            self.session.abort("Recording discarded")
+            self.session.abort(tr("Recording discarded"))
 
     def _build_keys(self) -> QWidget:
         """The eight keys, and nothing wrapped around them.
@@ -688,7 +821,8 @@ class MainWindow(QMainWindow):
         grid = QGridLayout(page)
         grid.setContentsMargins(8, 8, 8, 8)
 
-        for column, title in enumerate(("Key", *(g.title() for g in EDITABLE_GESTURES))):
+        headers = (tr("Key"), *(tr(g.title()) for g in EDITABLE_GESTURES))
+        for column, title in enumerate(headers):
             header = QLabel(title)
             header.setStyleSheet("font-weight: 600;")
             grid.addWidget(header, 0, column)
@@ -712,9 +846,9 @@ class MainWindow(QMainWindow):
         # The resting colour is what the pixel spends most of its time saying,
         # and it was the one part of the profile the editor wrote but never let
         # anyone change.
-        grid.addWidget(QLabel("LED"), KEY_COUNT + 1, 0)
+        grid.addWidget(QLabel(tr("LED")), KEY_COUNT + 1, 0)
         swatch = QPushButton()
-        swatch.setToolTip("Colour the pad rests at when nothing is happening.")
+        swatch.setToolTip(tr("Colour the pad rests at when nothing is happening."))
         swatch.clicked.connect(self._edit_resting_color)
         grid.addWidget(swatch, KEY_COUNT + 1, 1, 1, len(EDITABLE_GESTURES))
         self.swatch = swatch
@@ -731,7 +865,7 @@ class MainWindow(QMainWindow):
         """
         before = self.app.profile.resting_color
         dialog = QColorDialog(QColor(f"#{before}"), self)
-        dialog.setWindowTitle("Resting LED colour")
+        dialog.setWindowTitle(tr("Resting LED colour"))
         dialog.currentColorChanged.connect(self._preview_color)
 
         self._begin_preview()
@@ -750,7 +884,7 @@ class MainWindow(QMainWindow):
 
         # Written before the preview is released, so the pixel never flashes the
         # old colour back at the person who just chose one.
-        self._apply(f"Resting LED #{value}")
+        self._apply(tr("Resting LED #{value}").format(value=value))
         self._end_preview()
 
     # ------------------------------------------------------------- preview --
@@ -772,7 +906,9 @@ class MainWindow(QMainWindow):
             try:
                 self.app.device.set_led_mode(True, timeout_ms=PREVIEW_HOLD_MS)
             except DeviceError as exc:
-                self.statusMessage.emit(f"Preview unavailable: {exc}")
+                self.statusMessage.emit(
+                    tr("Preview unavailable: {detail}").format(detail=exc)
+                )
 
         self._in_background(worker)
 
@@ -812,7 +948,9 @@ class MainWindow(QMainWindow):
             try:
                 self.app.device.set_all(rgb)
             except DeviceError as exc:
-                self.statusMessage.emit(f"Preview stopped: {exc}")
+                self.statusMessage.emit(
+                    tr("Preview stopped: {detail}").format(detail=exc)
+                )
 
         self._in_background(worker)
 
@@ -821,7 +959,7 @@ class MainWindow(QMainWindow):
         colour = QColor(f"#{value}")
         # Black reads as "off" rather than as a colour, so say so: an empty
         # black rectangle looks like a rendering failure.
-        self.swatch.setText("off" if colour.value() == 0 else f"#{value}")
+        self.swatch.setText(tr("off") if colour.value() == 0 else f"#{value}")
         text = "#f0f0f0" if colour.value() < 128 else "#101010"
         self.swatch.setStyleSheet(
             f"background-color: #{value}; color: {text}; padding: 4px 8px;"
@@ -865,7 +1003,9 @@ class MainWindow(QMainWindow):
             capacity=self.app.profile_layout.record_capacity,
         )
         self.storage_label.setText(
-            f"Storage {used_pct}% used · {free_pct}% free ({used}/{capacity})"
+            tr("Storage {used_pct}% used · {free_pct}% free ({used}/{capacity})").format(
+                used_pct=used_pct, free_pct=free_pct, used=used, capacity=capacity
+            )
         )
 
     def _edit(self, key: int, gesture: str) -> None:
@@ -892,7 +1032,9 @@ class MainWindow(QMainWindow):
             self.app.profile.set_action(key, gesture, dialog.result_action)
             self.app.profile.reclaim_storage()
             self._refresh_all()
-            self._apply(f"Key {key + 1} {gesture}")
+            self._apply(
+                tr("Key {key} {gesture}").format(key=key + 1, gesture=tr(gesture))
+            )
 
     def _reset_everything(self) -> None:
         """Factory-resets both sides: every binding and recorded macro is gone.
@@ -909,29 +1051,31 @@ class MainWindow(QMainWindow):
         """
         box = QMessageBox(self)
         box.setIcon(QMessageBox.Warning)
-        box.setWindowTitle("Reset everything?")
+        box.setWindowTitle(tr("Reset everything?"))
         box.setText(
-            "Every key binding and every recorded macro is cleared -- on this "
-            "computer and on the keypad -- and the hyper + 1..8 defaults go "
-            "back.\n\nThe previous local profile remains available under "
-            "Profile > Restore previous version."
+            tr(
+                "Every key binding and every recorded macro is cleared -- on this "
+                "computer and on the keypad -- and the hyper + 1..8 defaults go "
+                "back.\n\nThe previous local profile remains available under "
+                "Profile > Restore previous version."
+            )
         )
-        reset = box.addButton("Reset", QMessageBox.DestructiveRole)
-        cancel = box.addButton("Cancel", QMessageBox.RejectRole)
+        reset = box.addButton(tr("Reset"), QMessageBox.DestructiveRole)
+        cancel = box.addButton(tr("Cancel"), QMessageBox.RejectRole)
         box.setDefaultButton(cancel)
         box.exec()
         if box.clickedButton() is not reset:
-            self.statusBar().showMessage("Reset cancelled")
+            self.statusBar().showMessage(tr("Reset cancelled"))
             return
         if self.session.recording:
-            self.statusBar().showMessage("Finish or discard the recording before resetting")
+            self.statusBar().showMessage(tr("Finish or discard the recording before resetting"))
             return
 
         connected = self.app.device.connected
         self._resetting = True
         self._refresh_connection()
         if connected:
-            self.statusMessage.emit("Resetting the keypad…")
+            self.statusMessage.emit(tr("Resetting the keypad…"))
 
             def worker() -> None:
                 try:
@@ -953,7 +1097,9 @@ class MainWindow(QMainWindow):
         try:
             self.app.save()
         except OSError as exc:
-            self.statusMessage.emit(f"The keypad was cleared, but could not save: {exc}")
+            self.statusMessage.emit(
+                tr("The keypad was cleared, but could not save: {detail}").format(detail=exc)
+            )
             self._refresh_connection()
             return
 
@@ -961,12 +1107,14 @@ class MainWindow(QMainWindow):
         if device_was_reset and self.app.device.connected:
             self._profiles_diverged = False
             self.statusBar().showMessage(
-                "Reset. The keypad and this computer are back to defaults."
+                tr("Reset. The keypad and this computer are back to defaults.")
             )
         else:
             self.statusBar().showMessage(
-                "Reset this computer. The keypad still holds its own bindings "
-                "until you connect and choose Push in Sync…."
+                tr(
+                    "Reset this computer. The keypad still holds its own bindings "
+                    "until you connect and choose Push in Sync…."
+                )
             )
         self._refresh_connection()
 
@@ -974,7 +1122,9 @@ class MainWindow(QMainWindow):
         self._resetting = False
         self._refresh_connection()
         QMessageBox.critical(
-            self, "Reset failed", f"The keypad kept its profile: {message}"
+            self,
+            tr("Reset failed"),
+            tr("The keypad kept its profile: {message}").format(message=message),
         )
 
     def _apply(self, what: str) -> None:
@@ -989,10 +1139,12 @@ class MainWindow(QMainWindow):
         try:
             self.app.save()
         except OSError as exc:
-            self.statusMessage.emit(f"Could not save: {exc}")
+            self.statusMessage.emit(tr("Could not save: {detail}").format(detail=exc))
             return
         if not self.app.device.connected:
-            self.statusMessage.emit(f"{what} saved. It reaches the keypad on the next connect.")
+            self.statusMessage.emit(
+                tr("{what} saved. It reaches the keypad on the next connect.").format(what=what)
+            )
             return
         if (
             self._connecting
@@ -1001,12 +1153,16 @@ class MainWindow(QMainWindow):
             or self.session.recording
         ):
             self.statusMessage.emit(
-                f"{what} saved locally. The current device operation will finish first."
+                tr(
+                    "{what} saved locally. The current device operation will finish first."
+                ).format(what=what)
             )
             return
         if self._profiles_diverged:
             self.statusMessage.emit(
-                f"{what} saved locally. Profiles still differ; use Sync… to choose a side."
+                tr(
+                    "{what} saved locally. Profiles still differ; use Sync… to choose a side."
+                ).format(what=what)
             )
             return
         try:
@@ -1014,7 +1170,9 @@ class MainWindow(QMainWindow):
                 self.app.profile, profile_size=self.app.profile_layout.size
             )
         except ValueError as exc:
-            self.statusMessage.emit(f"Could not build the keypad profile: {exc}")
+            self.statusMessage.emit(
+                tr("Could not build the keypad profile: {detail}").format(detail=exc)
+            )
             return
 
         def worker() -> None:
@@ -1022,11 +1180,19 @@ class MainWindow(QMainWindow):
                 self.app.device.write_profile(blob)
                 self.app.confirm_on_device()
             except (DeviceError, ValueError, OSError) as exc:
-                self.statusMessage.emit(f"{what} saved, but the device write failed: {exc}")
+                self.statusMessage.emit(
+                    tr("{what} saved, but the device write failed: {detail}").format(
+                        what=what, detail=exc
+                    )
+                )
                 return
-            self.statusMessage.emit(f"Done - {what} written to the keypad")
+            self.statusMessage.emit(
+                tr("Done - {what} written to the keypad").format(what=what)
+            )
 
-        self.statusMessage.emit(f"{what} saved; writing to the keypad…")
+        self.statusMessage.emit(
+            tr("{what} saved; writing to the keypad…").format(what=what)
+        )
         self._in_background(worker)
 
     def _brightness_changed(self, value: int) -> None:
@@ -1057,7 +1223,9 @@ class MainWindow(QMainWindow):
         release so dragging does not write the profile on every pixel of travel.
         """
         self._brightness_save_timer.stop()
-        self._apply(f"Brightness {self.app.profile.brightness}")
+        self._apply(
+            tr("Brightness {value}").format(value=self.app.profile.brightness)
+        )
 
     def _in_background(self, work: Callable[[], None]) -> None:
         if self._closing:
@@ -1115,17 +1283,38 @@ class MainWindow(QMainWindow):
                 self.app.settings.save()
                 # Never silent-overwrite. PROTOCOL requires asking which side wins
                 # when the stored profile and the pad disagree.
-                profiles_differ = not self.app.device_matches_host()
+                matches, device_is_empty = self.app.compare_with_device()
+                profiles_differ = not matches
                 self._profiles_diverged = profiles_differ
+                # Two ways to learn the pad lost its profile. The flag is the
+                # firmware saying so outright (0.9.1 and later); the comparison
+                # is the inference that works on older firmware, and on a pad
+                # that was cleared by something other than a failed read.
+                hello = getattr(self.app.device, "hello", None)
+                self._device_lost_its_profile = bool(
+                    getattr(hello, "profile_was_reset", False)
+                ) or (device_is_empty and not is_factory_default(self.app.profile))
+                if self._device_lost_its_profile:
+                    log.warning(
+                        "keypad is holding factory defaults (firmware reported "
+                        "reset=%s); this computer still has bindings",
+                        getattr(hello, "profile_was_reset", False),
+                    )
                 if not profiles_differ:
-                    self.statusMessage.emit("Connected")
+                    self.statusMessage.emit(tr("Connected"))
             except DeviceError as exc:
                 if quiet:
-                    self.statusMessage.emit(f"No keypad found: {exc.args[0].splitlines()[0]}")
+                    self.statusMessage.emit(
+                        tr("No keypad found: {detail}").format(
+                            detail=exc.args[0].splitlines()[0]
+                        )
+                    )
                 else:
-                    self.failed.emit("Connect failed", str(exc))
+                    self.failed.emit(tr("Connect failed"), str(exc))
             except (ValueError, OSError) as exc:
-                self.statusMessage.emit(f"Could not update the keypad: {exc}")
+                self.statusMessage.emit(
+                    tr("Could not update the keypad: {detail}").format(detail=exc)
+                )
             except RuntimeError:
                 # Window closed while the worker was still connecting.
                 return
@@ -1153,16 +1342,40 @@ class MainWindow(QMainWindow):
         ):
             return
         box = QMessageBox(self)
-        box.setWindowTitle("Profile differs")
-        box.setText(
-            "This computer and the keypad have different profiles.\n\n"
-            "Pull: use what is on the keypad.\n"
-            "Push: overwrite the keypad with this computer's profile.\n"
-            "Cancel: leave both as they are."
-        )
-        pull = box.addButton("Pull from keypad", QMessageBox.AcceptRole)
-        push = box.addButton("Push to keypad", QMessageBox.DestructiveRole)
-        box.addButton("Cancel", QMessageBox.RejectRole)
+        if self._device_lost_its_profile:
+            # Not a disagreement: the pad is empty and this computer is not.
+            # Offering "Pull" first here is offering to delete the macros, and
+            # it is one keystroke on a dialog that looks like the usual one.
+            box.setIcon(QMessageBox.Warning)
+            box.setWindowTitle(tr("The keypad lost its profile"))
+            box.setText(
+                tr(
+                    "The keypad is holding factory defaults -- no recorded macros "
+                    "and the plain hyper + 1..8 bindings. This computer still has "
+                    "yours.\n\n"
+                    "Push: put this computer's profile back on the keypad.\n"
+                    "Pull: accept the empty one, losing what is on this computer.\n"
+                    "Cancel: leave both as they are.\n\n"
+                    "Profile > Restore previous version keeps earlier copies if "
+                    "this computer's profile is already the empty one."
+                )
+            )
+        else:
+            box.setWindowTitle(tr("Profile differs"))
+            box.setText(
+                tr(
+                    "This computer and the keypad have different profiles.\n\n"
+                    "Pull: use what is on the keypad.\n"
+                    "Push: overwrite the keypad with this computer's profile.\n"
+                    "Cancel: leave both as they are."
+                )
+            )
+        pull = box.addButton(tr("Pull from keypad"), QMessageBox.AcceptRole)
+        push = box.addButton(tr("Push to keypad"), QMessageBox.DestructiveRole)
+        cancel = box.addButton(tr("Cancel"), QMessageBox.RejectRole)
+        # Leaning is the whole point of telling the two cases apart: recovering
+        # the pad is the safe answer when it is the pad that forgot.
+        box.setDefaultButton(push if self._device_lost_its_profile else cancel)
         self._profile_prompt_open = True
         try:
             box.exec()
@@ -1173,20 +1386,22 @@ class MainWindow(QMainWindow):
             self._profiles_diverged = True
             self._refresh_connection()
             self.statusBar().showMessage(
-                "Connected — profiles still differ. Local edits will not overwrite "
-                "the keypad until Sync… is resolved."
+                tr(
+                    "Connected — profiles still differ. Local edits will not overwrite "
+                    "the keypad until Sync… is resolved."
+                )
             )
             return
         if self.session.recording:
             self.statusBar().showMessage(
-                "Finish or discard the recording before synchronizing profiles"
+                tr("Finish or discard the recording before synchronizing profiles")
             )
             return
 
         self._syncing = True
         self._refresh_connection()
         if clicked is pull:
-            self.statusMessage.emit("Reading the keypad profile…")
+            self.statusMessage.emit(tr("Reading the keypad profile…"))
 
             def worker() -> None:
                 try:
@@ -1197,7 +1412,7 @@ class MainWindow(QMainWindow):
                 self.profileAdopted.emit(profile)
 
         else:
-            self.statusMessage.emit("Writing this computer's profile to the keypad…")
+            self.statusMessage.emit(tr("Writing this computer's profile to the keypad…"))
 
             def worker() -> None:
                 try:
@@ -1205,7 +1420,7 @@ class MainWindow(QMainWindow):
                 except (DeviceError, ValueError, OSError) as exc:
                     self.syncFailed.emit(str(exc))
                     return
-                self.syncSucceeded.emit("Keypad updated from this computer")
+                self.syncSucceeded.emit(tr("Keypad updated from this computer"))
 
         self._in_background(worker)
 
@@ -1214,10 +1429,14 @@ class MainWindow(QMainWindow):
         try:
             self.app.save()
         except OSError as exc:
-            self._sync_failed(f"Read succeeded, but the profile could not be saved: {exc}")
+            self._sync_failed(
+                tr("Read succeeded, but the profile could not be saved: {detail}").format(
+                    detail=exc
+                )
+            )
             return
         self._refresh_all()
-        self._finish_sync("Adopted the keypad profile")
+        self._finish_sync(tr("Adopted the keypad profile"))
 
     def _finish_sync(self, message: str) -> None:
         self._syncing = False
@@ -1229,7 +1448,7 @@ class MainWindow(QMainWindow):
         self._syncing = False
         self._profiles_diverged = True
         self._refresh_connection()
-        QMessageBox.critical(self, "Sync failed", message)
+        QMessageBox.critical(self, tr("Sync failed"), message)
 
     def _disconnect(self) -> None:
         # Asked for, so do not undo it. `_poll_connection` sees the same
@@ -1237,7 +1456,7 @@ class MainWindow(QMainWindow):
         self._reconnect_allowed = False
         self._reconnect_at = None
         self.app.disconnect()
-        self.statusBar().showMessage("Disconnected")
+        self.statusBar().showMessage(tr("Disconnected"))
         self._refresh_connection()
 
     # ------------------------------------------------------------ reconnect --
@@ -1253,7 +1472,7 @@ class MainWindow(QMainWindow):
             self._reconnect_at = None
         elif self._was_connected and not connected and self._reconnect_allowed:
             self._reconnect_at = time.monotonic() + self._reconnect_delay
-            self.statusBar().showMessage("Keypad disconnected; looking for it again…")
+            self.statusBar().showMessage(tr("Keypad disconnected; looking for it again…"))
         self._was_connected = connected
 
         self._refresh_connection()
@@ -1306,7 +1525,7 @@ class MainWindow(QMainWindow):
             # candidate is briefly open before it fails to answer. Reading
             # `connected` here would flip the button to Disconnect mid-probe
             # and let a second click land on a connection that is not real.
-            self.connect_button.setText("Connecting...")
+            self.connect_button.setText(tr("Connecting..."))
             self.connect_button.setEnabled(False)
             self.port_box.setEnabled(False)
             self.sync_button.setEnabled(False)
@@ -1314,22 +1533,28 @@ class MainWindow(QMainWindow):
             return
 
         connected = self.app.device.connected
-        self.connect_button.setText("Disconnect" if connected else "Connect")
+        self.connect_button.setText(tr("Disconnect") if connected else tr("Connect"))
         recording = self.session.recording
         busy = recording or self._syncing or self._resetting
         self.connect_button.setEnabled(not busy)
         self.port_box.setEnabled(not connected and not busy)
         self.sync_button.setEnabled(connected and not busy)
-        self.sync_button.setText("Sync needed…" if self._profiles_diverged else "Sync…")
+        self.sync_button.setText(
+            tr("Sync needed") if self._profiles_diverged else tr("Sync…")
+        )
         self._set_editing_enabled(not busy)
         if connected:
             hello = getattr(self.app.device, "hello", None)
-            firmware = f" - firmware {hello.firmware}" if hello is not None else ""
-            suffix = " · profiles differ" if self._profiles_diverged else ""
+            firmware = (
+                tr(" - firmware {firmware}").format(firmware=hello.firmware)
+                if hello is not None
+                else ""
+            )
+            suffix = tr(" · profiles differ") if self._profiles_diverged else ""
             port = getattr(self.app.device, "port", "keypad")
             self.link_label.setText(f"{port}{firmware}{suffix}")
         else:
-            self.link_label.setText("no keypad")
+            self.link_label.setText(tr("no keypad"))
 
     def _chosen_port(self) -> str:
         """The port to open, with Auto meaning "let discovery decide"."""
@@ -1358,7 +1583,7 @@ class MainWindow(QMainWindow):
         if self.app.device.connected:
             return
         if not self._startup_port and not self.app.settings.auto_connect:
-            self.statusBar().showMessage("Auto-connect is disabled")
+            self.statusBar().showMessage(tr("Auto-connect is disabled"))
             return
         chosen = self._chosen_port()
         if (
@@ -1371,7 +1596,9 @@ class MainWindow(QMainWindow):
             # Switch the visible choice to Auto as well; otherwise the worker
             # discovers the pad and then saves the stale number right back.
             self.port_box.setCurrentText(AUTO_PORT)
-            self.statusBar().showMessage(f"{chosen} is gone; looking for the keypad")
+            self.statusBar().showMessage(
+                tr("{port} is gone; looking for the keypad").format(port=chosen)
+            )
         self._toggle_connection(quiet=True)
 
     def _offer_flat_pointer_at_startup(self) -> None:
@@ -1410,22 +1637,24 @@ class MainWindow(QMainWindow):
             return
         if not needs_linux_capture_fix():
             if force:
-                self.statusMessage.emit("Recording is ready")
+                self.statusMessage.emit(tr("Recording is ready"))
             return
         if self.app.settings.capture_setup_declined and not force:
             return
 
         before = status()
-        detail = before.reason or "Recording cannot see the keyboard on this session."
+        detail = before.reason or tr("Recording cannot see the keyboard on this session.")
         answer = QMessageBox.question(
             self,
-            "Enable recording?",
-            f"{detail}\n\n"
-            "Allow macroKey to set this up? You will be asked for your "
-            "administrator password once. This grants your account access to "
-            "all keyboard and mouse input, including passwords; macroKey opens "
-            "that input only while the pixel and banner show recording. The "
-            "keypad still works either way — only recording needs this.",
+            tr("Enable recording?"),
+            tr(
+                "{detail}\n\n"
+                "Allow macroKey to set this up? You will be asked for your "
+                "administrator password once. This grants your account access to "
+                "all keyboard and mouse input, including passwords; macroKey opens "
+                "that input only while the pixel and banner show recording. The "
+                "keypad still works either way — only recording needs this."
+            ).format(detail=detail),
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.Yes,
         )
@@ -1439,14 +1668,16 @@ class MainWindow(QMainWindow):
         if answer != QMessageBox.Yes:
             self.app.settings.capture_setup_declined = True
             self.app.settings.save()
-            self.statusMessage.emit("Recording setup skipped — hold-to-record will not capture")
+            self.statusMessage.emit(
+                tr("Recording setup skipped — hold-to-record will not capture")
+            )
             return
 
         self.app.settings.capture_setup_declined = False
         self.app.settings.save()
         self._capture_setup_running = True
         self._refresh_connection()
-        self.statusMessage.emit("Preparing recording support…")
+        self.statusMessage.emit(tr("Preparing recording support…"))
 
         def worker() -> None:
             try:
@@ -1463,23 +1694,27 @@ class MainWindow(QMainWindow):
         if ok:
             self.app.settings.capture_setup_declined = False
             self.app.settings.save()
-            self.statusMessage.emit("Recording is ready")
+            self.statusMessage.emit(tr("Recording is ready"))
             QMessageBox.information(
                 self,
-                "Recording ready",
-                "Hold a key for 3 seconds to record. "
-                "If a brand-new keyboard appears after reboot and recording "
-                "fails again, log out and back in once so the input group applies.",
+                tr("Recording ready"),
+                tr(
+                    "Hold a key for 3 seconds to record. "
+                    "If a brand-new keyboard appears after reboot and recording "
+                    "fails again, log out and back in once so the input group applies."
+                ),
             )
             return
 
         QMessageBox.warning(
             self,
-            "Could not finish setup",
-            f"{message}\n\n"
-            "You can retry next launch, or run:\n"
-            "  sudo usermod -aG input $USER\n"
-            "then log out and back in.",
+            tr("Could not finish setup"),
+            tr(
+                "{message}\n\n"
+                "You can retry next launch, or run:\n"
+                "  sudo usermod -aG input $USER\n"
+                "then log out and back in."
+            ).format(message=message),
         )
 
     def _refresh_recording(self) -> None:
@@ -1497,15 +1732,23 @@ class MainWindow(QMainWindow):
             assert active_key is not None
             key = active_key + 1
             gesture = session.active_gesture
+            shown_gesture = tr(gesture)
             self.statusBar().showMessage(
-                f"Recording into key {key} ({gesture}) - hold it again to finish"
+                tr("Recording into key {key} ({gesture}) - hold it again to finish").format(
+                    key=key, gesture=shown_gesture
+                )
             )
             self.record_banner.setText(
-                f"  ● RECORDING key {key} · {gesture} — hold the same key again to finish  "
+                tr(
+                    "  ● RECORDING key {key} · {gesture} — hold the same key again "
+                    "to finish  "
+                ).format(key=key, gesture=shown_gesture)
             )
-            self.capture_title.setText(f"Recording key {key} · {gesture}")
+            self.capture_title.setText(
+                tr("Recording key {key} · {gesture}").format(key=key, gesture=shown_gesture)
+            )
             self.capture_list.clear()
-            self.capture_list.addItem("(listening…)")
+            self.capture_list.addItem(tr("(listening…)"))
             self._sync_ignored_region()
         outcome = session.last_outcome
         if outcome is not None and not session.recording:
@@ -1529,7 +1772,7 @@ class MainWindow(QMainWindow):
     def _append_live_capture(self, line: str) -> None:
         if (
             self.capture_list.count() == 1
-            and self.capture_list.item(0).text() == "(listening…)"
+            and self.capture_list.item(0).text() == tr("(listening…)")
         ):
             self.capture_list.clear()
         self.capture_list.addItem(line)
@@ -1567,13 +1810,19 @@ class MainWindow(QMainWindow):
         nothing to look at, so the only move was to guess -- and "it moved on
         its own" is not a thing anyone can debug from a status bar.
         """
-        where = outcome.where or outcome.error or "nothing was captured"
-        self.capture_title.setText(f"Key {outcome.key + 1} {outcome.gesture} - {where}")
+        where = outcome.where or outcome.error or tr("nothing was captured")
+        self.capture_title.setText(
+            tr("Key {key} {gesture} - {where}").format(
+                key=outcome.key + 1, gesture=tr(outcome.gesture), where=where
+            )
+        )
 
         self.capture_list.clear()
         if outcome.dropped_secrets:
             self.capture_list.addItem(
-                f"! {outcome.dropped_secrets} step(s) removed: looked like a password"
+                tr("! {count} step(s) removed: looked like a password").format(
+                    count=outcome.dropped_secrets
+                )
             )
 
         if outcome.error or not outcome.where:
@@ -1589,7 +1838,7 @@ class MainWindow(QMainWindow):
             elif outcome.error:
                 self.capture_list.addItem(outcome.error)
             else:
-                self.capture_list.addItem("(nothing)")
+                self.capture_list.addItem(tr("(nothing)"))
             return
 
         # What will actually run, read back out of the profile -- not the raw
@@ -1604,7 +1853,7 @@ class MainWindow(QMainWindow):
         else:
             lines = [action.describe()]
 
-        self.capture_list.addItems(lines or ["(nothing)"])
+        self.capture_list.addItems(lines or [tr("(nothing)")])
 
     def _show_error(self, title: str, message: str) -> None:
         QMessageBox.critical(self, title, message)
@@ -1625,6 +1874,10 @@ class MainWindow(QMainWindow):
 
 def run_gui(port: str = "") -> int:
     qt_app = QApplication.instance() or QApplication(sys.argv)
+    # Before the first widget exists. Labels, tooltips and the pinned button
+    # widths are all computed during construction, so a language chosen after
+    # this point would only reach whatever is built later.
+    set_language(Settings.load().language)
     window = MainWindow(port=port)
     window.show()
     return qt_app.exec()

@@ -47,8 +47,45 @@ def profile_path() -> Path:
     return config_dir() / "profile.json"
 
 
+#: How many previous profiles to keep. One was not enough, and the way it
+#: failed is the reason for the number: a pad that had lost its own profile was
+#: adopted onto this computer, which correctly pushed the good profile into the
+#: single backup slot -- and the next ordinary save, seventeen seconds later,
+#: pushed it back out again. Anything that survives only until the next save is
+#: not a recovery path for something nobody noticed happening.
+PROFILE_BACKUP_GENERATIONS = 10
+
+
 def profile_backup_path() -> Path:
+    """The most recent backup. Older ones are this name plus `.1`, `.2`, ..."""
     return config_dir() / "profile.json.bak"
+
+
+def profile_backup_paths() -> list[Path]:
+    """Existing backups, newest first."""
+    newest = profile_backup_path()
+    candidates = [newest] + [
+        newest.with_name(f"{newest.name}.{index}")
+        for index in range(1, PROFILE_BACKUP_GENERATIONS)
+    ]
+    return [path for path in candidates if path.exists()]
+
+
+def _rotate_backups() -> None:
+    """Shifts every kept generation one step older, freeing the newest slot.
+
+    Renames rather than copies, so this costs nothing and cannot half-write a
+    generation. The oldest is dropped by being renamed over.
+    """
+    newest = profile_backup_path()
+    for index in range(PROFILE_BACKUP_GENERATIONS - 1, 0, -1):
+        target = newest.with_name(f"{newest.name}.{index}")
+        source = newest if index == 1 else newest.with_name(f"{newest.name}.{index - 1}")
+        if source.exists():
+            try:
+                source.replace(target)
+            except OSError:
+                log.warning("could not rotate profile backup %s", source, exc_info=True)
 
 
 def settings_path() -> Path:
@@ -78,6 +115,10 @@ class Settings:
     #: is the safe default; this opt-in exists for unchanged single-screen rigs.
     recorder_anchor_mouse: bool = False
     theme: str = "system"
+    #: UI language: "system" to follow the OS, or a code from `i18n.LANGUAGES`.
+    #: Read once at startup -- widgets keep the language they were built with,
+    #: so the editor asks for a restart rather than retranslating in place.
+    language: str = "system"
     #: When True, the editor will not offer the one-click capture fix again.
     #: Cleared automatically is not done: the person said "not now".
     capture_setup_declined: bool = False
@@ -112,6 +153,8 @@ class Settings:
                 loaded.recorder_min_gap_ms = gap
         if isinstance(data.get("theme"), str):
             loaded.theme = data["theme"]
+        if isinstance(data.get("language"), str):
+            loaded.language = data["language"]
         for field in (
             "auto_connect",
             "recorder_capture_mouse",
@@ -217,6 +260,7 @@ def _write_profile(path: Path, profile: Profile, *, keep_backup: bool) -> None:
             backup = profile_backup_path()
             backup_temporary = _temporary_path(backup)
             try:
+                _rotate_backups()
                 shutil.copy2(path, backup_temporary)
                 _restrict(backup_temporary)
                 backup_temporary.replace(backup)
