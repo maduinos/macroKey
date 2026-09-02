@@ -15,6 +15,14 @@
 #include "src/Profile.h"
 #include "src/SerialProtocol.h"
 
+// Overrides the core's weak default so the HID endpoint is polled as often as
+// the board allows. It has to be a definition in the sketch, not a header: the
+// linker picks it over the weak one, and a header included twice would be two
+// definitions of the same symbol.
+#if defined(MK_HID_POLL_INTERVAL_IS_OVERRIDABLE)
+int usb_hid_poll_interval = MK_HID_POLL_INTERVAL_MS;
+#endif
+
 static Profile gProfile;
 static ButtonInput gInput;
 static LedController gLeds;

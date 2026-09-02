@@ -820,17 +820,20 @@ class MainWindow(QMainWindow):
             accepted=QMessageBox.Yes,
             then=self._make_pointer_flat,
             otherwise=lambda: self._pointer_fix_declined(asked_for=asked_for),
+            always=self._pointer_prompt_closed,
         )
 
-    def _make_pointer_flat(self) -> None:
+    @staticmethod
+    def _pointer_prompt_closed() -> None:
         MainWindow._pointer_prompt_open = False
+
+    def _make_pointer_flat(self) -> None:
         ok, message = capture_setup.set_pointer_accel_flat()
         self.statusBar().showMessage(message)
         if not ok:
             QMessageBox.warning(self, "Pointer acceleration", message)
 
     def _pointer_fix_declined(self, *, asked_for: bool) -> None:
-        MainWindow._pointer_prompt_open = False
         if asked_for:
             return
         self.app.settings.pointer_accel_declined = True
@@ -1382,7 +1385,9 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------------- questions --
 
-    def _ask(self, *, title, text, buttons, default, accepted, then, otherwise=None) -> None:
+    def _ask(
+        self, *, title, text, buttons, default, accepted, then, otherwise=None, always=None
+    ) -> None:
         """A question that does not stop the event loop while it is open.
 
         `QMessageBox.question` runs its own loop until answered. That is fine
@@ -1402,6 +1407,11 @@ class MainWindow(QMainWindow):
 
         def finished(result: int) -> None:
             self._open_question = None
+            # `always` runs even on the way out, because what it releases is
+            # usually a guard against asking twice -- and a guard that a close
+            # can leave set is a question that never gets asked again.
+            if always is not None:
+                always()
             if self._closing:
                 return
             if result == accepted:

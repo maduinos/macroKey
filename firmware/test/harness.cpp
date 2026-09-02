@@ -69,6 +69,7 @@ static int modeLayout() {
   printf("schema %u\n", MK_PROFILE_SCHEMA);
   printf("text_delay_default %u\n", MK_MACRO_TEXT_DELAY_MS);
   printf("move_slice_ms %u\n", MK_MACRO_MOVE_SLICE_MS);
+  printf("hid_poll_interval_ms %u\n", MK_HID_POLL_INTERVAL_MS);
   return 0;
 }
 

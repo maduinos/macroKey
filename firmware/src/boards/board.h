@@ -67,6 +67,10 @@ MK_KEY_PINS_DEFINED"
 #ifndef MK_MACRO_MAX_RECORDS
 #error "the board header must define MK_MACRO_MAX_RECORDS"
 #endif
+#ifndef MK_HID_POLL_INTERVAL_MS
+#error "the board header must define MK_HID_POLL_INTERVAL_MS (how often the host \
+may poll the HID endpoint; it is the ceiling on mouse replay speed)"
+#endif
 #ifndef MK_STORAGE_FLASH_EMULATED
 #error "the board header must define MK_STORAGE_FLASH_EMULATED (0 memory-mapped \
 EEPROM, 1 RAM image committed to flash)"
