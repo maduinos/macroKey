@@ -107,6 +107,21 @@ class MainWindow(QMainWindow):
     statusMessage = Signal(str)
     failed = Signal(str, str)
     connectionChanged = Signal()
+    #: True while the pointer-acceleration question is on screen anywhere.
+    #:
+    #: Deliberately not per-window. What it protects is the one event loop the
+    #: modal is nested inside, and a second window's copy of the same 900 ms
+    #: startup timer firing in that loop opens a second identical dialog on top
+    #: of the first -- which is a per-instance flag's blind spot exactly.
+    _pointer_prompt_open = False
+
+    #: A board macroKey knows is plugged in but is not answering the protocol.
+    flashOffer = Signal(str)
+    #: Flashing needs the board put into its bootloader by hand: id, and what
+    #: to physically do.
+    flashNeedsHelp = Signal(str, str)
+    #: Firmware is on, so the pad can be connected to.
+    flashSucceeded = Signal()
     recordingChanged = Signal()
     profileMismatch = Signal()
     profileAdopted = Signal(object)
@@ -126,6 +141,14 @@ class MainWindow(QMainWindow):
         # long to hold the colour, so there is nothing to keep alive.
         self._preview_rgb: tuple[int, int, int] | None = None
         self._connecting = False
+        self._flashing = False
+        #: Boards already offered a firmware install this session. Auto-connect
+        #: retries on a timer, and a board with no firmware fails every one of
+        #: them -- without this, declining the offer means being asked again a
+        #: few seconds later, forever.
+        self._flash_offered: set[str] = set()
+        #: The open non-modal question, if any. Nothing owns it otherwise.
+        self._open_question = None
         self._syncing = False
         self._resetting = False
         self._profile_prompt_open = False
@@ -198,6 +221,9 @@ class MainWindow(QMainWindow):
         self.statusMessage.connect(self.statusBar().showMessage)
         self.failed.connect(self._show_error)
         self.connectionChanged.connect(self._refresh_connection)
+        self.flashOffer.connect(self._offer_flash)
+        self.flashNeedsHelp.connect(self._flash_needs_help)
+        self.flashSucceeded.connect(self._flash_succeeded)
         self.profileMismatch.connect(self._resolve_profile_mismatch)
         self.profileAdopted.connect(self._adopt_profile)
         self.syncSucceeded.connect(self._finish_sync)
@@ -741,6 +767,14 @@ class MainWindow(QMainWindow):
         extra keystroke. `asked_for` is the path from the Help menu, which both
         ignores that no and says something when there is nothing to fix.
         """
+        if MainWindow._pointer_prompt_open:
+            # A modal runs its own event loop, and this one is raised by a
+            # 900 ms startup timer. Anything that fires inside that loop --
+            # another window's copy of the same timer, this one rearmed -- gets
+            # to open a second dialog on top of the first, and a third inside
+            # that. It recurses until the stack gives out, and nothing on screen
+            # explains why: the dialogs are identical.
+            return
         profile = capture_setup.pointer_accel_profile()
         if profile is None:
             if asked_for:
@@ -767,10 +801,10 @@ class MainWindow(QMainWindow):
         if not asked_for and self.app.settings.pointer_accel_declined:
             return
 
-        answer = QMessageBox.question(
-            self,
-            tr("Pointer acceleration"),
-            tr(
+        MainWindow._pointer_prompt_open = True
+        self._ask(
+            title=tr("Pointer acceleration"),
+            text=tr(
                 "Your desktop scales pointer movement by how fast it is "
                 "(acceleration profile: {profile}).\n\n"
                 "The keypad replays a recorded movement at the speed it was made, "
@@ -781,25 +815,32 @@ class MainWindow(QMainWindow):
                 "feels everywhere, not just in macros. To undo it later:\n\n"
                 "{undo}"
             ).format(profile=profile, undo=capture_setup.pointer_accel_undo_hint()),
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.Yes,
+            buttons=QMessageBox.Yes | QMessageBox.No,
+            default=QMessageBox.Yes,
+            accepted=QMessageBox.Yes,
+            then=self._make_pointer_flat,
+            otherwise=lambda: self._pointer_fix_declined(asked_for=asked_for),
         )
-        if answer != QMessageBox.Yes:
-            if not asked_for:
-                self.app.settings.pointer_accel_declined = True
-                self.app.settings.save()
-                self.statusBar().showMessage(
-                    tr(
-                        "Left pointer acceleration alone. Help > Mouse macro accuracy "
-                        "offers it again."
-                    )
-                )
-            return
 
+    def _make_pointer_flat(self) -> None:
+        MainWindow._pointer_prompt_open = False
         ok, message = capture_setup.set_pointer_accel_flat()
         self.statusBar().showMessage(message)
         if not ok:
             QMessageBox.warning(self, "Pointer acceleration", message)
+
+    def _pointer_fix_declined(self, *, asked_for: bool) -> None:
+        MainWindow._pointer_prompt_open = False
+        if asked_for:
+            return
+        self.app.settings.pointer_accel_declined = True
+        self.app.settings.save()
+        self.statusBar().showMessage(
+            tr(
+                "Left pointer acceleration alone. Help > Mouse macro accuracy "
+                "offers it again."
+            )
+        )
 
     def _anchor_mouse_toggled(self, checked: bool) -> None:
         self.app.settings.recorder_anchor_mouse = checked
@@ -1259,7 +1300,7 @@ class MainWindow(QMainWindow):
         error: the pad may simply not be plugged in, which is not a problem
         worth interrupting for, and the toolbar still offers the button.
         """
-        if self._connecting or self._syncing or self._resetting:
+        if self._connecting or self._syncing or self._resetting or self._flashing:
             return
         if self.app.device.connected:
             self._disconnect()
@@ -1303,7 +1344,15 @@ class MainWindow(QMainWindow):
                 if not profiles_differ:
                     self.statusMessage.emit(tr("Connected"))
             except DeviceError as exc:
-                if quiet:
+                # A board this app knows, that will not answer the protocol, is
+                # almost always a board with no macroKey firmware on it -- the
+                # state every newly built keypad starts in. Offering to flash it
+                # is the whole "solder it, plug it in, use it" path, so it comes
+                # before reporting a failure the person can do nothing with.
+                attached = self._flashable_board()
+                if attached is not None:
+                    self.flashOffer.emit(attached.board.id)
+                elif quiet:
                     self.statusMessage.emit(
                         tr("No keypad found: {detail}").format(
                             detail=exc.args[0].splitlines()[0]
@@ -1330,6 +1379,169 @@ class MainWindow(QMainWindow):
                     pass
 
         self._in_background(worker)
+
+    # ------------------------------------------------------------- questions --
+
+    def _ask(self, *, title, text, buttons, default, accepted, then, otherwise=None) -> None:
+        """A question that does not stop the event loop while it is open.
+
+        `QMessageBox.question` runs its own loop until answered. That is fine
+        for a dialog a click asked for, but these are raised by a connect that
+        happened on its own -- and a modal loop entered from a background event
+        stops everything else the window was doing, including the reconnect
+        that would make the question moot. It also makes a headless run hang
+        forever on a dialog nobody can answer.
+        """
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Question)
+        box.setWindowTitle(title)
+        box.setText(text)
+        box.setStandardButtons(buttons)
+        box.setDefaultButton(default)
+        box.setAttribute(Qt.WA_DeleteOnClose)
+
+        def finished(result: int) -> None:
+            self._open_question = None
+            if self._closing:
+                return
+            if result == accepted:
+                then()
+            elif otherwise is not None:
+                otherwise()
+
+        box.finished.connect(finished)
+        # Held so it is not collected while it is on screen.
+        self._open_question = box
+        box.open()
+
+    # ---------------------------------------------------------------- flash --
+
+    def _flashable_board(self):
+        """A recognised board attached that is not currently talking to us.
+
+        Called from the connect worker, so it must not touch a widget.
+        """
+        from .. import flash
+
+        try:
+            return flash.find_board()
+        except Exception:  # noqa: BLE001 - offering to flash must never break connecting
+            log.exception("could not look for a flashable board")
+            return None
+
+    def _offer_flash(self, board_id: str) -> None:
+        """Asks once, then does the rest by itself.
+
+        This is a modal on an auto-connect, which errors deliberately are not:
+        an offer is actionable and is the entire point of plugging a freshly
+        built keypad in, where "no keypad found" would be a dead end. It is
+        asked once per board per session either way.
+
+        `_closing` is not a formality. The offer is emitted from the connect
+        worker and delivered later on the GUI thread, which can be after the
+        window has been told to close -- and putting a modal dialog on a widget
+        that is being destroyed aborts the process.
+        """
+        from ..boards import board_by_id
+        from ..flash import NoImage, find_image
+
+        if self._closing or self._connecting or self._flashing:
+            return
+        if board_id in self._flash_offered:
+            return
+        self._flash_offered.add(board_id)
+        board = board_by_id(board_id)
+        if board is None:
+            return
+        try:
+            find_image(board)
+        except NoImage:
+            # A source checkout with no images built. Say so rather than
+            # offering something that cannot be delivered.
+            self.statusMessage.emit(
+                tr("{board} found, but this build has no firmware for it").format(
+                    board=board.display_name
+                )
+            )
+            return
+
+        self._ask(
+            title=tr("Install firmware?"),
+            text=tr(
+                "{board} is plugged in but is not running macroKey firmware.\n\n"
+                "Install it now? The keypad will restart and be ready to use."
+            ).format(board=board.display_name),
+            buttons=QMessageBox.Yes | QMessageBox.No,
+            default=QMessageBox.Yes,
+            accepted=QMessageBox.Yes,
+            then=lambda: self._flash_board(board_id),
+        )
+
+    def _flash_board(self, board_id: str) -> None:
+        from ..boards import board_by_id
+        from ..flash import FlashError, NeedsManualBootloader, flash
+
+        board = board_by_id(board_id)
+        if board is None:
+            return
+        self._flashing = True
+        self._refresh_connection()
+
+        def worker() -> None:
+            try:
+                flash(board_id=board_id, status=self.statusMessage.emit)
+            except NeedsManualBootloader as exc:
+                self.flashNeedsHelp.emit(board_id, exc.hint)
+                return
+            except FlashError as exc:
+                self.failed.emit(tr("Firmware install failed"), str(exc))
+                return
+            except RuntimeError:
+                return  # window closed mid-flash
+            finally:
+                self._flashing = False
+                try:
+                    self.connectionChanged.emit()
+                except RuntimeError:
+                    pass
+            self.flashSucceeded.emit()
+
+        self._in_background(worker)
+
+    def _flash_needs_help(self, board_id: str, hint: str) -> None:
+        """The one place a person has to act, and the only place we ask.
+
+        A board that has never run macroKey firmware has nothing listening for a
+        request to reboot into its bootloader, so this cannot be automated away.
+        What it can be is watched: say what to do, and start flashing the moment
+        the bootloader appears rather than making anyone race a command.
+        """
+        from ..boards import board_by_id
+
+        board = board_by_id(board_id)
+        if board is None or self._closing:
+            return
+        self._ask(
+            title=tr("One step by hand"),
+            text=tr(
+                "{board} has never run macroKey firmware, so it has to be put "
+                "into its bootloader by hand:\n\n{hint}\n\n"
+                "Do that now, then press OK -- the firmware is installed as soon "
+                "as the board appears."
+            ).format(board=board.display_name, hint=hint),
+            buttons=QMessageBox.Ok | QMessageBox.Cancel,
+            default=QMessageBox.Ok,
+            accepted=QMessageBox.Ok,
+            then=lambda: self._flash_board(board_id),
+        )
+
+    def _flash_succeeded(self) -> None:
+        if self._closing:
+            return
+        # It has firmware now, so a later unplug-and-replug is a fresh question.
+        self._flash_offered.clear()
+        self.statusMessage.emit(tr("Firmware installed"))
+        self._toggle_connection(quiet=True)
 
     def _resolve_profile_mismatch(self) -> None:
         """Ask which profile wins when this computer and the pad disagree."""
@@ -1863,6 +2075,10 @@ class MainWindow(QMainWindow):
             super().closeEvent(event)
             return
         self._closing = True
+        dialog = self._open_question
+        self._open_question = None
+        if dialog is not None:
+            dialog.close()
         self._connection_timer.stop()
         self.app.close()
         self._io_queue.put(None)

@@ -18,8 +18,15 @@ LINUX_RELEASE_DIR="$RELEASE_DIR/linux"
 WINDOWS_RELEASE_DIR="$RELEASE_DIR/windows"
 BUILD_ROOT="$ROOT_DIR/.build"
 PYINSTALLER_HOOKS_DIR="$ROOT_DIR/tools/pyinstaller_hooks"
+# Built firmware images, one per board, that the app writes to a keypad. Bundled
+# so nobody who downloads a release has to install arduino-cli to flash a board
+# they just soldered. ./tools/build_firmware.sh puts them here; CI builds them
+# in their own job and downloads them before this runs.
+FIRMWARE_PREBUILT_DIR="$ROOT_DIR/firmware/prebuilt"
 CURRENT_OS="$(uname -s)"
 PYTHON_CMD=""
+MIN_PYTHON_VERSION="3.10"
+DEPS_DIR=""
 RUN_TESTS=1
 
 # Heavy packages never imported by this app. Excluding them keeps the onefile
@@ -97,12 +104,26 @@ detect_python() {
   else
     fail "Python 실행 파일을 찾을 수 없습니다. (python3 또는 python 필요)"
   fi
+
+  "$PYTHON_CMD" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)' \
+    || fail "Python $MIN_PYTHON_VERSION 이상이 필요합니다. 현재: $("$PYTHON_CMD" --version 2>&1)"
+
+  local python_series
+  local path_separator
+  python_series="$("$PYTHON_CMD" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
+  path_separator="$("$PYTHON_CMD" -c 'import os; print(os.pathsep)')"
+  DEPS_DIR="$ROOT_DIR/.build-deps/python$python_series"
+  export PYTHONPATH="$DEPS_DIR${PYTHONPATH:+$path_separator$PYTHONPATH}"
+
   log "Python: $("$PYTHON_CMD" --version 2>&1)"
+  log "의존성 경로: $DEPS_DIR"
 }
 
 ensure_deps() {
   log "의존성 확인 (requirements.txt)"
-  "$PYTHON_CMD" -m pip install -q -r "$ROOT_DIR/requirements.txt"
+  mkdir -p "$DEPS_DIR"
+  "$PYTHON_CMD" -m pip install -q --upgrade --target "$DEPS_DIR" \
+    -r "$ROOT_DIR/requirements.txt"
   "$PYTHON_CMD" - <<'PY' || fail "런타임 의존성 import 실패"
 import importlib.util
 import sys
@@ -209,6 +230,12 @@ build_linux() {
   )
   [[ -d "$PYINSTALLER_HOOKS_DIR" ]] && command+=(--additional-hooks-dir "$PYINSTALLER_HOOKS_DIR")
   [[ -f "$ICON_PNG" ]] && command+=(--icon "$ICON_PNG" --add-data "$ICON_PNG:assets")
+  if compgen -G "$FIRMWARE_PREBUILT_DIR/firmware-*" >/dev/null; then
+    command+=(--add-data "$FIRMWARE_PREBUILT_DIR:firmware/prebuilt")
+    log "펌웨어 이미지 포함: $(ls "$FIRMWARE_PREBUILT_DIR" | tr '\n' ' ')"
+  else
+    log "경고: firmware/prebuilt/가 비어 있어 펌웨어 설치 기능 없이 빌드합니다 (./tools/build_firmware.sh)"
+  fi
   append_exclude_modules command "${LINUX_EXCLUDE_MODULES[@]}"
   command+=(--add-binary "$xcb_cursor_lib:.")
   command+=("$ROOT_DIR/$ENTRY_SCRIPT")
@@ -259,6 +286,16 @@ build_windows() {
   [[ -d "$PYINSTALLER_HOOKS_DIR" ]] && command+=(--additional-hooks-dir "$hooks_dir_win")
   [[ -f "$ICON_ICO" ]] && command+=(--icon "$icon_ico_win")
   [[ -f "$ICON_PNG" ]] && command+=(--add-data "$icon_png_win;assets")
+  if compgen -G "$FIRMWARE_PREBUILT_DIR/firmware-*" >/dev/null; then
+    local prebuilt_win="$FIRMWARE_PREBUILT_DIR"
+    if command -v cygpath >/dev/null 2>&1; then
+      prebuilt_win="$(cygpath -w "$FIRMWARE_PREBUILT_DIR")"
+    fi
+    command+=(--add-data "$prebuilt_win;firmware/prebuilt")
+    log "펌웨어 이미지 포함: $(ls "$FIRMWARE_PREBUILT_DIR" | tr '\n' ' ')"
+  else
+    log "경고: firmware/prebuilt/가 비어 있어 펌웨어 설치 기능 없이 빌드합니다 (./tools/build_firmware.sh)"
+  fi
   append_exclude_modules command "${WINDOWS_EXCLUDE_MODULES[@]}"
   command+=("$entry_script_win")
 

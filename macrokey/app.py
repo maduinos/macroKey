@@ -12,6 +12,7 @@ import queue
 import threading
 from collections.abc import Callable
 
+from .boards import DEFAULT_BOARD, Board, board_by_id, board_by_profile_size
 from .config import (
     KEY_COUNT,
     Profile,
@@ -55,6 +56,7 @@ class MacroKeyApp:
             on_event=self._on_device_event,
             on_status=self.status,
             on_disconnect=self._on_device_disconnect,
+            on_connect=self._on_device_connect,
         )
         self.recorder = Recorder(
             min_gap_ms=self.settings.recorder_min_gap_ms,
@@ -251,10 +253,50 @@ class MacroKeyApp:
     # --------------------------------------------------------------- profile --
 
     @property
+    def board(self) -> Board:
+        """Which board the profile is being shaped for, connected or not.
+
+        A live HELLO is the truth. Without one the last board seen is a far
+        better guess than the registry default, because the alternative is to
+        assume the smallest board on the list: that reports an RP2040's fill
+        against a 308 record ceiling instead of 21801, and refuses recordings
+        the pad has ample room for. It is only ever wrong across a board swap
+        made while the app is closed, and the next connect corrects it.
+        """
+        hello = self.device.hello
+        if hello is not None:
+            found = board_by_id(hello.board) or board_by_profile_size(hello.profile_bytes)
+            if found is not None:
+                return found
+        remembered = board_by_id(self.settings.last_board)
+        return remembered if remembered is not None else DEFAULT_BOARD
+
+    @property
     def profile_layout(self) -> binary.ProfileLayout:
         hello = self.device.hello
-        size = hello.profile_bytes if hello is not None else binary.PROFILE_SIZE
-        return binary.layout_for_size(size)
+        # A connected pad states its own blob size; trust that over the board
+        # table in case a firmware ships a size the registry has not caught up
+        # with. Disconnected, the remembered board is all there is.
+        if hello is not None and hello.profile_bytes in binary.SUPPORTED_PROFILE_SIZES:
+            return binary.layout_for_size(hello.profile_bytes)
+        return binary.layout_for_board(self.board)
+
+    def _on_device_connect(self, hello) -> None:
+        """Persists the connected board so the next cold start knows its size.
+
+        Driven by the device client rather than by `connect` above: the CLI
+        opens the pad through `app.device.connect` directly, and hanging this
+        off one caller meant `macrokey info` talked to an RP2040 and the app
+        still came back assuming the smallest board.
+        """
+        found = board_by_id(hello.board) or board_by_profile_size(hello.profile_bytes)
+        if found is None or found.id == self.settings.last_board:
+            return
+        self.settings.last_board = found.id
+        try:
+            self.settings.save()
+        except OSError:  # noqa: BLE001 - a read-only config dir must not fail a connect
+            log.exception("could not remember the connected board")
 
     def save(self) -> None:
         save_profile(self.profile)
@@ -365,7 +407,7 @@ class MacroKeyApp:
         macros = self.profile.device_macros
         needed = macro_records(macro)
         used = self._macro_capacity_used(ignore_slot=also_free)
-        layout = getattr(self, "profile_layout", binary.AVR_LAYOUT)
+        layout = getattr(self, "profile_layout", binary.DEFAULT_LAYOUT)
         if used + needed > layout.record_capacity:
             return None
 

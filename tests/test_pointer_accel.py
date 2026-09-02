@@ -161,15 +161,66 @@ def test_the_undo_hint_is_the_gsettings_line_off_windows() -> None:
 # ------------------------------------------------------------- the offer --
 
 
+class FakeDialog:
+    """One non-modal question, answered the moment it is opened.
+
+    The real dialog stays on screen and calls back when someone clicks. Here
+    `open()` invokes the callback straight away with the answer the test set,
+    which keeps these tests synchronous without pretending the window is.
+    """
+
+    def __init__(self, box: FakeBox) -> None:
+        self._box = box
+        self._callback = None
+
+    def setIcon(self, _icon) -> None:
+        pass
+
+    def setWindowTitle(self, title) -> None:
+        self._box.titles.append(title)
+
+    def setText(self, text) -> None:
+        self._box.questions.append(text)
+
+    def setStandardButtons(self, _buttons) -> None:
+        pass
+
+    def setDefaultButton(self, _button) -> None:
+        pass
+
+    def setAttribute(self, _attribute) -> None:
+        pass
+
+    @property
+    def finished(self) -> FakeDialog:
+        return self
+
+    def connect(self, callback) -> None:
+        self._callback = callback
+
+    def open(self) -> None:
+        if self._callback is not None:
+            self._callback(self._box.answer)
+
+    def close(self) -> None:
+        pass
+
+
 class FakeBox:
     """Stands in for QMessageBox, recording what was put in front of someone."""
 
-    Yes, No = 1, 0
+    Yes, No, Ok, Cancel = 1, 0, 2, 4
+    Question = Warning = Information = object()
 
     def __init__(self) -> None:
         self.questions: list[str] = []
+        self.titles: list[str] = []
         self.notices: list[str] = []
         self.answer = self.No
+
+    def __call__(self, _parent) -> FakeDialog:
+        """`QMessageBox(self)` -- the questions are built, not called, now."""
+        return FakeDialog(self)
 
     def question(self, _parent, _title, text, *_args) -> int:
         self.questions.append(text)

@@ -3,9 +3,15 @@
 #include <stdlib.h>
 #include <string.h>
 
-#if defined(__AVR__)
+#include "Config.h"
+
+// Which bootloader, and therefore which header, comes from the board. The
+// second half of each guard is the toolchain actually being present: the PC
+// test harness selects a board but has neither of these headers, and must
+// compile into the "no way in from here" arm below rather than fail.
+#if defined(MK_BOOTLOADER_ENTRY_CATERINA) && defined(__AVR__)
 #include <avr/wdt.h>
-#elif defined(ARDUINO_ARCH_RP2040)
+#elif defined(MK_BOOTLOADER_ENTRY_PICOBOOT) && defined(ARDUINO_ARCH_RP2040)
 #include <pico/bootrom.h>
 #endif
 
@@ -14,14 +20,14 @@
 
 namespace {
 
-#if defined(__AVR__)
+#if defined(MK_BOOTLOADER_ENTRY_CATERINA) && defined(__AVR__)
 
 // Caterina (the Leonardo bootloader) checks this RAM word after a watchdog
 // reset and stays in the bootloader when it holds the magic value. Both halves
 // are specific to this bootloader on this architecture -- 0x0800 is a fixed
 // address in the 32u4's SRAM -- which is why they sit behind the guard rather
-// than in a header. A part with a different bootloader needs its own arm here
-// and nothing else in the firmware changes.
+// than in a header. A board with a different bootloader declares its own name
+// in boards/ and gets its own arm here; nothing else in the firmware changes.
 uint16_t *const kBootKeyPtr = (uint16_t *)0x0800;
 const uint16_t kBootKey = 0x7777;
 
@@ -34,7 +40,7 @@ void enterBootloader() {
   }
 }
 
-#elif defined(ARDUINO_ARCH_RP2040)
+#elif defined(MK_BOOTLOADER_ENTRY_PICOBOOT) && defined(ARDUINO_ARCH_RP2040)
 
 #define MK_HAS_BOOTLOADER_ENTRY 1
 

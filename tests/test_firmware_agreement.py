@@ -1,9 +1,15 @@
-"""The firmware and the host must agree about the same 1024 bytes.
+"""The firmware and the host must agree about the same bytes, on every board.
 
 `firmware/src/Profile.h` and `macrokey/config/binary.py` each carry their own
-copy of the EEPROM layout. Nothing checks them against each other at build time,
+copy of the profile layout. Nothing checks them against each other at build time,
 and a disagreement does not fail anywhere -- it produces a macro that replays
 garbage, on a device with one pixel and no screen.
+
+The layout check walks `macrokey.boards.BOARDS`, building the firmware once per
+board with that board's `-D` and comparing what it reports against what the
+registry says. A board added to the registry is therefore checked from the
+moment it exists, and a board header that disagrees with its own registry entry
+fails here rather than on the hardware.
 
 So the firmware is compiled here for the PC, against the stub headers in
 `firmware/test/stubs`, and fed bytes the host encoder produced. What the
@@ -22,6 +28,7 @@ from pathlib import Path
 
 import pytest
 
+from macrokey.boards import BOARDS, DEFAULT_BOARD, Board
 from macrokey.config import binary, model
 from macrokey.recorder.evdev_source import MOTION_SLICE_SECONDS
 from macrokey.recorder.normalize import reduce_to_device_macro
@@ -43,20 +50,46 @@ SOURCES = ("Profile.cpp", "Util.cpp", "KeyEngine.cpp", "ButtonInput.cpp",
 
 
 @pytest.fixture(scope="session")
-def harness(tmp_path_factory) -> Path:
-    """Builds the firmware for this machine, once."""
-    binary_path = tmp_path_factory.mktemp("firmware") / "harness"
-    command = [
-        COMPILER, "-std=c++11", "-w", "-o", str(binary_path),
-        "-I", str(FIRMWARE / "test" / "stubs"),
-        "-I", str(FIRMWARE / "src"),
-        str(HARNESS),
-        *[str(FIRMWARE / "src" / name) for name in SOURCES],
-    ]
-    result = subprocess.run(command, capture_output=True, text=True)
-    if result.returncode != 0:
-        pytest.fail(f"the firmware did not build for this machine:\n{result.stderr}")
-    return binary_path
+def build_harness(tmp_path_factory):
+    """Builds the firmware for this machine, once per board.
+
+    The board is forced with its own `-D` rather than inferred, because this
+    machine is neither an AVR nor an RP2040 and the header would otherwise have
+    nothing to go on. The store is forced memory-mapped for the same reason:
+    a flash-emulated board wants LittleFS, which is a core library and not
+    something the stubs stand in for. Neither affects the layout, which is what
+    this file compares.
+    """
+    directory = tmp_path_factory.mktemp("firmware")
+    built: dict[str, Path] = {}
+
+    def build(board: Board) -> Path:
+        if board.id not in built:
+            binary_path = directory / f"harness-{board.id}"
+            command = [
+                COMPILER, "-std=c++11", "-w", "-o", str(binary_path),
+                f"-D{board.select_macro}",
+                "-DMK_STORAGE_FLASH_EMULATED=0",
+                "-I", str(FIRMWARE / "test" / "stubs"),
+                "-I", str(FIRMWARE / "src"),
+                str(HARNESS),
+                *[str(FIRMWARE / "src" / name) for name in SOURCES],
+            ]
+            result = subprocess.run(command, capture_output=True, text=True)
+            if result.returncode != 0:
+                pytest.fail(
+                    f"the firmware did not build for {board.id}:\n{result.stderr}"
+                )
+            built[board.id] = binary_path
+        return built[board.id]
+
+    return build
+
+
+@pytest.fixture(scope="session")
+def harness(build_harness) -> Path:
+    """The default board, for everything that is not about board differences."""
+    return build_harness(DEFAULT_BOARD)
 
 
 def run(harness: Path, *args: str, blob: bytes | None = None) -> list[str]:
@@ -100,22 +133,30 @@ def profile_transfer(blob: bytes) -> list[str]:
 # ------------------------------------------------------------------- layout --
 
 
-def test_the_two_layouts_are_the_same_layout(harness) -> None:
-    """The check this whole file exists for."""
-    seen = fields(run(harness, "layout"))
+@pytest.mark.parametrize("board", BOARDS, ids=[board.id for board in BOARDS])
+def test_the_two_layouts_are_the_same_layout(build_harness, board: Board) -> None:
+    """The check this whole file exists for, for every board in the registry.
+
+    The regions before the macro index are the same on every board -- header,
+    keymap and palette are counts, not storage -- so what actually varies here
+    is the index width, the region that is left, and the schema that says which
+    of the two an image is.
+    """
+    layout = binary.layout_for_board(board)
+    seen = fields(run(build_harness(board), "layout"))
     assert seen == {
         "keymap_offset": binary.KEYMAP_OFFSET,
         "keymap_size": binary.KEYMAP_SIZE,
         "keymap_gestures": len(binary.KEYMAP_GESTURES),
         "palette_offset": binary.PALETTE_OFFSET,
         "macro_offset": binary.MACRO_OFFSET,
-        "macro_index_size": binary.MACRO_INDEX_SIZE,
+        "macro_index_size": layout.index_size,
         "macro_record_size": binary.RECORD_SIZE,
-        "macro_record_capacity": model.MACRO_RECORD_CAPACITY,
-        "macro_max_records": model.MACRO_MAX_RECORDS,
+        "macro_record_capacity": layout.record_capacity,
+        "macro_max_records": board.max_records_per_slot,
         "macro_slots": model.MACRO_SLOTS,
-        "profile_size": binary.PROFILE_SIZE,
-        "schema": binary.SCHEMA,
+        "profile_size": board.profile_size,
+        "schema": board.schema,
         "text_delay_default": FIRMWARE_TEXT_DELAY_MS,
         # What one move record represents. The firmware replays a move over
         # this long when nothing after it says otherwise, so if the recorder
@@ -499,6 +540,51 @@ def test_boot_is_refused_where_there_is_no_way_into_the_bootloader(harness) -> N
     _, replies = serial(harness, binary.encode_profile(model.default_profile()), "BOOT")
 
     assert replies == ["ERR code=unsupported"]
+
+
+@pytest.mark.parametrize("board", BOARDS, ids=[board.id for board in BOARDS])
+def test_every_board_reports_the_name_it_is_registered_under(
+    build_harness, board: Board
+) -> None:
+    """`HELLO board=` is how the app picks a layout and a firmware image.
+
+    A header whose MK_BOARD_NAME does not match its `Board.id` produces a pad
+    the app cannot identify, which then falls back to the default board -- the
+    smallest one -- and reports a fill against the wrong ceiling.
+    """
+    lines = run(build_harness(board), "serial", "IDENT\n",
+                blob=binary.encode_profile(model.default_profile(),
+                                           profile_size=board.profile_size))
+    hello = [line for line in lines if line.startswith("HELLO")]
+    assert hello, f"{board.id} did not answer IDENT: {lines}"
+    assert f"board={board.id}" in hello[0]
+    assert f"bytes={board.profile_size}" in hello[0]
+
+
+def test_every_board_has_a_header_and_a_page(board_files) -> None:
+    """The three files a board needs, held together.
+
+    Adding a board is a registry entry, a firmware header, and a doc page, and
+    the failure mode of forgetting one is not a build error -- it is a board
+    that works until someone needs the page that was never written.
+    """
+    missing = [name for name, path in board_files.items() if not path.exists()]
+    assert missing == [], f"missing: {missing}"
+
+
+@pytest.fixture(params=BOARDS, ids=[board.id for board in BOARDS])
+def board_files(request) -> dict[str, Path]:
+    board: Board = request.param
+    header = board.id.replace("-", "_")
+    # The 32u4 header is named for its part, not its id, because `promicro` on
+    # its own stopped being unambiguous the moment there were two of them.
+    candidates = [ROOT / "firmware" / "src" / "boards" / f"{header}.h"]
+    if board.id == "promicro":
+        candidates.append(ROOT / "firmware" / "src" / "boards" / "promicro_32u4.h")
+    return {
+        "firmware header": next((path for path in candidates if path.exists()), candidates[0]),
+        "docs page": ROOT / board.docs_page,
+    }
 
 
 def test_the_harness_is_built_from_the_real_sources() -> None:

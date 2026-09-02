@@ -35,6 +35,27 @@ KO: dict[str, str] = {
         "키패드 매크로 공용 저장소 (키보드 + 마우스 단계).\n"
         "16개 슬롯이 같은 308레코드 풀을 나눠 씁니다."
     ),
+    # -- firmware installation ------------------------------------------------
+    "Install firmware?": "펌웨어를 설치할까요?",
+    "{board} is plugged in but is not running macroKey firmware.\n\n"
+    "Install it now? The keypad will restart and be ready to use.": (
+        "{board}이(가) 연결됐지만 macroKey 펌웨어가 올라가 있지 않습니다.\n\n"
+        "지금 설치할까요? 설치가 끝나면 키패드가 재시작되고 바로 쓸 수 있습니다."
+    ),
+    "One step by hand": "한 번은 손이 필요합니다",
+    "{board} has never run macroKey firmware, so it has to be put "
+    "into its bootloader by hand:\n\n{hint}\n\n"
+    "Do that now, then press OK -- the firmware is installed as soon "
+    "as the board appears.": (
+        "{board}은(는) macroKey 펌웨어를 한 번도 실행한 적이 없어서, 부트로더에 "
+        "직접 넣어야 합니다:\n\n{hint}\n\n"
+        "지금 그렇게 한 뒤 확인을 누르세요 — 보드가 나타나는 즉시 설치됩니다."
+    ),
+    "Firmware installed": "펌웨어를 설치했습니다",
+    "Firmware install failed": "펌웨어 설치 실패",
+    "{board} found, but this build has no firmware for it": (
+        "{board}을(를) 찾았지만 이 빌드에는 해당 펌웨어가 없습니다"
+    ),
     "Storage {used_pct}% used · {free_pct}% free ({used}/{capacity})": (
         "저장소 {used_pct}% 사용 · {free_pct}% 여유 ({used}/{capacity})"
     ),

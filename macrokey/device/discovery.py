@@ -4,27 +4,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from ..boards import Board, board_by_usb_id, in_bootloader, known_usb_ids
+
 try:  # pyserial is optional so the UI and tests run without hardware installed.
     from serial.tools import list_ports
 except ModuleNotFoundError:  # pragma: no cover - exercised only without pyserial
     list_ports = None
 
-# Leonardo, Leonardo bootloader, Micro, Micro bootloader.
-ARDUINO_PRODUCTS = {0x8036, 0x0036, 0x8037, 0x0037}
-# SparkFun Pro Micro bootloader/sketch ids (3.3 V and 5 V variants). The shipped
-# hardware is the 5 V pair 9205/9206, but recognising both does not exclude it
-# during a board swap or bootloader window.
-SPARKFUN_PRODUCTS = {0x9203, 0x9204, 0x9205, 0x9206}
-KNOWN_USB_IDS = {
-    *((vendor, product) for vendor in (0x2341, 0x2A03) for product in ARDUINO_PRODUCTS),
-    *((0x1B4F, product) for product in SPARKFUN_PRODUCTS),
-    # arduino-pico CDC-only and CDC+HID composite ids. The exact product id
-    # depends on which USB interfaces the sketch enables.
-    (0x2E8A, 0x000A),
-    (0x2E8A, 0xF009),
-    (0x2E8A, 0xF00A),
-    (0x2E8A, 0xF10A),
-}
+#: Every id any registered board can appear as. Derived, so adding a board to
+#: `macrokey.boards` is all it takes to be recognised on the port list.
+KNOWN_USB_IDS = known_usb_ids()
 
 
 @dataclass
@@ -35,11 +24,26 @@ class PortCandidate:
     pid: int | None
 
     @property
+    def board(self) -> Board | None:
+        """Which registered board this is, by USB id alone.
+
+        Known before anything is opened, and true of a board running no macroKey
+        firmware at all -- which is what lets the app offer to flash one.
+        """
+        return board_by_usb_id(self.vid, self.pid)
+
+    @property
     def likely(self) -> bool:
         # Product ids are vendor-scoped. Matching either half made an unrelated
         # board with a coincidentally equal PID look like macroKey and delayed or
         # prevented probing the generic clone that really was the keypad.
-        return (self.vid, self.pid) in KNOWN_USB_IDS
+        return self.board is not None
+
+    @property
+    def in_bootloader(self) -> bool:
+        """Sitting in its bootloader, so it answers a flasher and not IDENT."""
+        board = self.board
+        return board is not None and in_bootloader(board, self.vid, self.pid)
 
     def __str__(self) -> str:
         return f"{self.device} ({self.description})"

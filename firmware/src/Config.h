@@ -1,18 +1,19 @@
 // Build-time configuration for the macroKey firmware.
 //
-// This header is the single source of truth for pin assignments, counts and
-// timings. Changing hardware should mean changing this file and nothing else.
+// Everything here is the same on every board: counts, timings, thresholds, and
+// the behaviour they describe. What differs from board to board -- pins, the
+// size and kind of the store, the wire name, the bootloader -- lives in one
+// header per board under boards/, and boards/board.h picks and enforces it.
+//
+// So a value belongs here if changing the hardware would not change it, and in
+// a board header otherwise. Nothing in the firmware outside boards/ tests the
+// architecture directly.
 #pragma once
 
 #include <Arduino.h>
 
-#define MK_FIRMWARE_VERSION "0.9.1"
+#define MK_FIRMWARE_VERSION "0.9.2"
 #define MK_PROTOCOL_VERSION 1
-#if defined(ARDUINO_ARCH_RP2040)
-#define MK_BOARD_NAME "promicro-rp2040"
-#else
-#define MK_BOARD_NAME "promicro"
-#endif
 
 // ---------------------------------------------------------------- topology --
 
@@ -42,49 +43,13 @@ static_assert(MK_KEY_COUNT <= (int)(sizeof(mk_keymask_t) * 8),
 // held zeroes. Forty more bytes for macro records.
 #define MK_MACRO_SLOTS 16
 
-// Button pins, active-low with the internal pull-up. Index order is the key
-// index reported over serial, so reordering this array remaps the keypad.
-#if defined(ARDUINO_ARCH_RP2040)
-static const uint8_t MK_KEY_PINS[MK_KEY_COUNT] = {2, 3, 4, 5, 6, 7, 8, 9};
-#else
-static const uint8_t MK_KEY_PINS[MK_KEY_COUNT] = {3, 4, 5, 6, 7, 8, 9, 10};
-#endif
+// ------------------------------------------------------------------ board --
 
-// WS2812B data pin. The Pro Micro does not break out D11 at all -- D11/D12/D13
-// exist on the ATmega32u4 but have no pads on this board. Of what is exposed,
-// D2/D3 are SDA/SCL and D14/D15/D16 are SPI, which leaves A0. It sits on the
-// same header as VCC and GND, so the LED module wires to one side of the board.
-// A0 is digital 18 on the 32u4.
-#if defined(ARDUINO_ARCH_RP2040)
-#define MK_LED_PIN 21
-#else
-#define MK_LED_PIN 18
-#endif
-
-// ---------------------------------------------------------------- storage --
-
-// Bytes the logical profile gets. AVR retains its complete 1 KB EEPROM layout;
-// RP2040 keeps a larger image in LittleFS. Storage size is a board property.
-#if defined(ARDUINO_ARCH_RP2040)
-#define MK_EEPROM_SIZE 65520
-#define MK_MACRO_COUNT_BYTES 2
-#else
-#define MK_EEPROM_SIZE 1024
-#define MK_MACRO_COUNT_BYTES 1
-#endif
-
-// 0: AVR-style EEPROM. Memory-mapped, every write lands on its own, and reads
-//    work from the first instruction -- so begin() and commit() are no-ops.
-// 1: flash-backed store. RP2040 uses a RAM image plus an atomic LittleFS file;
-//    begin() loads it and commit() replaces it after a validated transfer.
-// Profile only ever goes through Storage.h, so this is the whole switch.
-#ifndef MK_STORAGE_FLASH_EMULATED
-#if defined(ARDUINO_ARCH_RP2040)
-#define MK_STORAGE_FLASH_EMULATED 1
-#else
-#define MK_STORAGE_FLASH_EMULATED 0
-#endif
-#endif
+// Pins, storage size and kind, wire name, schema, and the per-slot record
+// ceiling. Included after the counts above because a board's pin array is
+// declared MK_KEY_COUNT long. Everything below this line is board-agnostic
+// again.
+#include "boards/board.h"
 
 // -------------------------------------------------------------- HID backend --
 
@@ -181,17 +146,9 @@ static const uint8_t MK_KEY_PINS[MK_KEY_COUNT] = {3, 4, 5, 6, 7, 8, 9, 10};
 
 // ------------------------------------------------------------------ limits --
 
-// Records per invocation, guarding a runaway sequence rather than rationing
-// storage: a slot's count is one byte, so this is simply as many records as a
-// macro can have. It was 32 steps, which no real recording met -- a typed
-// command line was one 3 byte key action per character and past 32 before it
-// was half over -- so recordings fell back to host actions and the pad stopped
-// working with the app closed, which is the one thing it exists to do.
-#if defined(ARDUINO_ARCH_RP2040)
-#define MK_MACRO_MAX_RECORDS 21800
-#else
-#define MK_MACRO_MAX_RECORDS 255
-#endif
+// MK_MACRO_MAX_RECORDS -- records one macro may hold -- is a board property
+// and is defined in boards/. It is bounded by how wide a slot's stored count
+// is, which is why it is not a number that can simply be raised here.
 // Budget for HID *work* inside one macro (moves, clicks, keys), not for
 // authored pauses. ACT_DELAY / text char waits extend the deadline via
 // macroWait -- otherwise a drag with thinking-time pauses dies before its

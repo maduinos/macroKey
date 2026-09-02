@@ -38,6 +38,7 @@ def build_window(monkeypatch):
     # positional-only stub raises TypeError from inside Qt's event loop.
     monkeypatch.setattr(MainWindow, "_maybe_fix_capture", lambda self, **_kwargs: None)
     original = app.font()
+    windows: list[MainWindow] = []
 
     def build(point_size: int, language: str = "en") -> MainWindow:
         # Before the window: every label and pinned width is decided in
@@ -52,9 +53,14 @@ def build_window(monkeypatch):
         window.resize(820, 560)
         window.show()
         app.processEvents()
+        windows.append(window)
         return window
 
     yield build
+    for window in windows:
+        window.close()
+        window.deleteLater()
+    app.processEvents()
     app.setFont(original)
     i18n.set_language("en")
 

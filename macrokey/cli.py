@@ -13,6 +13,7 @@ import time
 
 from . import __version__
 from .app import MacroKeyApp
+from .boards import BOARDS
 from .config import EDITABLE_GESTURES, KEY_COUNT
 from .device import DeviceError, candidates, pyserial_available
 from .logging_setup import setup_logging
@@ -40,6 +41,20 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("monitor", help="print device events until interrupted")
 
+    flash = sub.add_parser("flash", help="put firmware on the keypad")
+    flash.add_argument(
+        "--board",
+        default="",
+        choices=[board.id for board in BOARDS],
+        help="which board, when more than one is attached (default: whatever is found)",
+    )
+    flash.add_argument(
+        "--image", default="", help="a firmware file to write instead of the bundled one"
+    )
+    flash.add_argument("--yes", "-y", action="store_true", help="do not ask before writing")
+
+    sub.add_parser("boards", help="list the boards this build supports")
+
     record = sub.add_parser("record", help="record input and bind it to a key")
     record.add_argument("--key", type=int, required=True, choices=range(1, KEY_COUNT + 1))
     # Not GESTURES: hold is how recording starts on the pad itself, so nothing
@@ -63,6 +78,8 @@ def main(argv: list[str] | None = None) -> int:
     handler = {
         "gui": cmd_gui,
         "ports": cmd_ports,
+        "boards": cmd_boards,
+        "flash": cmd_flash,
         "info": cmd_info,
         "push": cmd_push,
         "pull": cmd_pull,
@@ -102,6 +119,88 @@ def cmd_ports(args: argparse.Namespace) -> int:
     for candidate in found:
         marker = "*" if candidate.likely else " "
         print(f"{marker} {candidate}")
+    return 0
+
+
+def cmd_boards(args: argparse.Namespace) -> int:
+    """What this build knows how to talk to, and whether it can flash it."""
+    from .config import binary
+    from .flash import available
+
+    images = available()
+    for board in BOARDS:
+        layout = binary.layout_for_board(board)
+        image = images.get(board.id)
+        print(f"{board.id}")
+        print(f"    {board.display_name} ({board.mcu})")
+        print(
+            f"    profile {board.profile_size} B, schema {board.schema}, "
+            f"{layout.record_capacity} records ({board.max_records_per_slot} per slot)"
+        )
+        print(f"    firmware {image if image else '(not bundled in this build)'}")
+        print(f"    docs {board.docs_page}")
+    return 0
+
+
+def cmd_flash(args: argparse.Namespace) -> int:
+    """Detect the attached board and write the matching firmware to it.
+
+    The confirmation is the whole interaction in the ordinary case: someone
+    plugs a freshly soldered keypad in and answers one question. The exception
+    is a board that has never run macroKey firmware, which cannot be asked to
+    reboot into its bootloader because nothing on it is listening -- that needs
+    a button held or a jumper touched, and the hint below says which.
+    """
+    from pathlib import Path
+
+    from .flash import FlashError, NeedsManualBootloader, find_board, find_image, flash
+
+    board_id = args.board or None
+    found = find_board(board_id)
+    if found is None:
+        print(
+            "no board found. Plug the keypad in. If it has never been flashed, "
+            "hold its bootloader button while plugging it in:",
+            file=sys.stderr,
+        )
+        for board in BOARDS:
+            print(f"  {board.display_name}: {board.first_flash_hint}", file=sys.stderr)
+        return 1
+
+    try:
+        image = Path(args.image) if args.image else find_image(found.board)
+    except FlashError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+
+    print(f"found    {found}")
+    print(f"firmware {image}")
+    if not args.yes:
+        try:
+            answer = input("write it to the board? [y/N] ").strip().lower()
+        except EOFError:
+            answer = ""
+        if answer not in ("y", "yes"):
+            print("nothing was written")
+            return 1
+
+    try:
+        port = flash(board_id=found.board.id, image=image, status=print)
+    except NeedsManualBootloader as exc:
+        print(f"\n{found.board.display_name}: {exc.hint}", file=sys.stderr)
+        print("then run this again.", file=sys.stderr)
+        return 2
+    except FlashError as exc:
+        print(f"flashing failed: {exc}", file=sys.stderr)
+        return 2
+
+    if port:
+        print(f"done -- the keypad is on {port}")
+    else:
+        print(
+            "done -- the firmware was written, but the keypad has not reappeared yet. "
+            "Unplug and plug it back in, then run `macrokey ports`."
+        )
     return 0
 
 
