@@ -184,6 +184,17 @@ void KeyEngine::emitMove(int8_t dx, int8_t dy, uint16_t overMs) {
   uint16_t steps = overMs < (uint16_t)span ? overMs : (uint16_t)span;
   if (steps == 0) steps = 1;
 
+  // The host polls the HID endpoint every MK_HID_POLL_INTERVAL_MS, so that is
+  // how many reports actually fit in the time available. Asking for more does
+  // not send them sooner: each one waits for the endpoint, and the gesture
+  // stretches by exactly the ratio between the two intervals. A board polled
+  // every 10 ms replayed a 50 ms slice over half a second that way -- the
+  // pointer still landed in the right place, just far too slowly, so nothing
+  // failed anywhere. Fewer, larger reports keep the duration honest.
+  uint16_t carried = overMs / (uint16_t)MK_HID_POLL_INTERVAL_MS;
+  if (carried == 0) carried = 1;
+  if (steps > carried) steps = carried;
+
   uint32_t startedAt = millis();
   int16_t doneX = 0;
   int16_t doneY = 0;
@@ -244,9 +255,10 @@ uint16_t KeyEngine::runMoves(uint16_t base, uint16_t first, uint16_t count) {
 }
 
 void KeyEngine::runMacro(uint8_t slot, uint8_t key, uint32_t now) {
-  // No clamp against MK_MACRO_MAX_RECORDS: the count is one byte and the limit
-  // is 255, which Profile.h asserts. Reading past the region is what actually
-  // needs guarding, and macroRecord does that per record.
+  // No clamp against MK_MACRO_MAX_RECORDS: the stored count cannot exceed what
+  // its own width holds, and boards/board.h refuses a board whose ceiling does
+  // not fit that width. Reading past the region is what actually needs
+  // guarding, and macroRecord does that per record.
   uint16_t count = profile_->macroRecordCount(slot);
   uint16_t base = profile_->macroBase(slot);
 

@@ -164,6 +164,15 @@ def test_the_two_layouts_are_the_same_layout(build_harness, board: Board) -> Non
         # wrong speed -- and pointer acceleration would turn that into landing
         # somewhere else.
         "move_slice_ms": int(MOTION_SLICE_SECONDS * 1000),
+        # How often the host polls the HID endpoint, which is the ceiling on
+        # how fast a replayed movement can be sent. arduino-pico defaults it to
+        # 10 ms and the sketch overrides the core's weak symbol to get 1; the
+        # AVR core is 1 already. At 10 a recorded 50 ms slice of motion took
+        # half a second to replay -- the pointer landed in the right place, so
+        # nothing failed and the only symptom was that mouse macros felt wrong
+        # on that board. A board that cannot manage 1 ms is allowed, but it has
+        # to say so, because runMoves divides by this.
+        "hid_poll_interval_ms": 1,
     }
 
 

@@ -47,3 +47,7 @@ static const uint8_t MK_KEY_PINS[MK_KEY_COUNT] = {3, 4, 5, 6, 7, 8, 9, 10};
 // specific to this bootloader on this architecture, so the code lives in
 // SerialProtocol.cpp behind this name.
 #define MK_BOOTLOADER_ENTRY_CATERINA 1
+
+// The AVR core builds its HID endpoint with bInterval 1 and offers no way to
+// change it, which is why mouse replay always behaved correctly here.
+#define MK_HID_POLL_INTERVAL_MS 1

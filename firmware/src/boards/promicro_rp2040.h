@@ -43,3 +43,21 @@ static const uint8_t MK_KEY_PINS[MK_KEY_COUNT] = {2, 3, 4, 5, 6, 7, 8, 9};
 // storage device, which is what lets the desktop app re-flash the pad without
 // anyone touching the board.
 #define MK_BOOTLOADER_ENTRY_PICOBOOT 1
+
+// How often the host may poll the HID endpoint, in milliseconds.
+//
+// arduino-pico defaults this to 10 ms:
+//
+//     int usb_hid_poll_interval __attribute__((weak)) = 10;   // USB.cpp
+//
+// which is a tenth of what the AVR core's HID endpoint does, and it is the
+// ceiling on how fast a replayed mouse movement can be sent. A recorded 50 ms
+// slice of motion is replayed as a report per millisecond; at 10 ms per report
+// each one waits for the endpoint and the gesture stretches to ten times the
+// time it was drawn in. Nothing fails -- the pointer lands in the right place,
+// slowly -- so the only symptom is that mouse macros feel wrong on this board
+// and felt fine on the 32u4.
+//
+// The symbol is weak precisely so a sketch can override it; firmware.ino does.
+#define MK_HID_POLL_INTERVAL_MS 1
+#define MK_HID_POLL_INTERVAL_IS_OVERRIDABLE 1

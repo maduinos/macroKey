@@ -1,8 +1,24 @@
 """The UI tests build real widgets, so Qt needs a platform it can use headless."""
 
 import os
+import tempfile
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+# Point the config at a scratch directory before anything imports the store.
+#
+# These tests build real `MainWindow`s, and a real window loads and saves real
+# `Settings`. Left alone they read and write the config of whoever is running
+# them: the pointer-acceleration tests exercise the "no thanks" path, which
+# persists `pointer_accel_declined`, and that setting is remembered forever --
+# so running the suite silently turned off an offer the developer had never
+# been shown, on their own machine. The port, the language and the profile are
+# all reachable the same way.
+#
+# Set here rather than in a fixture because module-level imports and
+# session-scoped windows can both read a path before any fixture runs.
+_CONFIG_DIR = tempfile.mkdtemp(prefix="macrokey-tests-")
+os.environ["MACROKEY_CONFIG_DIR"] = _CONFIG_DIR
 
 import pytest  # noqa: E402
 
@@ -31,3 +47,15 @@ def _destroy_widgets_before_exit():
         widget.close()
         widget.deleteLater()
     app.processEvents()
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _config_is_a_scratch_directory():
+    """Fails loudly if anything reaches around the override above."""
+    from macrokey.config import store
+
+    assert str(store.config_dir()) == _CONFIG_DIR, (
+        f"the tests are pointed at {store.config_dir()}, not the scratch "
+        "directory -- they would edit a real config"
+    )
+    yield
