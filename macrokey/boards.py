@@ -51,8 +51,14 @@ class Board:
     mcu: str
     #: What ``arduino-cli compile --fqbn`` is given for this board.
     fqbn: str
-    #: The core to install, e.g. ``SparkFun:avr``.
-    core: str
+    #: Cores ``arduino-cli core install`` needs, in install order, ending
+    #: with the one that owns the FQBN. A vendor core is usually a variant on
+    #: a base platform and does not pull it in: SparkFun:avr references
+    #: arduino:avr's toolchain and fails with "missing platform release" if it
+    #: is not already there. That only shows up on a clean machine, which is
+    #: to say in CI and on someone else's first build, never on the one that
+    #: has had every core installed for months.
+    cores: tuple[str, ...]
 
     # ------------------------------------------------------------- storage --
     #: Bytes the whole profile blob occupies -- ``MK_PROFILE_SIZE``.
@@ -130,7 +136,7 @@ PROMICRO_32U4 = Board(
     display_name="Pro Micro (ATmega32u4)",
     mcu="atmega32u4",
     fqbn="SparkFun:avr:promicro:cpu=16MHzatmega32U4",
-    core="SparkFun:avr",
+    cores=("arduino:avr", "SparkFun:avr"),
     core_url=(
         "https://raw.githubusercontent.com/sparkfun/Arduino_Boards/master/"
         "IDE_Board_Manager/package_sparkfun_index.json"
@@ -169,7 +175,7 @@ PROMICRO_RP2040 = Board(
     display_name="ProMicro RP2040 (16 MB)",
     mcu="rp2040",
     fqbn="rp2040:rp2040:generic:flash=16777216_14680064,freq=133",
-    core="rp2040:rp2040",
+    cores=("rp2040:rp2040",),
     core_url=(
         "https://github.com/earlephilhower/arduino-pico/releases/download/"
         "global/package_rp2040_index.json"

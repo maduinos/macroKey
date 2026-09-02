@@ -104,6 +104,23 @@ def test_a_board_says_how_it_is_flashed(board: Board) -> None:
 
 
 @pytest.mark.parametrize("board", BOARDS, ids=[board.id for board in BOARDS])
+def test_a_board_names_the_cores_it_builds_against(board: Board) -> None:
+    """The FQBN's platform has to be one of them, and has to be installed last.
+
+    A vendor core sits on a base platform and does not pull it in -- SparkFun:avr
+    needs arduino:avr's toolchain and fails with "missing platform release"
+    without it. Nothing catches that on a machine that already has every core,
+    which is why the list is declared rather than inferred from the FQBN.
+    """
+    assert board.cores, f"{board.id} declares no core to install"
+    platform = ":".join(board.fqbn.split(":")[:2])
+    assert board.cores[-1] == platform, (
+        f"{board.id}: the FQBN needs {platform}, but the last core installed is "
+        f"{board.cores[-1]}"
+    )
+
+
+@pytest.mark.parametrize("board", BOARDS, ids=[board.id for board in BOARDS])
 def test_a_board_has_a_documentation_page(board: Board) -> None:
     page = ROOT / board.docs_page
     assert page.exists(), f"{board.id} is registered but {board.docs_page} does not exist"
@@ -130,7 +147,7 @@ def test_a_board_cannot_be_registered_half_described() -> None:
     """The dataclass refuses shapes that would fail much later, at flash time."""
     with pytest.raises(ValueError):
         Board(
-            id="broken", display_name="", mcu="", fqbn="", core="",
+            id="broken", display_name="", mcu="", fqbn="", cores=(),
             profile_size=1024, schema=2, count_bytes=1, max_records_per_slot=255,
             run_ids=frozenset(), bootloader_ids=frozenset(),
             flash_method="carrier-pigeon", firmware_suffix=".hex",
@@ -138,7 +155,7 @@ def test_a_board_cannot_be_registered_half_described() -> None:
     with pytest.raises(ValueError):
         # uf2 means "copy onto the bootloader volume", so there has to be one.
         Board(
-            id="broken", display_name="", mcu="", fqbn="", core="",
+            id="broken", display_name="", mcu="", fqbn="", cores=(),
             profile_size=1024, schema=2, count_bytes=1, max_records_per_slot=255,
             run_ids=frozenset(), bootloader_ids=frozenset(),
             flash_method="uf2", firmware_suffix=".uf2",
