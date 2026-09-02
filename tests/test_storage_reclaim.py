@@ -20,6 +20,7 @@ from macrokey.config.model import (
     default_profile,
     macro_records,
 )
+from macrokey.config.store import Settings
 from macrokey.recorder.normalize import reduce_to_device_macro
 
 #: A recording that has to become a macro rather than a single action.
@@ -41,8 +42,7 @@ class FakeRecorder:
 
 
 class FakeDevice:
-    #: Nothing is plugged in, so the layout falls back to the AVR profile size,
-    #: which is the record budget these tests are about.
+    #: Nothing is plugged in, so the layout comes from the remembered board.
     hello = None
 
 
@@ -51,6 +51,11 @@ def fake_app() -> MacroKeyApp:
     app.profile = default_profile()
     app.recorder = FakeRecorder()
     app.device = FakeDevice()
+    # Fresh settings: no board has been seen, so the layout is the registry
+    # default -- the 1 KB AVR profile, which is the record budget these tests
+    # are about. A stored `last_board` would change the ceiling and with it
+    # every number below.
+    app.settings = Settings()
     app._status_callbacks = []
     app._event_callbacks = []
     return app

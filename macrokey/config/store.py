@@ -13,6 +13,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from ..boards import board_by_id
 from .model import SCHEMA_VERSION, Profile, default_profile
 
 log = logging.getLogger(__name__)
@@ -126,6 +127,15 @@ class Settings:
     #: on someone's desktop, so a no stays no -- Help > Mouse macro accuracy
     #: asks again for anyone who changes their mind.
     pointer_accel_declined: bool = False
+    #: Board id of the pad last connected to, from `macrokey.boards`.
+    #:
+    #: Storage is a board property, and the profile file records nothing about
+    #: which board it belongs to. Without this the app fell back to the smallest
+    #: registered board whenever the cable was out -- reporting an RP2040's 32
+    #: records as 10% of 308 rather than 0% of 21801, and, worse, refusing to
+    #: record a macro past 308 records onto a pad with room for 21801. Empty
+    #: until a pad has been seen once.
+    last_board: str = ""
 
     @classmethod
     def load(cls) -> Settings:
@@ -155,6 +165,11 @@ class Settings:
             loaded.theme = data["theme"]
         if isinstance(data.get("language"), str):
             loaded.language = data["language"]
+        board = data.get("last_board")
+        # Validated against the registry, not merely against `str`: a board that
+        # was dropped, or a hand-edited name, must not decide a blob layout.
+        if isinstance(board, str) and board_by_id(board) is not None:
+            loaded.last_board = board
         for field in (
             "auto_connect",
             "recorder_capture_mouse",

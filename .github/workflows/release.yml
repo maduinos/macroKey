@@ -6,6 +6,11 @@
 # 빌드는 로컬과 같은 ./build_release.sh 를 쓴다. 테스트는 아래 test 잡에서
 # 한 번만 돌리고, 빌드 잡은 --skip-tests 로 중복 실행을 피한다.
 #
+# firmware 잡이 등록된 모든 보드의 펌웨어를 굽는다. 그 이미지는 (1) 앱 바이너리 안에
+# 번들되어 사용자가 arduino-cli 없이 키패드를 플래싱할 수 있게 하고, (2) 릴리스에도
+# 따로 첨부된다. 보드 목록은 macrokey/boards.py 하나에서 나오므로 보드를 추가해도
+# 이 파일은 건드릴 필요가 없다.
+#
 # Ubuntu 러너는 22.04로 고정한다. ubuntu-latest(24.04, glibc 2.39)에서 빌드하면
 # 결과물이 GLIBC_2.38을 요구해 22.04 이하에서 실행되지 않는다.
 name: release
@@ -49,8 +54,28 @@ jobs:
       - name: ruff
         run: python -m ruff check .
 
+  firmware:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: arduino-cli 설치
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/arduino/arduino-cli/master/install.sh \
+            | BINDIR="$HOME/.local/bin" sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: 모든 보드 펌웨어 빌드
+        run: ./tools/build_firmware.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: firmware
+          path: firmware/prebuilt/
+          if-no-files-found: error
+
   build:
-    needs: test
+    needs: [test, firmware]
     strategy:
       fail-fast: false
       matrix:
@@ -75,6 +100,12 @@ jobs:
           sudo apt-get install -y libegl1 libgl1 libxcb-cursor0 libxkbcommon-x11-0 \
             libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0 \
             libxcb-render-util0 libxcb-shape0 libdbus-1-3
+      # 앱 바이너리에 들어갈 펌웨어. 없으면 build_release.sh가 경고만 하고 넘어가므로
+      # 여기서 받아오지 않으면 플래싱 못 하는 앱이 조용히 릴리스된다.
+      - uses: actions/download-artifact@v4
+        with:
+          name: firmware
+          path: firmware/prebuilt
       - name: 빌드
         shell: bash
         run: ./build_release.sh --skip-tests
@@ -127,7 +158,14 @@ jobs:
             "커밋 \`$short\` 자동 빌드 (v$version)" \
             "" \
             "- \`macrokey-linux-x86_64\` - Linux 실행 파일 (\`chmod +x\` 후 실행)" \
-            "- \`macrokey-windows-x86_64.exe\` - Windows 실행 파일")"
+            "- \`macrokey-windows-x86_64.exe\` - Windows 실행 파일" \
+            "" \
+            "펌웨어는 실행 파일 안에 들어 있습니다. 키패드를 USB로 꽂고 앱을 켜면" \
+            "어떤 보드인지 알아보고 확인을 받은 뒤 직접 설치합니다 (\`macrokey flash\`)." \
+            "아래 이미지는 직접 굽고 싶을 때만 필요합니다." \
+            "" \
+            "- \`firmware-promicro.hex\` - Pro Micro (ATmega32u4)" \
+            "- \`firmware-promicro-rp2040.uf2\` - ProMicro RP2040")"
           gh release create "$tag" dist/* \
             --target "$GITHUB_SHA" \
             --title "$title" \

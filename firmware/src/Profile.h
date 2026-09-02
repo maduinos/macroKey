@@ -14,14 +14,10 @@
 #define MK_PROFILE_MAGIC1 'K'
 #define MK_PROFILE_MAGIC2 'E'
 #define MK_PROFILE_MAGIC3 'Y'
-// AVR keeps the established 1024-byte schema 2 layout. RP2040 uses schema 3:
-// a larger profile and two-byte macro counts. A mismatched image is rejected
-// and replaced with defaults rather than interpreted as another layout.
-#if defined(ARDUINO_ARCH_RP2040)
-#define MK_PROFILE_SCHEMA 3
-#else
-#define MK_PROFILE_SCHEMA 2
-#endif
+// MK_PROFILE_SCHEMA is a board property: a different profile size or count
+// width is a different image, and a pad must reject one schema's bytes rather
+// than interpret them as the other's. It is defined in boards/, and Config.h
+// (included below via the includer) has already pulled it in.
 
 // Flat EEPROM layout. Every region is a fixed-stride array so lookups are
 // address arithmetic with no scanning.

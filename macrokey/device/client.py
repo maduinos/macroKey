@@ -53,10 +53,16 @@ class DeviceClient:
         on_event: EventCallback | None = None,
         on_status: StatusCallback | None = None,
         on_disconnect: DisconnectCallback | None = None,
+        on_connect: Callable[[Hello], None] | None = None,
     ) -> None:
         self._on_event = on_event
         self._on_status = on_status or (lambda message: None)
         self._on_disconnect = on_disconnect or (lambda reason: None)
+        # Fires once IDENT has validated the pad, so it is the only place that
+        # knows a connection actually succeeded. Every caller reaches it -- the
+        # GUI, `macrokey info`, `push`, `record` -- which is why anything that
+        # must happen on connect belongs here and not in one caller's path.
+        self._on_connect = on_connect or (lambda hello: None)
         self._serial: Any = None
         self._reader: threading.Thread | None = None
         self._responses: queue.Queue[Message | object] = queue.Queue()
@@ -189,6 +195,10 @@ class DeviceClient:
             self.hello = hello
             self.port = port
         self._on_status(f"Connected to {port} (firmware {hello.firmware})")
+        try:
+            self._on_connect(hello)
+        except Exception:  # noqa: BLE001 - a bookkeeping failure is not a failed connect
+            log.exception("on_connect callback failed")
         return hello
 
     def disconnect(self) -> None:

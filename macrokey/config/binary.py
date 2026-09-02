@@ -8,12 +8,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from ..boards import BOARDS, DEFAULT_BOARD, Board, board_by_profile_size
 from .model import (
     ACTION_TYPE_IDS,
     EDITABLE_GESTURES,
     KEY_COUNT,
     LED_COUNT,
-    MACRO_MAX_RECORDS,
     MACRO_RECORD_CAPACITY,
     MACRO_SLOTS,
     MAX_TEXT_SPEED_MS,
@@ -24,9 +24,10 @@ from .model import (
 )
 
 MAGIC = b"MKEY"
-#: Established ATmega32U4 schema. RP2040 uses schema 3 and a larger blob while
-#: this value and its byte layout stay unchanged for existing Pro Micro pads.
-SCHEMA = 2
+#: Established ATmega32U4 schema, and the one a blob is written with when no
+#: board is known. Each board carries its own in the registry; this name stays
+#: because the byte layout it describes is what every other offset here assumes.
+SCHEMA = DEFAULT_BOARD.schema
 
 HEADER_SIZE = 16
 KEYMAP_OFFSET = HEADER_SIZE
@@ -65,10 +66,26 @@ CHUNK_BYTES = 48  # 48 raw bytes -> 64 base64 chars, inside the 96 byte line cap
 
 @dataclass(frozen=True)
 class ProfileLayout:
+    """The blob shape one board expects.
+
+    Built from a `Board` rather than written out per board: the registry is
+    where a board's storage is described, and a layout that could be edited
+    independently of it is a second copy of the same four numbers.
+    """
+
     size: int
     schema: int
     count_bytes: int
     max_records_per_slot: int
+
+    @classmethod
+    def for_board(cls, board: Board) -> ProfileLayout:
+        return cls(
+            size=board.profile_size,
+            schema=board.schema,
+            count_bytes=board.count_bytes,
+            max_records_per_slot=board.max_records_per_slot,
+        )
 
     @property
     def index_size(self) -> int:
@@ -79,17 +96,24 @@ class ProfileLayout:
         return (self.size - MACRO_OFFSET - self.index_size) // RECORD_SIZE
 
 
-AVR_LAYOUT = ProfileLayout(PROFILE_SIZE, SCHEMA, 1, MACRO_MAX_RECORDS)
-RP2040_PROFILE_SIZE = 65520
-RP2040_LAYOUT = ProfileLayout(RP2040_PROFILE_SIZE, 3, 2, 21800)
-SUPPORTED_PROFILE_SIZES = {layout.size for layout in (AVR_LAYOUT, RP2040_LAYOUT)}
+LAYOUTS: dict[str, ProfileLayout] = {
+    board.id: ProfileLayout.for_board(board) for board in BOARDS
+}
+SUPPORTED_PROFILE_SIZES = {layout.size for layout in LAYOUTS.values()}
+#: What an app with no device and no memory of one assumes. Kept as a name
+#: because the encoder's default argument is a size, not a board.
+DEFAULT_LAYOUT = LAYOUTS[DEFAULT_BOARD.id]
+
+
+def layout_for_board(board: Board) -> ProfileLayout:
+    return LAYOUTS[board.id]
 
 
 def layout_for_size(profile_size: int) -> ProfileLayout:
-    for layout in (AVR_LAYOUT, RP2040_LAYOUT):
-        if layout.size == profile_size:
-            return layout
-    raise ProfileError(f"unsupported device profile size: {profile_size}")
+    board = board_by_profile_size(profile_size)
+    if board is None:
+        raise ProfileError(f"unsupported device profile size: {profile_size}")
+    return LAYOUTS[board.id]
 
 
 def crc16(data: bytes) -> int:

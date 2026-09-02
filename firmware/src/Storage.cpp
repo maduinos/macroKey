@@ -1,6 +1,9 @@
 #include "Storage.h"
 
-#if defined(ARDUINO_ARCH_RP2040)
+// Storage.h promises this is the only switch, and that the board header is
+// what throws it. Testing the architecture here instead would mean a new
+// flash-backed part silently took the memory-mapped arm.
+#if MK_STORAGE_FLASH_EMULATED
 
 #include <LittleFS.h>
 

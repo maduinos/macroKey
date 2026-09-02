@@ -4,6 +4,7 @@ __pycache__/
 
 # Build artefacts (Analyzer-style)
 .build/
+.build-deps/
 releases/
 build/
 dist/
@@ -21,3 +22,4 @@ venv/
 # Local app configuration
 profile.json
 settings.json
+firmware/prebuilt/

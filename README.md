@@ -1,9 +1,12 @@
 # macroKey
 
-8버튼 Pro Micro 매크로 키패드. **패드는 앱 없이 USB 키보드/마우스로 동작**하고,
+8버튼 매크로 키패드. **패드는 앱 없이 USB 키보드/마우스로 동작**하고,
 PC 앱은 설정·녹음할 때만 켭니다.
 
-버전: 펌웨어 `0.9.1` / 앱 `0.10.0`
+지원 보드는 Pro Micro(ATmega32u4)와 ProMicro RP2040이고, 같은 펌웨어 소스로 돕니다.
+보드별 배선·플래싱은 [`docs/BOARDS.md`](docs/BOARDS.md)에 있습니다.
+
+버전: 펌웨어 `0.9.2` / 앱 `0.11.0`
 
 ## 구성
 
@@ -13,12 +16,18 @@ macroKey/
 ├── requirements.txt
 ├── build_release.sh        # → releases/linux/macrokey
 ├── macrokey/               # 설정 앱 코드
-├── firmware/               # Pro Micro 스케치
+│   ├── boards.py           # 지원 보드 레지스트리 (여기 하나에서 전부 파생)
+│   └── flash/              # 보드 자동 인식 + 펌웨어 설치
+├── firmware/               # 펌웨어 (보드 공용)
+│   └── src/boards/         # 보드별 헤더 — 핀·저장소·부트로더
 ├── tests/
-├── tools/setup_linux_serial.sh # Ubuntu USB 시리얼 권한 설정
+├── tools/
+│   ├── build_firmware.sh   # 등록된 모든 보드의 펌웨어 빌드
+│   └── setup_linux_serial.sh # Ubuntu USB 시리얼 권한 설정
 ├── docs/                   # 사용·배선·설계 (필요할 때)
 │   ├── manual.html
-│   ├── wiring.html
+│   ├── BOARDS.md           # 지원 보드 + 새 보드 추가 체크리스트
+│   ├── boards/             # 보드별 배선·플래싱
 │   ├── HARDWARE.md
 │   ├── PROTOCOL.md
 │   └── ARCHITECTURE.md
@@ -52,6 +61,9 @@ Ubuntu에서 설정 앱이 Pro Micro/RP2040의 USB 시리얼 포트를 열 수 �
 # Windows→ releases/windows/macrokey.exe
 ```
 
+빌드에는 Python 3.10 이상이 필요합니다. 가상환경을 활성화하지 않아도 빌드 스크립트가
+필요한 패키지를 `.build-deps/`에 설치하므로 시스템 Python 환경은 변경하지 않습니다.
+
 언어는 **도움말 > 언어**에서 고릅니다. 기본값은 시스템 로케일 자동 감지이고, 지금은 한국어와
 영어를 지원합니다. 창의 모든 문구와 버튼 폭이 창을 만들 때 정해지므로 **바꾼 언어는 다음 실행부터**
 적용됩니다. 앱이 그렇게 안내합니다.
@@ -83,24 +95,36 @@ macroKey는 빨간 녹화 표시가 켜진 동안에만 입력 장치를 엽니�
 
 ## 펌웨어
 
+**키패드를 USB로 꽂고 앱을 켜면 됩니다.** 앱이 어떤 보드인지 알아보고, macroKey 펌웨어가
+없으면 확인을 한 번 받은 뒤 직접 설치합니다. arduino-cli도 코어도 라이브러리도 필요
+없습니다 — 완성된 이미지가 실행 파일 안에 들어 있습니다.
+
 ```bash
-arduino-cli compile --upload --fqbn SparkFun:avr:promicro:cpu=16MHzatmega32U4 \
-  -p /dev/ttyACM0 firmware
+macrokey flash          # 확인을 받고 자동으로
+macrokey flash --yes    # 묻지 않고
+macrokey boards         # 이 빌드가 아는 보드와 가진 펌웨어
 ```
 
-보드: **5 V / 16 MHz Pro Micro**. 배선은 [`docs/wiring.html`](docs/wiring.html).  
-0.9.1부터 패드는 저장된 프로필을 읽지 못해 공장 기본값으로 되돌렸을 때 그 사실을
-`HELLO`의 `reset=1`로 알립니다. 앱은 그걸 보고 "가져오기"가 아니라 "보내기"를 권합니다.  
-업로드 전 `RST`–`GND` 더블탭으로 부트로더를 띄우세요.
+한 번만은 손이 필요합니다. **공장 초기 상태의 보드에 처음 굽는 순간**입니다. 빈 보드에는
+"부트로더로 가라"는 말을 들어줄 코드가 아직 없습니다 — RP2040은 BOOTSEL을 누른 채 꽂고,
+Pro Micro는 `RST`–`GND`를 빠르게 두 번 단락시킵니다. 앱이 그 문장을 띄우고 부트로더가
+나타나는 것을 지켜보다가 즉시 굽습니다. **두 번째부터는 완전 자동입니다.**
 
-16 MB ProMicro RP2040은 기존 AVR 프로필과 동작을 유지하면서 매크로 저장소만
-확장합니다. AVR은 1,024 B/schema 2(308 레코드), RP2040은 65,520 B/schema 3
-(21,801 레코드)이며 앱이 `HELLO bytes=`로 자동 선택합니다.
+| 보드 | 저장소 | 매크로 영역 | 첫 플래싱 |
+| --- | --- | --- | --- |
+| Pro Micro (ATmega32u4) | 1,024 B / schema 2 | 308 레코드 | RST–GND 더블탭 |
+| ProMicro RP2040 (16 MB) | 65,520 B / schema 3 | 21,801 레코드 | BOOTSEL |
+
+앱은 `HELLO board=`로 보드를 알아보고, 연결이 끊긴 뒤에도 마지막 보드를 기억합니다.
+
+0.9.1부터 패드는 저장된 프로필을 읽지 못해 공장 기본값으로 되돌렸을 때 그 사실을
+`HELLO`의 `reset=1`로 알립니다. 앱은 그걸 보고 "가져오기"가 아니라 "보내기"를 권합니다.
+
+펌웨어를 직접 빌드하려면(개발용):
 
 ```bash
-arduino-cli compile \
-  --fqbn rp2040:rp2040:generic:flash=16777216_14680064,freq=133 \
-  --output-dir build/rp2040-large firmware
+./tools/build_firmware.sh                  # 등록된 모든 보드
+./tools/build_firmware.sh promicro-rp2040  # 하나만
 ```
 
 ## 참고
@@ -108,9 +132,10 @@ arduino-cli compile \
 | 문서 | 내용 |
 | --- | --- |
 | [`docs/manual.html`](docs/manual.html) | 사용 설명 |
-| [`docs/wiring.html`](docs/wiring.html) | 핀맵·조립 (Pro Micro / ATmega32u4) |
-| [`docs/wiring-rp2040.html`](docs/wiring-rp2040.html) | 핀맵·조립·포팅 (ProMicro RP2040) |
-| [`docs/HARDWARE.md`](docs/HARDWARE.md) | 전력·부품 |
+| [`docs/BOARDS.md`](docs/BOARDS.md) | 지원 보드, 펌웨어 설치, 새 보드 추가 체크리스트 |
+| [`docs/boards/promicro.md`](docs/boards/promicro.md) | 핀맵·조립·플래싱 (Pro Micro / ATmega32u4) |
+| [`docs/boards/promicro-rp2040.md`](docs/boards/promicro-rp2040.md) | 핀맵·조립·플래싱 (ProMicro RP2040) |
+| [`docs/HARDWARE.md`](docs/HARDWARE.md) | 전력·부품 (보드 공통) |
 | [`docs/PROTOCOL.md`](docs/PROTOCOL.md) | 시리얼 프로토콜 |
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | 내부 설계 |
 

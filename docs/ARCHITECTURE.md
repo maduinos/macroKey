@@ -35,12 +35,27 @@
 │ L2  HAL   ButtonInput(핀) · HidBackend(HID) · Storage(EEPROM) │
 └───────────────────────────┬──────────────────────────────────┘
 ┌───────────────────────────▼──────────────────────────────────┐
-│ L1  하드웨어   버튼 8 · WS2812B 1 · ATmega32u4 native USB     │
+│ L1  하드웨어   버튼 8 · WS2812B 1 · 보드 native USB            │
 └──────────────────────────────────────────────────────────────┘
 ```
 
 각 계층은 아래 계층만 압니다. `KeyEngine`은 시리얼을 모르고, `LedController`는 버튼을 모르며,
 호스트 앱은 어떤 핀에 무엇이 붙었는지 모릅니다.
+
+### 2.1 보드 축
+
+계층과 직교하는 축이 하나 더 있습니다. **어떤 보드인가**입니다. 보드가 바뀌면 달라지는 것은
+핀, 저장소의 크기와 종류, 이름, 부트로더 넷뿐이고 나머지는 전부 같습니다. 그 넷은 양쪽에서
+각각 한 곳에 모여 있습니다.
+
+| | 한 곳 | 그로부터 파생되는 것 |
+| --- | --- | --- |
+| 펌웨어 | `firmware/src/boards/<board>.h` | 핀·EEPROM 크기·카운트 폭·스키마·슬롯 상한·부트로더 진입. `boards/board.h`가 고르고, 빠진 심볼을 `#error`로 잡습니다 |
+| 호스트 | `macrokey/boards.py` | 프로필 레이아웃(`config/binary.py`), USB 인식(`device/discovery.py`), 펌웨어 이미지와 플래싱 방법(`flash/`), 그리고 테스트 |
+
+`boards/` 바깥의 펌웨어 코드는 아키텍처 매크로를 직접 보지 않습니다. 호스트 쪽에서 보드를
+나열하는 곳도 `boards.py` 하나뿐입니다. 새 보드는 [BOARDS.md](BOARDS.md)의 체크리스트대로
+파일 셋(레지스트리·헤더·문서)을 더하면 되고, 하나라도 빠지면 테스트가 실패합니다.
 
 ## 3. 8개 버튼을 96개 슬롯으로 — 입력 모델
 
@@ -267,13 +282,25 @@ evdev/pynput 리스너 → RawEvent 스트림 → 정규화된 스텝 → 슬롯
 
 ```
 macrokey/
-├── config/      profile 모델 · 저장소 · 스키마 마이그레이션
+├── boards.py    지원 보드 레지스트리 — 아래 전부가 여기서 파생됨
+├── config/      profile 모델 · 저장소 · 스키마 마이그레이션 · 보드별 레이아웃
 ├── device/      시리얼 transport · 프로토콜 코덱 · 포트 탐색 · 자동 재연결
+├── flash/       보드 인식 → 부트로더 진입 → 펌웨어 쓰기
+│   ├── attached.py  무엇이 꽂혀 있고 어떤 상태인가
+│   ├── images.py    번들된 펌웨어 이미지 찾기
+│   ├── uf2.py       부트로더가 USB 드라이브인 보드 (파일 복사)
+│   ├── avr109.py    부트로더가 시리얼인 보드 (avrdude 없이 직접)
+│   └── service.py   위를 엮는 순서
 ├── session.py   홀드 녹음 상태머신
 ├── capture_setup.py  Wayland input 권한 첫 실행 설정
 ├── recorder/    입력 캡처 · 정규화 · 장치 매크로 컴파일
 └── ui/          PySide6 화면 (얇게 유지, 교체 가능)
 ```
+
+`flash/`가 외부 도구를 부르지 않는 것은 의도입니다. 플래싱이 필요한 상황은 대개 패드가
+말을 안 하는 상황이고, 그때 arduino-cli나 avrdude를 설치하라고 하는 것은 답이 아닙니다.
+UF2 보드는 파일 복사, AVR109 보드는 pyserial 위의 작은 프로토콜이라 둘 다 네이티브
+의존성이 없습니다.
 
 핵심 규칙은 **`ui/`를 제외한 어느 계층도 UI 툴킷을 import 하지 않는다**입니다.
 헤드리스 CLI·테스트는 이 규칙 덕분에 됩니다.
@@ -290,7 +317,7 @@ PySide6 · pyserial · pynput · evdev는 **배포 번들(PyInstaller)** 에 포
 | 새 장치 액션 | `ActionTypes.h` + `KeyEngine` dispatch |
 | 새 LED 효과 | `LedEffects` 함수 + 테이블 |
 | 키/LED 개수 | `Config.h`와 호스트 `KEY_COUNT`/`LED_COUNT`를 같이. 키가 8개를 넘으면 `mk_keymask_t`도 함께 넓혀야 하고, 안 넓히면 `Config.h`의 `static_assert`가 빌드를 세웁니다 |
-| 다른 보드 | `Config.h` 핀 맵. EEPROM이 플래시 에뮬레이션이면 `MK_STORAGE_FLASH_EMULATED 1`, 부트로더 진입은 `SerialProtocol.cpp`의 arch 분기 |
+| 다른 보드 | `macrokey/boards.py`에 `Board` 하나, `firmware/src/boards/`에 헤더 하나, `docs/boards/`에 문서 하나. 그 외에는 아무것도 — 자세한 절차와 검사 항목은 [BOARDS.md](BOARDS.md) |
 
 ## 10. 의도적으로 하지 않은 것
 

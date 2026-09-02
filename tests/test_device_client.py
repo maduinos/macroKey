@@ -13,6 +13,7 @@ import time
 
 import pytest
 
+from macrokey.boards import PROMICRO_RP2040
 from macrokey.config import binary, default_profile
 from macrokey.config.model import KEY_COUNT, LED_COUNT
 from macrokey.device import protocol
@@ -323,14 +324,14 @@ def test_connect_rejects_a_protocol_it_does_not_speak(monkeypatch) -> None:
 
 
 def test_connect_accepts_the_rp2040_large_profile(monkeypatch) -> None:
-    fake = FakeSerial(profile_size=binary.RP2040_PROFILE_SIZE)
+    fake = FakeSerial(profile_size=PROMICRO_RP2040.profile_size)
     monkeypatch.setattr("macrokey.device.client.serial.Serial", lambda *a, **k: fake)
     monkeypatch.setattr("macrokey.device.client.OPEN_SETTLE_SECONDS", 0.0)
     device = DeviceClient()
     device.connect("/dev/fake")
 
     assert device.hello is not None
-    assert device.hello.profile_bytes == binary.RP2040_PROFILE_SIZE
+    assert device.hello.profile_bytes == PROMICRO_RP2040.profile_size
     device.disconnect()
 
 
@@ -420,10 +421,10 @@ def test_a_framed_profile_dump_round_trips(client) -> None:
 def test_a_large_rp2040_profile_dump_round_trips(client) -> None:
     device, fake = client
     device.hello = protocol.Hello(
-        1, "test", "promicro-rp2040", KEY_COUNT, LED_COUNT, binary.RP2040_PROFILE_SIZE
+        1, "test", "promicro-rp2040", KEY_COUNT, LED_COUNT, PROMICRO_RP2040.profile_size
     )
     blob = binary.encode_profile(
-        default_profile(), profile_size=binary.RP2040_PROFILE_SIZE
+        default_profile(), profile_size=PROMICRO_RP2040.profile_size
     )
     _answer_next_write(fake, _profile_lines(blob))
 

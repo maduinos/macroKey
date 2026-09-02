@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import pytest
 
+from macrokey.boards import PROMICRO_RP2040
 from macrokey.config import binary
 from macrokey.config.model import (
     DEFAULT_RESTING_COLOR,
@@ -204,7 +205,7 @@ def test_rp2040_large_profile_round_trips_without_changing_avr_layout() -> None:
     profile = default_profile()
     profile.device_macros = _fill(4000)
 
-    blob = binary.encode_profile(profile, profile_size=binary.RP2040_PROFILE_SIZE)
+    blob = binary.encode_profile(profile, profile_size=PROMICRO_RP2040.profile_size)
     restored = binary.decode_profile(blob)
 
     assert len(blob) == 65520
