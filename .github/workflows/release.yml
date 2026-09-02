@@ -63,6 +63,8 @@ jobs:
           python-version: "3.12"
       - name: arduino-cli 설치
         run: |
+          # 설치 스크립트는 BINDIR을 만들어 주지 않고, 없으면 거부한다.
+          mkdir -p "$HOME/.local/bin"
           curl -fsSL https://raw.githubusercontent.com/arduino/arduino-cli/master/install.sh \
             | BINDIR="$HOME/.local/bin" sh
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
