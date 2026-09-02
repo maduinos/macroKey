@@ -59,7 +59,7 @@ for board in BOARDS:
     if wanted and board.id not in wanted:
         continue
     print("\t".join([
-        board.id, board.fqbn, board.core, board.core_url,
+        board.id, board.fqbn, "\x1f".join(board.cores), board.core_url,
         board.build_artifact, board.firmware_name,
         "\x1f".join(board.libraries),
     ]))
@@ -73,7 +73,7 @@ mapfile -t BOARD_ROWS < <(board_table "$@")
 mkdir -p "$OUT_DIR" "$WORK_DIR"
 
 for row in "${BOARD_ROWS[@]}"; do
-  IFS=$'\t' read -r board_id fqbn core core_url artifact image libraries <<<"$row"
+  IFS=$'\t' read -r board_id fqbn cores core_url artifact image libraries <<<"$row"
   log "$board_id ($fqbn)"
 
   # Each board gets its own sketchbook. Not tidiness: ~/Arduino/libraries has a
@@ -88,7 +88,10 @@ for row in "${BOARD_ROWS[@]}"; do
     "$ARDUINO_CLI_BIN" config add board_manager.additional_urls "$core_url" >/dev/null 2>&1 || true
   fi
   "$ARDUINO_CLI_BIN" core update-index >/dev/null
-  "$ARDUINO_CLI_BIN" core install "$core" >/dev/null
+  IFS=$'\x1f' read -ra core_names <<<"$cores"
+  for core in "${core_names[@]}"; do
+    "$ARDUINO_CLI_BIN" core install "$core" >/dev/null
+  done
 
   if [[ -n "$libraries" ]]; then
     IFS=$'\x1f' read -ra names <<<"$libraries"
