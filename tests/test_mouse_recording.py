@@ -221,6 +221,39 @@ def test_pynput_click_flushes_the_move_that_led_to_it(recorder) -> None:
     assert recorder._events[0].data == (80, 0)
 
 
+def test_travel_over_the_recorder_window_is_still_travel(recorder) -> None:
+    """The click filter used to take the pointer samples out too, so whatever
+    part of a gesture crossed this window was deleted and the macro stopped
+    short by exactly that much. A diagonal drawn across the screen crosses a
+    window sitting in the middle of it nearly every time, which is why the
+    diagonal was the one that never arrived."""
+    from macrokey.recorder.events import MOUSE_MOVE
+
+    recorder._events.clear()
+    recorder.backend = "pynput"
+    # (100, 200)-(500, 500) is the ignored region; this line runs right through
+    # it, so three of the five samples land inside.
+    for point in [(50, 150), (150, 250), (250, 350), (350, 450), (600, 700)]:
+        recorder._on_move(*point)
+    recorder._flush_pynput_motion()
+    moves = [event for event in recorder._events if event.kind == MOUSE_MOVE]
+    assert sum(event.data[0] for event in moves) == 550
+    assert sum(event.data[1] for event in moves) == 550
+
+
+def test_a_click_on_the_recorder_window_still_is_not_part_of_the_macro(recorder) -> None:
+    """Keeping the travel must not bring the button back with it."""
+    from macrokey.recorder.events import MOUSE_MOVE
+
+    recorder._events.clear()
+    recorder.backend = "pynput"
+    recorder._on_move(50, 150)
+    recorder._on_move(300, 350)
+    recorder._on_click(300, 350, type("B", (), {"name": "left"}), True)
+    recorder._flush_pynput_motion()
+    assert [event.kind for event in recorder._events] == [MOUSE_MOVE]
+
+
 # ------------------------------------------------------- the self-echo blanket --
 
 
@@ -245,6 +278,75 @@ def test_pynput_still_needs_the_blanket() -> None:
     device.note_device_key()
     device._record(RawEvent(kind=KEY_DOWN, token="a", char="a", at=time.monotonic()))
     assert device._events == []
+
+
+def test_the_blanket_does_not_swallow_pointer_travel() -> None:
+    """A move is not one event: it is a slice of travel this recorder added up
+    itself, so blanking it threw away far more than the 150 ms being blanked --
+    a pad key arriving mid-drag deleted 200 counts of a 312-count gesture."""
+    from macrokey.recorder.events import MOUSE_MOVE
+
+    device = Recorder(capture_mouse=True)
+    device.backend = "pynput"
+    device.note_device_key()
+    device._record(
+        RawEvent(kind=MOUSE_MOVE, token="move", at=time.monotonic(), data=(200, 150))
+    )
+    assert [event.data for event in device._events] == [(200, 150)]
+
+
+def test_the_blanket_only_looks_forward() -> None:
+    """A slice that started *before* the pad event has a negative age, which
+    compared as "less than 150 ms" and was dropped along with the rest."""
+    now = time.monotonic()
+    device = Recorder()
+    device.backend = "pynput"
+    device.note_device_key()
+    device._record(RawEvent(kind=KEY_DOWN, token="a", char="a", at=now - 5.0))
+    assert [event.token for event in device._events] == ["a"]
+
+
+def test_a_keystroke_flushes_the_move_that_came_before_it() -> None:
+    """Recorded "move there, then type", the macro used to type first and move
+    afterwards -- into whatever had focus before the pointer was moved.
+
+    Flushed, but still noise-filtered: typing is not aimed at the pointer, so a
+    few counts of drift before it is a hand on the mouse rather than placement.
+    """
+    from macrokey.recorder.events import MOUSE_MOVE
+
+    device = Recorder(capture_mouse=True)
+    device.backend = "pynput"
+    device._on_move(0, 0)
+    device._on_move(200, 150)
+    device._on_press(pynput_keyboard.KeyCode.from_char("a"))
+    assert [event.kind for event in device._events] == [MOUSE_MOVE, KEY_DOWN]
+    assert device._events[0].data == (200, 150)
+
+
+def test_a_small_move_that_a_click_follows_is_a_placement_not_noise() -> None:
+    """The dead zone is for a hand resting on the mouse. A click is proof the
+    travel before it was meant, however small -- dropping it left the click a
+    few pixels from where it was made."""
+    from macrokey.recorder.events import MOUSE_CLICK, MOUSE_MOVE
+
+    device = Recorder(capture_mouse=True)
+    device.backend = "pynput"
+    device._on_move(500, 500)
+    device._on_move(504, 504)  # under MOTION_DEAD_ZONE on both axes
+    device._on_click(504, 504, type("B", (), {"name": "left"}), True)
+    assert [event.kind for event in device._events] == [MOUSE_MOVE, MOUSE_CLICK]
+    assert device._events[0].data == (4, 4)
+
+
+def test_a_small_move_that_nothing_follows_is_still_noise() -> None:
+    """...and the dead zone still does its job where it was meant to: at the
+    end, where nothing followed the movement to say it was deliberate."""
+    device = Recorder(capture_mouse=True)
+    device.backend = "pynput"
+    device._on_move(500, 500)
+    device._on_move(504, 504)
+    assert device.stop() == []
 
 
 def test_the_backend_is_named_before_capture_starts() -> None:

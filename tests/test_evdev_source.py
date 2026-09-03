@@ -231,3 +231,53 @@ def test_a_long_motion_keeps_timing_slices_for_pointer_acceleration(monkeypatch)
 
     assert [event.data for event in got] == [(40, 0), (20, 0)]
     assert got[1].at - got[0].at >= 0.05
+
+
+def test_a_small_move_a_click_follows_is_a_placement_not_noise() -> None:
+    """The dead zone is for a hand resting on the mouse, and the rest timeout is
+    where that is decided. Applying it to the flush a button triggers dropped a
+    deliberate nudge instead, leaving the click a few counts from where it was
+    made -- the same complaint as a move that stops short."""
+    from evdev import ecodes
+
+    from macrokey.recorder.events import MOUSE_CLICK, MOUSE_MOVE
+
+    source, got = _source()
+    source._handle(_fake(ecodes.EV_REL, ecodes.REL_X, 4))  # under the dead zone
+    source._handle(_fake(ecodes.EV_REL, ecodes.REL_Y, 4))
+    source._handle(_fake(ecodes.EV_SYN, ecodes.SYN_REPORT, 0))
+    source._handle(_fake(ecodes.EV_KEY, ecodes.BTN_LEFT, 1))
+
+    assert [event.kind for event in got] == [MOUSE_MOVE, MOUSE_CLICK]
+    assert got[0].data == (4, 4)
+
+
+def test_drift_before_a_keystroke_is_still_noise() -> None:
+    """Typing is not aimed at the pointer, so the exception above stops at the
+    mouse. Unfiltered here, every character typed with a hand resting on the
+    mouse would become a step of its own."""
+    from evdev import ecodes
+
+    from macrokey.recorder.events import KEY_DOWN
+
+    source, got = _source()
+    source._handle(_fake(ecodes.EV_REL, ecodes.REL_X, 3))
+    source._handle(_fake(ecodes.EV_SYN, ecodes.SYN_REPORT, 0))
+    source._handle(_fake(ecodes.EV_KEY, ecodes.KEY_A, 1))
+
+    assert [event.kind for event in got] == [KEY_DOWN]
+
+
+def test_a_real_move_before_a_keystroke_keeps_its_place() -> None:
+    """Filtered is not the same as unordered: movement worth keeping still has
+    to come out before the key it happened before."""
+    from evdev import ecodes
+
+    from macrokey.recorder.events import KEY_DOWN, MOUSE_MOVE
+
+    source, got = _source()
+    source._handle(_fake(ecodes.EV_REL, ecodes.REL_X, 90))
+    source._handle(_fake(ecodes.EV_SYN, ecodes.SYN_REPORT, 0))
+    source._handle(_fake(ecodes.EV_KEY, ecodes.KEY_A, 1))
+
+    assert [event.kind for event in got] == [MOUSE_MOVE, KEY_DOWN]

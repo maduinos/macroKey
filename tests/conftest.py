@@ -20,6 +20,13 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 _CONFIG_DIR = tempfile.mkdtemp(prefix="macrokey-tests-")
 os.environ["MACROKEY_CONFIG_DIR"] = _CONFIG_DIR
 
+# No test reaches the internet. The update checks run from a startup timer and
+# from every successful connect, so without this a suite run on a machine with
+# a keypad attached would ask GitHub about it -- and a suite run without one
+# would depend on the network to pass. The tests that cover updating stub the
+# release layer directly and lift this for themselves.
+os.environ["MACROKEY_NO_UPDATE"] = "1"
+
 import pytest  # noqa: E402
 
 

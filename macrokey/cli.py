@@ -55,6 +55,23 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("boards", help="list the boards this build supports")
 
+    update = sub.add_parser(
+        "update", help="update the keypad firmware and the app from GitHub releases"
+    )
+    update.add_argument(
+        "--check", action="store_true", help="report what is available and change nothing"
+    )
+    update.add_argument(
+        "--firmware", action="store_true", help="the keypad only, not the app"
+    )
+    update.add_argument("--app", action="store_true", help="the app only, not the keypad")
+    update.add_argument(
+        "--offline",
+        action="store_true",
+        help="use the image inside this build; never reach the network",
+    )
+    update.add_argument("--yes", "-y", action="store_true", help="do not ask before writing")
+
     record = sub.add_parser("record", help="record input and bind it to a key")
     record.add_argument("--key", type=int, required=True, choices=range(1, KEY_COUNT + 1))
     # Not GESTURES: hold is how recording starts on the pad itself, so nothing
@@ -77,6 +94,7 @@ def main(argv: list[str] | None = None) -> int:
     command = args.command or "gui"
     handler = {
         "gui": cmd_gui,
+        "update": cmd_update,
         "ports": cmd_ports,
         "boards": cmd_boards,
         "flash": cmd_flash,
@@ -202,6 +220,130 @@ def cmd_flash(args: argparse.Namespace) -> int:
             "Unplug and plug it back in, then run `macrokey ports`."
         )
     return 0
+
+
+
+def _confirm(question: str, *, assume_yes: bool) -> bool:
+    if assume_yes:
+        return True
+    try:
+        return input(f"{question} [y/N] ").strip().lower() in ("y", "yes")
+    except EOFError:
+        return False
+
+
+def _update_firmware(args: argparse.Namespace) -> int:
+    """Brings the attached pad level with the newest firmware available.
+
+    The keypad has to be let go of first. Flashing resets the board through the
+    same serial port this app is holding open, so an update that ran while
+    connected would be asking the port to reboot out from under itself.
+    """
+    from .boards import board_by_id
+    from .flash import FlashError, flash
+    from .update import UpdateError, firmware
+
+    app = MacroKeyApp(status=print)
+    try:
+        hello = app.device.connect(args.port)
+        running, board_id = hello.firmware, hello.board
+    except DeviceError as exc:
+        print(f"no keypad to update: {exc}", file=sys.stderr)
+        return 2
+    finally:
+        app.close()
+
+    board = board_by_id(board_id)
+    if board is None:
+        print(f"unknown board {board_id!r}", file=sys.stderr)
+        return 2
+
+    try:
+        candidate = firmware.best(
+            board, running, allow_network=not args.offline, status=print
+        )
+    except UpdateError as exc:
+        print(f"could not look for firmware: {exc}", file=sys.stderr)
+        return 2
+    if candidate is None:
+        print(f"firmware {running} on {board.display_name} is current")
+        return 0
+
+    where = "downloaded" if candidate.downloaded else "bundled"
+    print(f"firmware {running} -> {candidate.version} ({where}: {candidate.image})")
+    if args.check:
+        return 0
+    if not _confirm("write it to the keypad?", assume_yes=args.yes):
+        print("nothing was written")
+        return 1
+    try:
+        flash(board_id=board.id, image=candidate.image, status=print)
+    except FlashError as exc:
+        print(f"firmware update failed: {exc}", file=sys.stderr)
+        return 2
+    print(f"keypad is now on firmware {candidate.version}")
+    return 0
+
+
+def _update_app(args: argparse.Namespace) -> int:
+    from .update import UpdateError, selfupdate
+
+    usable, why = selfupdate.supported()
+    if not usable:
+        print(f"app update unavailable: {why}")
+        return 0
+    try:
+        release = selfupdate.check()
+    except UpdateError as exc:
+        print(f"could not check for an app update: {exc}", file=sys.stderr)
+        return 2
+    if release is None:
+        print(f"app v{__version__} is current")
+        return 0
+
+    print(f"app v{__version__} -> v{release.version} ({release.tag})")
+    if args.check:
+        return 0
+    if not _confirm("download and install it?", assume_yes=args.yes):
+        print("nothing was installed")
+        return 1
+    try:
+        path = selfupdate.apply(release, status=print)
+    except UpdateError as exc:
+        print(f"app update failed: {exc}", file=sys.stderr)
+        return 2
+    print(f"installed v{release.version} at {path} -- restart to use it")
+    return 0
+
+
+def cmd_update(args: argparse.Namespace) -> int:
+    """Firmware, app, or both. Both is the default, and both report separately.
+
+    One failing does not skip the other: a pad that is not plugged in is no
+    reason to leave the app a release behind, and an update server having a bad
+    day is no reason to leave the keypad on firmware the editor no longer
+    agrees with.
+    """
+    from .update import releases
+
+    if not releases.enabled() and not args.offline:
+        print("updates are switched off (MACROKEY_NO_UPDATE)", file=sys.stderr)
+        return 2
+
+    both = not args.firmware and not args.app
+    codes = []
+    if both or args.firmware:
+        codes.append(_update_firmware(args))
+    if both or args.app:
+        if args.offline:
+            # Only said when it was asked for by name. `--offline` on its own
+            # means "the keypad, from what is already here", and announcing a
+            # skip nobody asked for would read as a failure.
+            if args.app:
+                print("--offline cannot update the app: it has to be downloaded")
+        else:
+            codes.append(_update_app(args))
+    return max(codes) if codes else 0
 
 
 def cmd_info(args: argparse.Namespace) -> int:

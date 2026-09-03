@@ -490,6 +490,41 @@ KO: dict[str, str] = {
     "{hint} Key {key} ({gesture}) is unchanged.": (
         "{hint} 키 {key}({gesture})은(는) 그대로입니다."
     ),
+    # -- updates -------------------------------------------------------------
+    "Check for updates": "업데이트 확인",
+    "Update the app automatically": "앱 자동 업데이트",
+    "Update keypad firmware automatically": "키패드 펌웨어 자동 업데이트",
+    "Connect the keypad to check its firmware": (
+        "펌웨어를 확인하려면 키패드를 연결하세요"
+    ),
+    "No app update from here: {detail}": "여기서는 앱을 업데이트할 수 없습니다: {detail}",
+    "Could not update the app: {detail}": "앱을 업데이트하지 못했습니다: {detail}",
+    "macroKey v{version} is the newest release": (
+        "macroKey v{version}이(가) 최신 릴리스입니다"
+    ),
+    "macroKey v{version} installed - restart to use it": (
+        "macroKey v{version}을(를) 설치했습니다 - 다시 실행하면 적용됩니다"
+    ),
+    "Update installed": "업데이트 설치됨",
+    "macroKey v{version} has been downloaded and installed.\n\n"
+    "Close and reopen the app to start using it. The keypad keeps "
+    "working as a keyboard either way.": (
+        "macroKey v{version}을(를) 내려받아 설치했습니다.\n\n"
+        "앱을 닫았다 다시 열면 새 버전으로 실행됩니다. 그 사이에도 키패드는 "
+        "키보드로 계속 동작합니다."
+    ),
+    "Updating keypad firmware {old} to {new}": (
+        "키패드 펌웨어를 {old}에서 {new}(으)로 업데이트하는 중"
+    ),
+    "Firmware update failed": "펌웨어 업데이트 실패",
+    "Keypad firmware updated to {version}": "키패드 펌웨어를 {version}(으)로 업데이트했습니다",
+    "Keypad firmware was already current": "키패드 펌웨어는 이미 최신이었습니다",
+    "Update the keypad?": "키패드를 업데이트할까요?",
+    "The keypad is running firmware {old}; this app has {new}.\n\n"
+    "Update it now? It takes a few seconds and the keypad restarts.": (
+        "키패드는 펌웨어 {old}을(를) 실행 중이고 이 앱에는 {new}이(가) 있습니다.\n\n"
+        "지금 업데이트할까요? 몇 초 걸리고 키패드가 다시 시작됩니다."
+    ),
 }
 
 #: Every language the UI can be set to, by code. English is absent on purpose:

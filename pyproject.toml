@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "macrokey"
-version = "0.11.1"
+version = "0.12.0"
 description = "Config app for the Maduinos macroKey keypad (GUI; ship via ./build_release.sh)"
 readme = "README.md"
 requires-python = ">=3.10"

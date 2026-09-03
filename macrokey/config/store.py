@@ -127,6 +127,14 @@ class Settings:
     #: on someone's desktop, so a no stays no -- Help > Mouse macro accuracy
     #: asks again for anyone who changes their mind.
     pointer_accel_declined: bool = False
+    #: Keep the app current: check the project's releases at startup and, when
+    #: there is a newer one, download and stage it (a restart applies it).
+    #: `MACROKEY_NO_UPDATE=1` overrules this for a whole machine.
+    auto_update_app: bool = True
+    #: Bring the keypad up to the firmware this app ships whenever it is behind.
+    #: The two versions have to agree about the profile layout, so a pad left on
+    #: old firmware is the thing that silently stops matching the editor.
+    auto_update_firmware: bool = True
     #: Board id of the pad last connected to, from `macrokey.boards`.
     #:
     #: Storage is a board property, and the profile file records nothing about
@@ -176,6 +184,8 @@ class Settings:
             "recorder_anchor_mouse",
             "capture_setup_declined",
             "pointer_accel_declined",
+            "auto_update_app",
+            "auto_update_firmware",
         ):
             value = data.get(field)
             if isinstance(value, bool):
