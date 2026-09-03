@@ -17,7 +17,6 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 
 import macrokey.ui.app as app_module  # noqa: E402
 from macrokey.boards import DEFAULT_BOARD  # noqa: E402
-from macrokey.flash.images import find_image, image_version  # noqa: E402
 from macrokey.ui.app import MainWindow  # noqa: E402
 
 
@@ -75,25 +74,29 @@ def test_turning_automatic_firmware_updates_off_sticks(window) -> None:
     window._auto_update_firmware_toggled(True)
 
 
-def test_a_pad_that_is_current_is_not_offered_anything(window, monkeypatch) -> None:
+def test_a_pad_that_is_current_is_not_offered_anything(
+    window, bundled_firmware_image
+) -> None:
     found = collect(window.firmwareUpdateFound)
-    running = image_version(find_image(DEFAULT_BOARD))
-    assert running is not None
-    window._check_firmware_update(hello(running))
+    window._check_firmware_update(hello(bundled_firmware_image))
     assert found == []
 
 
-def test_a_pad_that_is_behind_is_offered_the_bundled_image(window, monkeypatch) -> None:
+def test_a_pad_that_is_behind_is_offered_the_bundled_image(
+    window, bundled_firmware_image
+) -> None:
     found = collect(window.firmwareUpdateFound)
     window._firmware_checked.clear()
     window._check_firmware_update(hello("0.0.1"))
     assert len(found) == 1
     board_id, running, version = found[0]
     assert board_id == DEFAULT_BOARD.id and running == "0.0.1"
-    assert version == image_version(find_image(DEFAULT_BOARD))
+    assert version == bundled_firmware_image
 
 
-def test_the_same_version_is_only_looked_at_once_a_session(window, monkeypatch) -> None:
+def test_the_same_version_is_only_looked_at_once_a_session(
+    window, bundled_firmware_image
+) -> None:
     """Reconnects happen on a timer; a flapping cable must not ask repeatedly."""
     found = collect(window.firmwareUpdateFound)
     window._firmware_checked.clear()
@@ -102,7 +105,9 @@ def test_the_same_version_is_only_looked_at_once_a_session(window, monkeypatch) 
     assert len(found) == 1
 
 
-def test_nothing_is_checked_while_the_setting_is_off(window, monkeypatch) -> None:
+def test_nothing_is_checked_while_the_setting_is_off(
+    window, bundled_firmware_image
+) -> None:
     found = collect(window.firmwareUpdateFound)
     window.app.settings.auto_update_firmware = False
     window._firmware_checked.clear()

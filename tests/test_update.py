@@ -131,10 +131,9 @@ def test_checksums_are_read_from_the_release_own_file(tmp_path) -> None:
 # ------------------------------------------------------------------ firmware --
 
 
-def test_the_version_is_read_out_of_the_image_itself() -> None:
+def test_the_version_is_read_out_of_the_image_itself(bundled_firmware_image) -> None:
     """No manifest, no filename: the string the pad will report is in the image."""
-    image = find_image(DEFAULT_BOARD)
-    assert image_version(image) is not None
+    assert image_version(find_image(DEFAULT_BOARD)) == bundled_firmware_image
 
 
 def test_an_image_with_no_version_string_is_never_offered(tmp_path) -> None:
@@ -147,23 +146,24 @@ def test_an_image_with_no_version_string_is_never_offered(tmp_path) -> None:
     assert candidate.newer_than("0.0.1") is False
 
 
-def test_a_pad_already_on_the_bundled_version_is_left_alone() -> None:
-    image = find_image(DEFAULT_BOARD)
-    running = image_version(image)
-    assert running is not None
-    assert firmware.best(DEFAULT_BOARD, running, allow_network=False) is None
+def test_a_pad_already_on_the_bundled_version_is_left_alone(bundled_firmware_image) -> None:
+    assert firmware.best(DEFAULT_BOARD, bundled_firmware_image, allow_network=False) is None
 
 
-def test_a_pad_behind_the_bundled_version_gets_it_without_the_network() -> None:
+def test_a_pad_behind_the_bundled_version_gets_it_without_the_network(
+    bundled_firmware_image,
+) -> None:
     """The ordinary update needs no internet at all, which is the whole point
     of shipping the images inside the app."""
-    image = find_image(DEFAULT_BOARD)
     candidate = firmware.best(DEFAULT_BOARD, "0.0.1", allow_network=False)
     assert candidate is not None
-    assert candidate.image == image and candidate.downloaded is False
+    assert candidate.image == find_image(DEFAULT_BOARD)
+    assert candidate.version == bundled_firmware_image and candidate.downloaded is False
 
 
-def test_the_network_is_not_consulted_when_the_bundled_image_is_enough(monkeypatch) -> None:
+def test_the_network_is_not_consulted_when_the_bundled_image_is_enough(
+    monkeypatch, bundled_firmware_image
+) -> None:
     def refuse() -> Release:
         raise AssertionError("the network was asked about an update already in hand")
 
@@ -172,7 +172,7 @@ def test_the_network_is_not_consulted_when_the_bundled_image_is_enough(monkeypat
 
 
 def test_a_published_image_is_used_when_it_is_newer_than_the_bundled_one(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, bundled_firmware_image
 ) -> None:
     """A release published after this app was installed. The version comes from
     the downloaded image, not from the release tag: firmware and app are two
@@ -183,14 +183,16 @@ def test_a_published_image_is_used_when_it_is_newer_than_the_bundled_one(
     release = publish(source, {DEFAULT_BOARD.firmware_name: payload})
     monkeypatch.setattr(releases, "latest_release", lambda: release)
     monkeypatch.setattr(firmware, "cache_dir", lambda: tmp_path / "cache")
-    candidate = firmware.best(DEFAULT_BOARD, "0.9.3")
+    # The pad is level with what this build carries, so only the network can
+    # have anything to add -- which is the case this covers.
+    candidate = firmware.best(DEFAULT_BOARD, bundled_firmware_image)
     assert candidate is not None
     assert candidate.downloaded is True
     assert candidate.version == "99.0.0"
 
 
 def test_nothing_is_downloaded_while_this_app_is_the_newest_release(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, bundled_firmware_image
 ) -> None:
     """The firmware follows the app. If this app is the newest release, the
     image it carries is the newest published one -- and the ordinary case, a pad
@@ -207,13 +209,12 @@ def test_nothing_is_downloaded_while_this_app_is_the_newest_release(
     monkeypatch.setattr(releases, "latest_release", lambda: release)
     monkeypatch.setattr(firmware, "cache_dir", lambda: tmp_path / "cache")
 
-    running = image_version(find_image(DEFAULT_BOARD))
-    assert firmware.best(DEFAULT_BOARD, running or "0.9.3") is None
+    assert firmware.best(DEFAULT_BOARD, bundled_firmware_image) is None
     assert not (tmp_path / "cache").exists(), "it went to the network anyway"
 
 
 def test_a_published_image_older_than_the_bundled_one_is_ignored(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, bundled_firmware_image
 ) -> None:
     source = tmp_path / "release"
     source.mkdir()
@@ -223,9 +224,12 @@ def test_a_published_image_older_than_the_bundled_one_is_ignored(
     monkeypatch.setattr(releases, "latest_release", lambda: release)
     monkeypatch.setattr(firmware, "cache_dir", lambda: tmp_path / "cache")
     assert firmware.best(DEFAULT_BOARD, "0.0.1") == firmware.bundled(DEFAULT_BOARD)
+    assert firmware.bundled(DEFAULT_BOARD).version == bundled_firmware_image
 
 
-def test_a_release_that_cannot_be_read_is_not_an_error(tmp_path, monkeypatch) -> None:
+def test_a_release_that_cannot_be_read_is_not_an_error(
+    tmp_path, monkeypatch, bundled_firmware_image
+) -> None:
     """Offering an update is optional; the app works with no network at all."""
 
     def fail() -> Release:
@@ -233,8 +237,7 @@ def test_a_release_that_cannot_be_read_is_not_an_error(tmp_path, monkeypatch) ->
 
     monkeypatch.setattr(releases, "latest_release", fail)
     monkeypatch.setattr(firmware, "cache_dir", lambda: tmp_path / "cache")
-    running = image_version(find_image(DEFAULT_BOARD))
-    assert firmware.best(DEFAULT_BOARD, running or "0.9.3") is None
+    assert firmware.best(DEFAULT_BOARD, bundled_firmware_image) is None
 
 
 def _hex_carrying(text: bytes) -> bytes:

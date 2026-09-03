@@ -66,3 +66,57 @@ def _config_is_a_scratch_directory():
         "directory -- they would edit a real config"
     )
     yield
+
+
+def hex_carrying(text: bytes) -> bytes:
+    """An Intel HEX file whose data records spell out `text`."""
+    lines = []
+    for offset in range(0, len(text), 16):
+        chunk = text[offset : offset + 16]
+        record = bytes([len(chunk), (offset >> 8) & 0xFF, offset & 0xFF, 0x00]) + chunk
+        lines.append(":" + record.hex().upper() + f"{(-sum(record)) & 0xFF:02X}")
+    lines.append(":00000001FF")
+    return ("\n".join(lines) + "\n").encode("ascii")
+
+
+def uf2_carrying(text: bytes) -> bytes:
+    """One UF2 block carrying `text` as its payload."""
+    header = (
+        b"UF2\n\x57\x51\x5d\x9e"
+        + (0).to_bytes(4, "little")            # flags
+        + (0).to_bytes(4, "little")            # target address
+        + len(text).to_bytes(4, "little")      # payload size
+        + (0).to_bytes(4, "little")            # block number
+        + (1).to_bytes(4, "little")            # total blocks
+        + (0).to_bytes(4, "little")            # family id
+    )
+    body = text.ljust(476, b"\x00")
+    return header + body + b"\x30\x6f\xb1\x0a"
+
+
+@pytest.fixture
+def bundled_firmware_image(tmp_path, monkeypatch):
+    """An image "inside this build", whatever the checkout happens to have.
+
+    `firmware/prebuilt/` is a build artifact and is not committed: CI builds it
+    in a job of its own and the test job never sees it. So a test that reads
+    "the image this app ships" passed on a machine with a stale local build
+    lying around and failed on a clean checkout -- which is CI, and which is
+    also every contributor's first run.
+
+    Synthesised here instead, with a version of its own, so those tests are
+    about the code rather than about what is on the disk. Returns the version
+    the fake images report.
+    """
+    from macrokey.boards import BOARDS
+    from macrokey.flash import images
+
+    version = "1.2.3"
+    directory = tmp_path / "prebuilt"
+    directory.mkdir()
+    for board in BOARDS:
+        text = f" fw={version} board={board.id} keys=".encode("ascii")
+        body = uf2_carrying(text) if board.firmware_suffix == ".uf2" else hex_carrying(text)
+        (directory / board.firmware_name).write_bytes(body)
+    monkeypatch.setattr(images, "search_paths", lambda: [directory])
+    return version
