@@ -14,7 +14,7 @@ import threading
 import time
 from collections.abc import Callable
 
-from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QActionGroup, QColor
 from PySide6.QtWidgets import (
     QApplication,
@@ -2316,7 +2316,20 @@ class MainWindow(QMainWindow):
 
         pynput can filter by coordinates; evdev cannot, so under the preferred
         backend this is best-effort only.
+
+        Only while this window is the active one, and that is the whole point.
+        A rectangle is not a window: recording is started from the pad and the
+        person then works in whatever application the macro is for, which is
+        usually maximised and therefore *over* this window. Every click that
+        happened to land inside these coordinates was thrown away even though
+        it went to the application in front -- so a macro recorded over a
+        maximised Excel came back with the pointer moving between cells and
+        never clicking one. Excel was in front, so this window was not active,
+        and that is exactly what tells the two cases apart.
         """
+        if not self.isActiveWindow():
+            self.app.recorder.ignore_click_region = None
+            return
         frame = self.frameGeometry()
         self.app.recorder.ignore_click_region = (
             frame.x(),
@@ -2334,6 +2347,13 @@ class MainWindow(QMainWindow):
         if self.session.recording:
             self._sync_ignored_region()
         super().resizeEvent(event)
+
+    def changeEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        # Focus moving to or from this window changes whose clicks these are,
+        # so the rectangle has to follow it and not only the geometry.
+        if event.type() == QEvent.Type.ActivationChange and self.session.recording:
+            self._sync_ignored_region()
+        super().changeEvent(event)
 
     def _show_capture(self, outcome) -> None:
         """Lists what the last recording actually caught.
