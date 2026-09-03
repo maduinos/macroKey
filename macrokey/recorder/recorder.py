@@ -91,9 +91,23 @@ class Recorder:
         #: rather than to the macro (pynput only -- it reports coordinates).
         #: Used so clicks on the editor while hold-to-record is running do not
         #: become steps. evdev has no pointer position, so it cannot filter this.
+        #: Buttons and the wheel only: pointer travel across this rectangle is
+        #: part of the gesture like any other travel, and taking it out left a
+        #: macro that stopped short of where the pointer had been taken.
         self.ignore_click_region: tuple[int, int, int, int] | None = None
         self._events: list[RawEvent] = []
         self._lock = threading.Lock()
+        #: Guards the pointer accumulators below. pynput runs the keyboard and
+        #: the mouse on *separate* listener threads, and both flush motion now
+        #: -- a keystroke ends the slice that preceded it. `pending += dx` is a
+        #: read-modify-write, so without this, typing while the pointer moves
+        #: could drop a delta or emit a slice half reset. Reentrant because
+        #: `_on_move` flushes at a slice boundary while holding it.
+        #:
+        #: Lock order where both are taken: this one, then `_lock`. Nothing
+        #: takes them the other way round -- `_record` touches the event list
+        #: and nothing else -- so there is no cycle to deadlock on.
+        self._motion_lock = threading.RLock()
         self._keyboard_listener = None
         self._mouse_listener = None
         self._evdev = None
@@ -254,7 +268,20 @@ class Recorder:
         # the pad's can arrive -- and leaving the blanket on meant every pad
         # event still threw away 150 ms of what was really being typed, which
         # is the recording losing exactly the keystrokes it was asked for.
-        if self.backend != "evdev" and event.at - self._last_device_key_at < SELF_INPUT_WINDOW:
+        #
+        # Discrete events only, and this is the whole of it. A pointer move is
+        # not one event: it is 50 ms of travel this recorder added up itself, so
+        # blanking it threw away far more than the window it was blanking -- a
+        # pad key arriving mid-drag deleted 200 counts of a 312-count gesture.
+        # An echo cannot arrive that way; a keystroke or a button can, and those
+        # are still covered. The lower bound is the other half of the same bug:
+        # a slice that *started* before the pad event has a negative age, which
+        # compared as "less than 150 ms" and was dropped as well.
+        if (
+            self.backend != "evdev"
+            and event.kind in (KEY_DOWN, KEY_UP, MOUSE_CLICK, MOUSE_RELEASE, SCROLL)
+            and 0.0 <= event.at - self._last_device_key_at < SELF_INPUT_WINDOW
+        ):
             return
         with self._lock:
             self._events.append(event)
@@ -265,8 +292,18 @@ class Recorder:
         token, char = _describe_key(key)
         if token is None:
             return
-        if self.stop_key is not None and token == self.stop_key:
-            self._flush_pynput_motion()
+        # A keystroke is a boundary the pointer's travel belongs *before*. evdev
+        # has always flushed here; pynput only did it for the stop key, so a
+        # recording of "move there, then type" came back with the move after the
+        # typing -- the macro typed into whatever had focus before the pointer
+        # was moved, and the pause between the two was measured from the wrong
+        # end.
+        #
+        # Noise-filtered, unlike a click: typing is not aimed at the pointer, so
+        # a few counts of drift before it is a hand resting on the mouse rather
+        # than a placement. Unfiltered, every character typed with a hand on the
+        # mouse became a step of its own.
+        self._flush_pynput_motion()
         self._record(RawEvent(kind=KEY_DOWN, token=token, char=char, at=time.monotonic()))
 
     def _on_release(self, key) -> None:
@@ -278,7 +315,10 @@ class Recorder:
     def _on_click(self, x: int, y: int, button, pressed: bool) -> None:
         if self._inside_ignored_region(x, y):
             return
-        self._flush_pynput_motion()
+        # Not filtered: a click is proof the travel before it was deliberate,
+        # however small. Dropping it left the click a few pixels from where it
+        # was made, which is the same complaint as a move that stops short.
+        self._flush_pynput_motion(filter_noise=False)
         name = getattr(button, "name", "left")
         # Both halves, so normalize can tell a click from the start of a drag.
         self._record(
@@ -300,7 +340,7 @@ class Recorder:
     def _on_scroll(self, x: int, y: int, dx: int, dy: int) -> None:
         if self._inside_ignored_region(x, y):
             return
-        self._flush_pynput_motion()
+        self._flush_pynput_motion(filter_noise=False)
         self._record(
             RawEvent(kind=SCROLL, token="scroll", at=time.monotonic(), data=(int(dx), int(dy)))
         )
@@ -311,38 +351,47 @@ class Recorder:
         Without this, Include mouse under the X11 fallback only kept clicks and
         the wheel, so a drag-and-drop recording came back as two clicks with the
         pointer never travelling between them.
+
+        `ignore_click_region` does not apply here, and used to. It is there so
+        that clicking this window while a recording runs does not become a step
+        -- but the *pointer* passing over the window is still the pointer
+        travelling, and dropping those samples deleted whichever part of the
+        gesture crossed it. The macro then stopped short by exactly that much.
+        A diagonal drawn across the screen crosses a window sitting in the
+        middle of it almost every time, which is why the diagonal was the one
+        that never arrived while an edge-hugging move was fine.
         """
-        if self._inside_ignored_region(x, y):
-            # Still track position so leaving the window does not invent a jump.
-            self._pynput_last_pos = (int(x), int(y))
-            return
         pos = (int(x), int(y))
-        if self._pynput_last_pos is None:
-            self._pynput_last_pos = pos
+        previous, self._pynput_last_pos = self._pynput_last_pos, pos
+        if previous is None:
             return
-        dx = pos[0] - self._pynput_last_pos[0]
-        dy = pos[1] - self._pynput_last_pos[1]
-        self._pynput_last_pos = pos
+        dx = pos[0] - previous[0]
+        dy = pos[1] - previous[1]
         if not dx and not dy:
             return
         now = time.monotonic()
-        if (
-            self._pynput_motion_started_at is not None
-            and now - self._pynput_motion_started_at >= MOTION_SLICE_SECONDS
-        ):
-            self._flush_pynput_motion(filter_noise=False)
-        if self._pynput_motion_started_at is None:
-            self._pynput_motion_started_at = now
-        self._pynput_pending_dx += dx
-        self._pynput_pending_dy += dy
+        with self._motion_lock:
+            if (
+                self._pynput_motion_started_at is not None
+                and now - self._pynput_motion_started_at >= MOTION_SLICE_SECONDS
+            ):
+                self._flush_pynput_motion(filter_noise=False)
+            if self._pynput_motion_started_at is None:
+                self._pynput_motion_started_at = now
+            self._pynput_pending_dx += dx
+            self._pynput_pending_dy += dy
 
     def _flush_pynput_motion(self, *, filter_noise: bool = True) -> None:
-        dx, dy = self._pynput_pending_dx, self._pynput_pending_dy
-        started_at = self._pynput_motion_started_at
+        # Held only over the read-and-reset. The event itself goes out after,
+        # so the common path takes one lock at a time; `_on_move` is the caller
+        # that holds this across `_record`, in the documented order.
+        with self._motion_lock:
+            dx, dy = self._pynput_pending_dx, self._pynput_pending_dy
+            started_at = self._pynput_motion_started_at
+            self._pynput_pending_dx = self._pynput_pending_dy = 0
+            self._pynput_motion_started_at = None
         if started_at is None:
             return
-        self._pynput_pending_dx = self._pynput_pending_dy = 0
-        self._pynput_motion_started_at = None
         if not dx and not dy:
             return
         if filter_noise and abs(dx) < MOTION_DEAD_ZONE and abs(dy) < MOTION_DEAD_ZONE:

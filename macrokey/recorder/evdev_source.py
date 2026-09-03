@@ -121,6 +121,19 @@ def available() -> tuple[bool, str]:
     return True, ""
 
 
+def _button_name(code: int) -> str | None:
+    """The mouse button this key code is, or None for a keyboard key.
+
+    `ecodes.BTN` answers with a tuple where one code has several names, so the
+    one this project knows has to be picked out of it rather than assumed to be
+    first.
+    """
+    name = ecodes.BTN.get(code)
+    if isinstance(name, (list, tuple)):
+        name = next((alias for alias in name if alias in _BUTTONS), name[0])
+    return name if isinstance(name, str) and name in _BUTTONS else None
+
+
 def _token_for(code: int) -> str | None:
     """evdev key code -> macroKey token, or None when it is not a key we bind."""
     name = ecodes.KEY.get(code) or ecodes.BTN.get(code)
@@ -271,13 +284,22 @@ class EvdevRecorder:
         # one-pixel steps instead of one move.
         if event.type not in (ecodes.EV_KEY, ecodes.EV_REL):
             return
-        self._flush_motion()
+        # A button or the wheel is aimed at wherever the pointer is, so the
+        # travel that put it there was deliberate however small: nudging the
+        # pointer four counts and clicking is a placement, not a resting hand,
+        # and filtering it put the click four counts from where it was made.
+        # A keystroke is not aimed at the pointer, so drift before one is still
+        # noise -- and unfiltered, every character typed with a hand on the
+        # mouse became a step of its own. The dead zone otherwise belongs to the
+        # rest timeout, the flush that actually means "nothing followed this".
+        aimed_at_the_pointer = (
+            event.type == ecodes.EV_REL or _button_name(event.code) is not None
+        )
+        self._flush_motion(filter_noise=not aimed_at_the_pointer)
 
         if event.type == ecodes.EV_KEY:
-            name = ecodes.BTN.get(event.code)
-            if isinstance(name, (list, tuple)):
-                name = next((alias for alias in name if alias in _BUTTONS), name[0])
-            if isinstance(name, str) and name in _BUTTONS:
+            name = _button_name(event.code)
+            if name is not None:
                 # Both halves. A press and a release with movement between them
                 # is a drag, and normalize needs to see the pair to tell that
                 # from a click -- folding the release away here is what made a

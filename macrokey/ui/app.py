@@ -84,6 +84,13 @@ PREVIEW_HOLD_MS = 45000
 RECONNECT_FIRST_SECONDS = 1.0
 RECONNECT_MAX_SECONDS = 30.0
 
+#: How long to wait before looking again for a window in which the keypad can
+#: be reflashed. Flashing takes the pad away for a few seconds, so it never
+#: interrupts a recording or a profile transfer -- and it has to come back and
+#: ask, because a cable that stays put never produces a second connect to
+#: notice it on.
+FIRMWARE_UPDATE_RETRY_MS = 2000
+
 log = logging.getLogger(__name__)
 
 
@@ -123,6 +130,13 @@ class MainWindow(QMainWindow):
     #: Firmware is on, so the pad can be connected to.
     flashSucceeded = Signal()
     recordingChanged = Signal()
+    #: A newer app release was found, downloaded and put in place: its version.
+    appUpdateReady = Signal(str)
+    #: The pad is behind: board id, the version it runs, the version on offer.
+    firmwareUpdateFound = Signal(str, str, str)
+    #: A firmware update finished: the version written, or empty if it turned
+    #: out there was nothing to write after all.
+    firmwareUpdateFinished = Signal(str)
     profileMismatch = Signal()
     profileAdopted = Signal(object)
     syncSucceeded = Signal(str)
@@ -147,8 +161,18 @@ class MainWindow(QMainWindow):
         #: them -- without this, declining the offer means being asked again a
         #: few seconds later, forever.
         self._flash_offered: set[str] = set()
+        #: `board id@firmware version` already looked at this session. The pad
+        #: is identified on every reconnect, and the answer cannot change while
+        #: it keeps reporting the same version -- so asking the network again on
+        #: each retry of a flapping cable would be all cost and no news.
+        self._firmware_checked: set[str] = set()
+        #: Set once a downloaded release is in place, so the restart notice is
+        #: shown once rather than on every later check.
+        self._app_update_staged = ""
         #: The open non-modal question, if any. Nothing owns it otherwise.
         self._open_question = None
+        #: Same, for a notice. Separate, so one cannot evict the other.
+        self._open_notice = None
         self._syncing = False
         self._resetting = False
         self._profile_prompt_open = False
@@ -224,6 +248,9 @@ class MainWindow(QMainWindow):
         self.flashOffer.connect(self._offer_flash)
         self.flashNeedsHelp.connect(self._flash_needs_help)
         self.flashSucceeded.connect(self._flash_succeeded)
+        self.appUpdateReady.connect(self._app_update_ready)
+        self.firmwareUpdateFound.connect(self._firmware_update_found)
+        self.firmwareUpdateFinished.connect(self._firmware_update_finished)
         self.profileMismatch.connect(self._resolve_profile_mismatch)
         self.profileAdopted.connect(self._adopt_profile)
         self.syncSucceeded.connect(self._finish_sync)
@@ -294,6 +321,10 @@ class MainWindow(QMainWindow):
         # After the capture prompt, and only for someone who already records
         # the mouse -- for a keyboard-only macro none of this matters.
         QTimer.singleShot(900, self._offer_flat_pointer_at_startup)
+        # Last, and quietly. Nothing here is on the path to using the keypad,
+        # and the check is a network round trip that must not be in front of a
+        # window someone is waiting for.
+        QTimer.singleShot(2500, self._start_update_checks)
 
     def _pin_minimum_width(self) -> None:
         """Keeps the window from being narrower than its toolbar.
@@ -333,10 +364,25 @@ class MainWindow(QMainWindow):
         setup_help = QAction(tr("Recording setup"), self)
         self._setup_help_action = setup_help
         setup_help.triggered.connect(lambda: self._retry_capture_setup())
+        check_updates = QAction(tr("Check for updates"), self)
+        check_updates.triggered.connect(lambda: self._check_updates_now())
+        auto_app = QAction(tr("Update the app automatically"), self)
+        auto_app.setCheckable(True)
+        auto_app.setChecked(bool(self.app.settings.auto_update_app))
+        auto_app.toggled.connect(self._auto_update_app_toggled)
+        auto_firmware = QAction(tr("Update keypad firmware automatically"), self)
+        auto_firmware.setCheckable(True)
+        auto_firmware.setChecked(bool(self.app.settings.auto_update_firmware))
+        auto_firmware.toggled.connect(self._auto_update_firmware_toggled)
+
         help_menu.addAction(mouse_help)
         help_menu.addAction(gesture_help)
         help_menu.addSeparator()
         help_menu.addAction(setup_help)
+        help_menu.addSeparator()
+        help_menu.addAction(check_updates)
+        help_menu.addAction(auto_app)
+        help_menu.addAction(auto_firmware)
         help_menu.addSeparator()
         help_menu.addMenu(self._build_language_menu())
 
@@ -364,6 +410,26 @@ class MainWindow(QMainWindow):
             menu.addAction(action)
         self._language_menu = menu
         return menu
+
+    def _auto_update_app_toggled(self, checked: bool) -> None:
+        self.app.settings.auto_update_app = checked
+        self.app.settings.save()
+
+    def _auto_update_firmware_toggled(self, checked: bool) -> None:
+        self.app.settings.auto_update_firmware = checked
+        self.app.settings.save()
+
+    def _check_updates_now(self) -> None:
+        """Help > Check for updates: both halves, and say so either way."""
+        self._check_app_update(asked_for=True)
+        # Asked for explicitly, so let it look again at a pad it has already
+        # cleared this session.
+        self._firmware_checked.clear()
+        hello = getattr(self.app.device, "hello", None)
+        if hello is None:
+            self.statusMessage.emit(tr("Connect the keypad to check its firmware"))
+            return
+        self._in_background(lambda: self._check_firmware_update(hello, asked_for=True))
 
     def _set_language(self, code: str) -> None:
         """Stores the choice and says when it takes effect.
@@ -1346,6 +1412,10 @@ class MainWindow(QMainWindow):
                     )
                 if not profiles_differ:
                     self.statusMessage.emit(tr("Connected"))
+                # Now that the pad has said which board and which firmware it
+                # is. Still on the worker thread, so a slow network delays
+                # nothing anyone is looking at.
+                self._check_firmware_update(hello)
             except DeviceError as exc:
                 # A board this app knows, that will not answer the protocol, is
                 # almost always a board with no macroKey firmware on it -- the
@@ -1552,6 +1622,247 @@ class MainWindow(QMainWindow):
         self._flash_offered.clear()
         self.statusMessage.emit(tr("Firmware installed"))
         self._toggle_connection(quiet=True)
+
+    # -------------------------------------------------------------- updates --
+    #
+    # Two updates, one rule: the firmware follows the app. The app carries an
+    # image for every board, so bringing a pad level needs no network at all --
+    # the network is what brings a newer *app*, and the firmware inside it comes
+    # with it. The two versions that have to agree about the profile layout then
+    # move together instead of separately.
+
+    def _start_update_checks(self) -> None:
+        """Startup: sweep away the last update, then look for the next one."""
+        from ..update import selfupdate
+
+        selfupdate.cleanup()
+        if self.app.settings.auto_update_app:
+            self._check_app_update()
+
+    def _check_app_update(self, *, asked_for: bool = False) -> None:
+        """Looks for a newer release and, when there is one, puts it in place.
+
+        `asked_for` distinguishes the menu item from the startup check: the
+        automatic one says nothing when there is nothing to say, because a
+        status bar that announces "up to date" on every launch is noise that
+        trains people to stop reading it.
+        """
+        from ..update import UpdateError, selfupdate
+
+        usable, why = selfupdate.supported()
+        if not usable:
+            if asked_for:
+                self.statusMessage.emit(
+                    tr("No app update from here: {detail}").format(detail=why)
+                )
+            return
+        if self._app_update_staged:
+            self.appUpdateReady.emit(self._app_update_staged)
+            return
+
+        def worker() -> None:
+            try:
+                release = selfupdate.check()
+                if release is None:
+                    if asked_for:
+                        self.statusMessage.emit(
+                            tr("macroKey v{version} is the newest release").format(
+                                version=__version__
+                            )
+                        )
+                    return
+                selfupdate.apply(release, status=self.statusMessage.emit)
+            except UpdateError as exc:
+                # Never a dialog. The app works perfectly without this.
+                log.info("app update: %s", exc)
+                if asked_for:
+                    self.statusMessage.emit(
+                        tr("Could not update the app: {detail}").format(detail=exc)
+                    )
+                return
+            except RuntimeError:
+                return  # window closed mid-download
+            self.appUpdateReady.emit(release.version)
+
+        self._in_background(worker)
+
+    def _app_update_ready(self, version: str) -> None:
+        """The new binary is in place; only a restart can start running it."""
+        if self._closing:
+            return
+        self._app_update_staged = version
+        self.statusMessage.emit(
+            tr("macroKey v{version} installed - restart to use it").format(version=version)
+        )
+        self._notify(
+            tr("Update installed"),
+            tr(
+                "macroKey v{version} has been downloaded and installed.\n\n"
+                "Close and reopen the app to start using it. The keypad keeps "
+                "working as a keyboard either way."
+            ).format(version=version),
+        )
+
+    def _check_firmware_update(self, hello, *, asked_for: bool = False) -> None:
+        """Is the pad behind? Runs on the connect worker, never on the GUI.
+
+        Asked once per board and firmware version per session. The pad is
+        identified again on every reconnect, and the answer cannot change while
+        it keeps reporting the same version -- so a flapping cable would
+        otherwise ask the network the same question every few seconds.
+        """
+        from ..boards import board_by_id
+        from ..update import UpdateError, firmware
+
+        if hello is None:
+            return
+        if not self.app.settings.auto_update_firmware and not asked_for:
+            return
+        board = board_by_id(getattr(hello, "board", "") or "")
+        running = getattr(hello, "firmware", "") or ""
+        if board is None or not running:
+            return
+        key = f"{board.id}@{running}"
+        if key in self._firmware_checked:
+            return
+        self._firmware_checked.add(key)
+        try:
+            candidate = firmware.best(board, running, status=self.statusMessage.emit)
+        except UpdateError as exc:
+            log.info("firmware update: %s", exc)
+            return
+        except Exception:  # noqa: BLE001 - a bad update check must not break connecting
+            log.exception("could not look for a firmware update")
+            return
+        if candidate is None or candidate.version is None:
+            return
+        self.firmwareUpdateFound.emit(board.id, running, candidate.version)
+
+    def _firmware_update_found(self, board_id: str, running: str, version: str) -> None:
+        """Writes it, unattended -- but never on top of something in progress.
+
+        Flashing takes the keypad away for a few seconds, so it waits for a
+        window that is not recording, syncing, or resetting, and looks again in
+        a moment rather than giving up. "Try again on the next connect" was not
+        a plan: a cable that stays put produces exactly one connect, and this
+        arrives *during* it -- the check runs on the connect worker, so
+        `_connecting` is still true when the answer is delivered. Dropping it
+        there meant the update never happened at all on a link that worked.
+        """
+        if self._closing:
+            return
+        if not self.app.device.connected:
+            # The pad went away while this was in flight. Forget it, so the
+            # connect that brings it back asks about it again.
+            self._firmware_checked.discard(f"{board_id}@{running}")
+            return
+        if (
+            self._flashing
+            or self._connecting
+            or self._syncing
+            or self._resetting
+            or self.session.recording
+            # A question on screen is waiting for an answer about this keypad --
+            # "which profile wins" above all. Taking the pad away underneath it
+            # would leave the answer to apply to a device that is not there.
+            or self._open_question is not None
+            or self._profile_prompt_open
+        ):
+            QTimer.singleShot(
+                FIRMWARE_UPDATE_RETRY_MS,
+                lambda: self._firmware_update_found(board_id, running, version),
+            )
+            return
+        if self.app.settings.auto_update_firmware:
+            self._update_firmware(board_id, running, version)
+            return
+        # Automatic updates are off, so this can only have come from Help >
+        # Check for updates. Found is not the same as wanted.
+        self._ask(
+            title=tr("Update the keypad?"),
+            text=tr(
+                "The keypad is running firmware {old}; this app has {new}.\n\n"
+                "Update it now? It takes a few seconds and the keypad restarts."
+            ).format(old=running, new=version),
+            buttons=QMessageBox.Yes | QMessageBox.No,
+            default=QMessageBox.Yes,
+            accepted=QMessageBox.Yes,
+            then=lambda: self._update_firmware(board_id, running, version),
+        )
+
+    def _update_firmware(self, board_id: str, running: str, version: str) -> None:
+        from ..flash import FlashError, NeedsManualBootloader
+        from ..update import firmware
+
+        self._flashing = True
+        self.statusMessage.emit(
+            tr("Updating keypad firmware {old} to {new}").format(old=running, new=version)
+        )
+        # The flasher reboots the board through the port this app is holding
+        # open, so let go of it first. `_reconnect_allowed` goes with it: the
+        # link is about to drop because we asked, not because a cable moved.
+        self._reconnect_allowed = False
+        self._reconnect_at = None
+        self.app.disconnect()
+        self._refresh_connection()
+
+        def worker() -> None:
+            installed = None
+            try:
+                installed = firmware.update(board_id, running, status=self.statusMessage.emit)
+            except NeedsManualBootloader as exc:
+                self.flashNeedsHelp.emit(board_id, exc.hint)
+                return
+            except FlashError as exc:
+                self.failed.emit(tr("Firmware update failed"), str(exc))
+                return
+            except RuntimeError:
+                return  # window closed mid-flash
+            finally:
+                self._flashing = False
+                try:
+                    self.connectionChanged.emit()
+                except RuntimeError:
+                    pass
+            # `update` decides again what to write, and can decide there is
+            # nothing -- the image went away, or a second look says the pad is
+            # current. The link still has to come back either way, but saying
+            # "installed" about a write that did not happen is a lie the status
+            # bar has no way to take back.
+            self.firmwareUpdateFinished.emit(installed or "")
+
+        self._in_background(worker)
+
+    def _firmware_update_finished(self, version: str) -> None:
+        if self._closing:
+            return
+        self._flash_offered.clear()
+        self.statusMessage.emit(
+            tr("Keypad firmware updated to {version}").format(version=version)
+            if version
+            else tr("Keypad firmware was already current")
+        )
+        self._toggle_connection(quiet=True)
+
+    def _notify(self, title: str, text: str) -> None:
+        """An information box that does not stop the event loop while it is up.
+
+        Same reason as `_ask`: this is raised by something that happened on its
+        own, and a modal loop entered from a background event stops everything
+        else the window was doing.
+        """
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Information)
+        box.setWindowTitle(title)
+        box.setText(text)
+        box.setStandardButtons(QMessageBox.Ok)
+        box.setAttribute(Qt.WA_DeleteOnClose)
+        box.finished.connect(lambda _result: setattr(self, "_open_notice", None))
+        # Its own handle rather than `_open_question`: that one is what keeps a
+        # *question* alive while it is on screen, and putting a notice in it
+        # would drop the question's only reference the moment one appeared.
+        self._open_notice = box
+        box.open()
 
     def _resolve_profile_mismatch(self) -> None:
         """Ask which profile wins when this computer and the pad disagree."""
