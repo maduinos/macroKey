@@ -306,24 +306,6 @@ def test_the_blanket_only_looks_forward() -> None:
     assert [event.token for event in device._events] == ["a"]
 
 
-def test_a_keystroke_flushes_the_move_that_came_before_it() -> None:
-    """Recorded "move there, then type", the macro used to type first and move
-    afterwards -- into whatever had focus before the pointer was moved.
-
-    Flushed, but still noise-filtered: typing is not aimed at the pointer, so a
-    few counts of drift before it is a hand on the mouse rather than placement.
-    """
-    from macrokey.recorder.events import MOUSE_MOVE
-
-    device = Recorder(capture_mouse=True)
-    device.backend = "pynput"
-    device._on_move(0, 0)
-    device._on_move(200, 150)
-    device._on_press(pynput_keyboard.KeyCode.from_char("a"))
-    assert [event.kind for event in device._events] == [MOUSE_MOVE, KEY_DOWN]
-    assert device._events[0].data == (200, 150)
-
-
 def test_a_small_move_that_a_click_follows_is_a_placement_not_noise() -> None:
     """The dead zone is for a hand resting on the mouse. A click is proof the
     travel before it was meant, however small -- dropping it left the click a
@@ -367,6 +349,25 @@ def test_the_backend_is_named_before_capture_starts() -> None:
 needs_pynput = pytest.mark.skipif(
     pynput_keyboard is None, reason="pynput is an optional extra and is not installed"
 )
+
+
+@needs_pynput
+def test_a_keystroke_flushes_the_move_that_came_before_it() -> None:
+    """Recorded "move there, then type", the macro used to type first and move
+    afterwards -- into whatever had focus before the pointer was moved.
+
+    Flushed, but still noise-filtered: typing is not aimed at the pointer, so a
+    few counts of drift before it is a hand on the mouse rather than placement.
+    """
+    from macrokey.recorder.events import MOUSE_MOVE
+
+    device = Recorder(capture_mouse=True)
+    device.backend = "pynput"
+    device._on_move(0, 0)
+    device._on_move(200, 150)
+    device._on_press(pynput_keyboard.KeyCode.from_char("a"))
+    assert [event.kind for event in device._events] == [MOUSE_MOVE, KEY_DOWN]
+    assert device._events[0].data == (200, 150)
 
 
 @needs_pynput
