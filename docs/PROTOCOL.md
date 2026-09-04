@@ -173,6 +173,7 @@ LOG lvl=<d|i|w|e> msg=<base64>
 | `SAVE` | 런타임 변경(밝기 등)을 영구 저장소에 반영 |
 | `RESET defaults=1` | 공장 초기화 |
 | `BOOT` | 부트로더 진입 (펌웨어 업데이트용). 진입 방법이 없는 빌드는 `ERR code=unsupported` |
+| `MOUSE home` | 포인터를 화면 좌상단으로 보냅니다. `Fixed screen` 녹화가 캡처 직전에 부릅니다 — 이후 모든 좌표를 그 모서리 기준으로 재므로 재생이 녹화한 자리에 떨어집니다. 부팅 유예 중이면 `ERR code=busy` |
 
 ## 5. 연결 수립 절차
 

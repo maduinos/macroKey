@@ -12,8 +12,8 @@ LED 동작 — 는 전부 공통입니다.
 
 | 보드 | id | 저장소 | 슬롯당 최대 | 첫 플래싱 | 문서 |
 | --- | --- | --- | --- | --- | --- |
-| **Pro Micro (ATmega32u4)** — 기본 | `promicro` | 1 KB EEPROM (308 레코드) | 255 | RST–GND 더블탭 | [promicro.md](boards/promicro.md) |
-| ProMicro RP2040 (16 MB) — 확장 | `promicro-rp2040` | 65,520 B LittleFS (21,801 레코드) | 21,800 | BOOTSEL | [promicro-rp2040.md](boards/promicro-rp2040.md) |
+| **Pro Micro (ATmega32u4)** — 기본 | `promicro` | 1 KB EEPROM (308 레코드) | 255 | 없음 (자동) | [promicro.md](boards/promicro.md) |
+| ProMicro RP2040 (16 MB) — 확장 | `promicro-rp2040` | 65,520 B LittleFS (21,801 레코드) | 21,800 | 첫 1회 BOOTSEL | [promicro-rp2040.md](boards/promicro-rp2040.md) |
 
 `id`는 펌웨어가 `HELLO board=`로 보고하는 이름이자, 펌웨어 이미지 파일 이름이자, 문서 파일
 이름입니다. 셋이 어긋날 수 없도록 하나의 문자열을 씁니다.
@@ -33,10 +33,16 @@ macrokey flash          # 확인을 받고 자동으로
 macrokey flash --yes    # 묻지 않고
 ```
 
-한 번만은 손이 필요합니다. **공장 초기 상태의 보드에 처음 굽는 순간**입니다. 빈 보드에는
-"부트로더로 가라"는 말을 들어줄 코드가 아직 없어서, 물리적으로 부트로더에 넣어야 합니다.
-그 동작은 보드마다 달라서 각 보드 문서에 적혀 있고, 앱도 그 문장을 그대로 띄웁니다.
-**두 번째 플래싱부터는 완전 자동입니다.**
+**손이 필요한지는 보드가 앱에게 말을 걸 수 있느냐로 갈립니다.** `enter_bootloader()`는
+이미 부트로더면 그대로 굽고, 시리얼 포트가 잡히면 1200 bps 터치로 부트로더에 넣습니다.
+둘 다 아닐 때만 `NeedsManualBootloader`를 던지고 보드의 `first_flash_hint`를 띄웁니다.
+
+- **Pro Micro는 공장 상태에서도 자동입니다.** 스케치가 없으면 Caterina가 부트로더에 그대로
+  앉아 있고, 스케치가 있으면 1200 bps 터치를 받아줍니다. `RST`–`GND` 더블탭은 첫 설치용이
+  아니라 USB가 죽은 펌웨어에서 빠져나오는 복구용입니다.
+- **ProMicro RP2040만 첫 1회 BOOTSEL이 필요합니다.** 공장 데모 UF2가 시리얼 포트를 열지
+  않아 터치를 부탁할 상대가 없고, 플래시가 비어 있지 않으니 자동으로 BOOTSEL에 들어가지도
+  않습니다. macroKey 펌웨어가 한 번 올라가면 그 뒤로는 자동입니다.
 
 소스에서 직접 빌드하려면 각 보드 문서의 `arduino-cli` 절을 보세요. 개발용이고, 쓰는 사람은
 필요 없습니다.
