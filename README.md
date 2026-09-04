@@ -1,3 +1,7 @@
+> 만든 사람: maduinos<br>
+> 문서 만든 날짜: 2022-03-20<br>
+> https://maduinos.blogspot.com/
+
 # macroKey
 
 8버튼 매크로 키패드. **패드는 앱 없이 USB 키보드/마우스로 동작**하고,

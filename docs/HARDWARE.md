@@ -1,3 +1,7 @@
+> 만든 사람: maduinos<br>
+> 문서 만든 날짜: 2026-08-03<br>
+> https://maduinos.blogspot.com/
+
 # macroKey 하드웨어
 
 보드와 무관한 설계입니다. **핀 맵, 배선, 플래싱은 보드마다 다르므로 각 보드 문서에**
