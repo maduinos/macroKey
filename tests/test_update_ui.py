@@ -30,6 +30,10 @@ def window(monkeypatch):
     # calls `exec()`, and offscreen nobody can answer it. The suite then hangs
     # in a test that has nothing to do with the one that armed it.
     monkeypatch.setattr(MainWindow, "_autoconnect", lambda _self: None)
+    # Same reason, same timing: both open a *modal* box -- `_maybe_fix_capture`
+    # asks whether to enable recording, and offscreen nobody can answer either.
+    monkeypatch.setattr(MainWindow, "_maybe_fix_capture", lambda _self, **_kw: None)
+    monkeypatch.setattr(MainWindow, "_offer_flat_pointer_at_startup", lambda _self: None)
     made = MainWindow()
     # A real keypad on the machine running the tests must not be touched, and
     # the window auto-connects to one at startup. Left alone, that connect is
