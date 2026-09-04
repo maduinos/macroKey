@@ -191,7 +191,14 @@ void KeyEngine::emitMove(int8_t dx, int8_t dy, uint16_t overMs) {
   // every 10 ms replayed a 50 ms slice over half a second that way -- the
   // pointer still landed in the right place, just far too slowly, so nothing
   // failed anywhere. Fewer, larger reports keep the duration honest.
-  uint16_t carried = overMs / (uint16_t)MK_HID_POLL_INTERVAL_MS;
+  //
+  // Paced at MK_MACRO_MOVE_PACE_NUM/DEN of that interval rather than at the
+  // interval itself, because the floor is not a budget. At exactly one report
+  // per frame the deadline is missed by any delay at all, and a stretched
+  // gesture lands short wherever pointer acceleration is on -- Config.h has
+  // the measurements.
+  uint32_t frames = (uint32_t)MK_HID_POLL_INTERVAL_MS * MK_MACRO_MOVE_PACE_NUM;
+  uint16_t carried = (uint16_t)(((uint32_t)overMs * MK_MACRO_MOVE_PACE_DEN) / frames);
   if (carried == 0) carried = 1;
   if (steps > carried) steps = carried;
 

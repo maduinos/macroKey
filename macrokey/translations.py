@@ -358,17 +358,44 @@ KO: dict[str, str] = {
         "포인터 가속이 이미 flat입니다. 마우스 매크로가 가장 정확하게 재생되는 설정입니다."
     ),
     "Your desktop scales pointer movement by how fast it is (acceleration "
-    "profile: {profile}).\n\nThe keypad replays a recorded movement at the "
-    "speed it was made, so this largely cancels out. Turning it off removes "
-    "the variable entirely and is what makes a mouse macro land exactly where "
-    "it was recorded.\n\nSwitch to flat pointer acceleration? It changes how "
-    "the mouse feels everywhere, not just in macros. To undo it later:\n\n"
+    "profile: {profile}).\n\nThe keypad replays a movement at the speed it "
+    "was recorded, which cancels most of that. It does not cancel all of it: a "
+    "fast movement replays at the limit of what USB carries, so any delay "
+    "stretches the gesture and the curve then multiplies it by less -- the "
+    "macro lands short. Turning acceleration off removes the variable "
+    "entirely.\n\nSwitch to flat pointer acceleration? It changes how the "
+    "mouse feels everywhere, not just in macros. To undo it later:\n\n"
     "{undo}": (
         "이 데스크톱은 포인터 이동 속도에 따라 이동 거리를 조절합니다 (가속 프로필: "
-        "{profile}).\n\n키패드는 녹화된 이동을 녹화 당시 속도로 재생하므로 이 효과는 대체로 "
-        "상쇄됩니다. 가속을 끄면 이 변수가 완전히 사라져서, 마우스 매크로가 녹화된 위치에 "
-        "정확히 떨어집니다.\n\n포인터 가속을 flat으로 바꿀까요? 매크로뿐 아니라 평소 마우스 "
-        "감각도 함께 바뀝니다. 나중에 되돌리려면:\n\n{undo}"
+        "{profile}).\n\n키패드는 녹화된 이동을 녹화 당시 속도로 재생하므로 이 효과가 대부분 "
+        "상쇄됩니다. 다만 전부는 아닙니다 — 빠른 이동은 USB가 실어나를 수 있는 한계 속도로 "
+        "재생되므로, 리포트가 조금만 늦어도 제스처가 늘어지고 가속 곡선은 그만큼 덜 곱합니다. "
+        "그러면 매크로가 짧게 떨어집니다. 가속을 끄면 이 변수가 완전히 사라집니다.\n\n"
+        "포인터 가속을 flat으로 바꿀까요? 매크로뿐 아니라 평소 마우스 감각도 함께 바뀝니다. "
+        "나중에 되돌리려면:\n\n{undo}"
+    ),
+    "The recording you just made moves the pointer faster than the keypad can "
+    "replay a count at a time, so this desktop's acceleration decides how far "
+    "it goes and the macro lands short of where you drew it.\n\n": (
+        "방금 녹화한 이동이 키패드가 한 카운트씩 재생할 수 있는 속도보다 빠릅니다. "
+        "그래서 이 데스크톱의 가속이 이동 거리를 결정하게 되고, 매크로가 그린 위치보다 "
+        "짧게 떨어집니다.\n\n"
+    ),
+    # -- about ----------------------------------------------------------------
+    "About macroKey": "macroKey 정보",
+    "Created by maduinos": "만든 곳: maduinos",
+    # -- what an update did ---------------------------------------------------
+    "What changed:": "바뀐 내용:",
+    "Keypad firmware updated": "키패드 펌웨어를 업데이트했습니다",
+    "an older version": "이전 버전",
+    "The keypad was running firmware {old} and this build carries {new}, so it "
+    "was written to the pad. Your macros were not touched.\n\nFirmware comes "
+    "with the app and follows it, so this happens whenever the app moves "
+    "ahead. What changed is in the app's release notes.": (
+        "키패드가 펌웨어 {old}을(를) 쓰고 있었고 이 빌드는 {new}을(를) 갖고 있어서 "
+        "패드에 새로 썼습니다. 매크로는 그대로입니다.\n\n펌웨어는 앱에 함께 들어 있고 "
+        "앱을 따라가므로, 앱이 올라갈 때마다 이 일이 일어납니다. 무엇이 바뀌었는지는 "
+        "앱 릴리스 노트에 있습니다."
     ),
     "Left pointer acceleration alone. Help > Mouse macro accuracy offers it "
     "again.": (
