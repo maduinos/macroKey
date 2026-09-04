@@ -118,7 +118,14 @@ KO: dict[str, str] = {
     "Fixed position is experimental. It homes to the top-left and depends on "
     "the same monitor layout, scaling, pointer speed/acceleration, window "
     "positions, and application state. Test fixed-position macros on a safe "
-    "target before assigning them to destructive actions.": (
+    "target before assigning them to destructive actions.\n\nClicking the "
+    "Windows taskbar is the trap worth naming. Windows 11 centres taskbar "
+    "icons by default, so every icon moves whenever the number of open apps "
+    "changes -- opening macroKey itself is enough to shift them. A macro aimed "
+    "at one then lands on its neighbour. Set Settings > Personalisation > "
+    "Taskbar > Taskbar behaviours > Taskbar alignment to Left and pin what you "
+    "aim at: pinned icons keep their place and new windows are added to their "
+    "right.": (
         "마우스 재생의 기본은 상대 방식입니다. 클릭은 현재 포인터 위치에서 일어나고 이동도 "
         "거기서 시작합니다. 이쪽이 믿을 만한 선택입니다.\n\n"
         "키패드는 녹화된 이동을 한 번에 점프시키지 않고 녹화에 걸린 시간에 맞춰 재생합니다. "
@@ -126,7 +133,13 @@ KO: dict[str, str] = {
         "flat으로 두면 이 변수가 아예 사라집니다 — macroKey가 이어서 그걸 제안합니다.\n\n"
         "위치 고정은 실험 기능입니다. 좌측 상단으로 포인터를 옮긴 뒤 동작하며, 모니터 배치·"
         "배율·포인터 속도/가속·창 위치·프로그램 상태가 모두 같아야 합니다. 되돌릴 수 없는 "
-        "동작에 붙이기 전에 안전한 대상에서 먼저 시험하세요."
+        "동작에 붙이기 전에 안전한 대상에서 먼저 시험하세요.\n\n"
+        "특히 짚어둘 함정은 Windows 작업 표시줄 클릭입니다. Windows 11은 작업 표시줄 "
+        "아이콘을 기본으로 가운데 정렬하므로, 열려 있는 앱 개수가 바뀔 때마다 아이콘이 "
+        "전부 움직입니다 — macroKey를 켜는 것만으로도 밀립니다. 그러면 한 아이콘을 "
+        "겨냥한 매크로가 옆 아이콘을 누릅니다. 설정 > 개인 설정 > 작업 표시줄 > 작업 "
+        "표시줄 동작 > 작업 표시줄 맞춤을 왼쪽으로 바꾸고 겨냥할 앱을 고정하세요. 고정된 "
+        "아이콘은 자리를 지키고 새 창은 그 오른쪽에 붙습니다."
     ),
     "Tap slot: hold a key by itself for 3 seconds.\n\n"
     "Double slot: tap, then press and hold the same key within 250 ms; keep "
@@ -361,25 +374,26 @@ KO: dict[str, str] = {
     "profile: {profile}).\n\nThe keypad replays a movement at the speed it "
     "was recorded, which cancels most of that. It does not cancel all of it: a "
     "fast movement replays at the limit of what USB carries, so any delay "
-    "stretches the gesture and the curve then multiplies it by less -- the "
-    "macro lands short. Turning acceleration off removes the variable "
-    "entirely.\n\nSwitch to flat pointer acceleration? It changes how the "
+    "stretches the gesture and the curve then multiplies it by less, which can "
+    "put the macro short of where you drew it. Turning acceleration off "
+    "removes the variable entirely.\n\nSwitch to flat pointer acceleration? "
+    "It changes how the "
     "mouse feels everywhere, not just in macros. To undo it later:\n\n"
     "{undo}": (
         "이 데스크톱은 포인터 이동 속도에 따라 이동 거리를 조절합니다 (가속 프로필: "
         "{profile}).\n\n키패드는 녹화된 이동을 녹화 당시 속도로 재생하므로 이 효과가 대부분 "
         "상쇄됩니다. 다만 전부는 아닙니다 — 빠른 이동은 USB가 실어나를 수 있는 한계 속도로 "
         "재생되므로, 리포트가 조금만 늦어도 제스처가 늘어지고 가속 곡선은 그만큼 덜 곱합니다. "
-        "그러면 매크로가 짧게 떨어집니다. 가속을 끄면 이 변수가 완전히 사라집니다.\n\n"
+        "그러면 매크로가 그린 곳보다 짧게 떨어질 수 있습니다. 가속을 끄면 이 변수가 "
+        "완전히 사라집니다.\n\n"
         "포인터 가속을 flat으로 바꿀까요? 매크로뿐 아니라 평소 마우스 감각도 함께 바뀝니다. "
         "나중에 되돌리려면:\n\n{undo}"
     ),
     "The recording you just made moves the pointer faster than the keypad can "
-    "replay a count at a time, so this desktop's acceleration decides how far "
-    "it goes and the macro lands short of where you drew it.\n\n": (
+    "replay a count at a time, so this desktop's acceleration has a say in how "
+    "far it goes.\n\n": (
         "방금 녹화한 이동이 키패드가 한 카운트씩 재생할 수 있는 속도보다 빠릅니다. "
-        "그래서 이 데스크톱의 가속이 이동 거리를 결정하게 되고, 매크로가 그린 위치보다 "
-        "짧게 떨어집니다.\n\n"
+        "그래서 이 데스크톱의 가속이 이동 거리에 관여하게 됩니다.\n\n"
     ),
     # -- about ----------------------------------------------------------------
     "About macroKey": "macroKey 정보",

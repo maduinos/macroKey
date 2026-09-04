@@ -372,7 +372,9 @@ def test_a_fast_recording_reopens_the_question_once(window, monkeypatch) -> None
     window._offer_flat_pointer_for_fast_macro()
 
     assert len(window.box.questions) == 1
-    assert "lands short" in window.box.questions[0], "it has to say what changed"
+    assert "recording you just made" in window.box.questions[0], (
+        "it has to say what changed, not repeat the startup question"
+    )
     assert window.app.settings.pointer_accel_evidence_shown
 
     # And never again: a no that keeps being re-asked is not being respected.
@@ -413,3 +415,17 @@ def test_nothing_is_said_when_the_desktop_is_already_flat(window, monkeypatch) -
     window._offer_flat_pointer_for_fast_macro()
 
     assert window.box.questions == []
+
+
+def test_the_mouse_help_names_the_taskbar_trap(window, monkeypatch) -> None:
+    """The one that actually bit: Windows 11 centres taskbar icons, so opening
+    an app -- macroKey included -- moves every one of them, and a macro aimed
+    at a position clicks whatever slid into it."""
+    accel(monkeypatch, "flat")  # so the offer that follows says nothing
+
+    window._show_mouse_help()
+
+    notice = window.box.notices[0]
+    assert "taskbar" in notice.lower()
+    assert "Left" in notice, "the fix is the alignment setting, so name it"
+    assert "pin" in notice.lower()
