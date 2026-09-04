@@ -1,3 +1,7 @@
+> 만든 사람: maduinos<br>
+> 문서 만든 날짜: 2026-08-03<br>
+> https://maduinos.blogspot.com/
+
 # macroKey 아키텍처
 
 버튼 8개짜리 Pro Micro 키패드를 "고정 단축키 8개"에서 "확장 가능한 매크로 플랫폼"으로

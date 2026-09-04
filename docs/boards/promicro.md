@@ -1,3 +1,7 @@
+> 만든 사람: maduinos<br>
+> 문서 만든 날짜: 2026-09-02<br>
+> https://maduinos.blogspot.com/
+
 # Pro Micro (ATmega32u4)
 
 `id`: `promicro` · 헤더: `firmware/src/boards/promicro_32u4.h` · FQBN:

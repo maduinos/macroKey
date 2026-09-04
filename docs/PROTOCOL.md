@@ -1,3 +1,7 @@
+> 만든 사람: maduinos<br>
+> 문서 만든 날짜: 2026-08-03<br>
+> https://maduinos.blogspot.com/
+
 # macroKey 시리얼 프로토콜 v1
 
 호스트 앱과 펌웨어가 USB CDC 위에서 주고받는 규격입니다. 설계 배경은

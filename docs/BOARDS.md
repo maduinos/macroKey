@@ -1,3 +1,7 @@
+> 만든 사람: maduinos<br>
+> 문서 만든 날짜: 2026-09-02<br>
+> https://maduinos.blogspot.com/
+
 # 지원 보드
 
 macroKey는 여러 보드에서 같은 펌웨어 소스로 돕니다. 보드가 다르면 달라지는 것은 **핀,

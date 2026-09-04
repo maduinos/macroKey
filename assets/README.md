@@ -1,3 +1,7 @@
+> 만든 사람: maduinos<br>
+> 문서 만든 날짜: 2026-08-12<br>
+> https://maduinos.blogspot.com/
+
 # assets
 
 `app_icon.png` (1024px) and `app_icon.ico` (16~256px) are **generated** — edit
