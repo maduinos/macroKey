@@ -106,7 +106,7 @@ WS2812B 1개는 <b>외부 모듈로 3.3 V에서 구동</b>합니다 — GP17의 
     아니라 이 펌웨어로 못 씁니다(<a href="#ext">07절</a>).
     전원은 <b>PC USB 하나뿐</b>입니다. 핀 번호의 유일한 진실 공급원은
     <code>firmware/src/Config.h</code>이고, 핀을 바꾸려면 이 문서가 아니라 그 파일을 고칩니다.
-    ATmega32u4 판은 <a href="wiring.html">wiring.html</a>, 사용법은 <a href="manual.html">manual.html</a>입니다.
+    ATmega32u4 판은 <a href="wiring-promicro.html">wiring.html</a>, 사용법은 <a href="../manual.html">manual.html</a>입니다.
   </p>
 </header>
 
@@ -587,6 +587,8 @@ arduino-cli compile --upload \
 
 <p>결론부터 — <b>켜집니다. 다만 규격 밖이고, 색이 붉게 기웁니다.</b> 근거는 이렇습니다.</p>
 
+<p class="small muted"><b>실물에서 확인한 구성입니다.</b> ProMicro RP2040 판에 <code>3V3</code>로 급전한 WS2812B 모듈이 정상 동작합니다. 아래는 왜 그런지에 대한 설명이지 추정이 아닙니다.</p>
+
 <div class="scroll">
 <table>
   <thead><tr><th style="width:34%">항목</th><th style="width:24%">값</th><th>판정</th></tr></thead>
@@ -908,7 +910,7 @@ digitalWrite(17, LOW);   // 안 꺼지면 HIGH로</code></pre>
 <footer>
   macroKey · RP2040 배선 가이드 — 핀 정의의 출처는 <code>firmware/src/Config.h</code>이고,
   이 문서의 핀 번호는 TENSTAR ProMicro RP2040(USB-C · 16 MB) 실크 기준입니다.
-  ATmega32u4 판은 <a href="wiring.html">wiring.html</a>, 사용법은 <a href="manual.html">manual.html</a>,
+  ATmega32u4 판은 <a href="wiring-promicro.html">wiring.html</a>, 사용법은 <a href="../manual.html">manual.html</a>,
   LED는 외부 WS2812B 3.3 V 급전이 기준입니다. 설계 배경은<code>ARCHITECTURE.md</code>.
 </footer>
 

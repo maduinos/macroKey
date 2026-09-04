@@ -103,7 +103,7 @@ a { color:var(--accent); }
     <b>Pro Micro(ATmega32u4, 5 V / 16 MHz)</b> + 택트 스위치 8개 + <b>WS2812B 1개</b>.
     전원은 <b>PC USB 하나뿐</b>입니다. 핀 번호의 유일한 진실 공급원은
     <code>firmware/src/Config.h</code>이고, 핀을 바꾸려면 이 문서가 아니라 그 파일을 고칩니다.
-    사용법은 <a href="manual.html">manual.html</a>을 보세요.
+    사용법은 <a href="../manual.html">manual.html</a>을 보세요.
   </p>
 </header>
 
@@ -259,8 +259,11 @@ a { color:var(--accent); }
 <div class="note stop">
   <p><b>VCC와 RAW를 헷갈리지 마세요.</b> <code>RAW</code>는 USB VBUS가 그대로 나오는 핀,
   <code>VCC</code>는 레귤레이터를 거친 5 V 출력입니다. WS2812B는 <b><code>VCC</code></b>에 물립니다.
-  그리고 반드시 <b>5 V / 16 MHz 버전</b>이어야 합니다 — 3.3 V / 8 MHz는 VCC가 3.3 V라서 LED가
-  안 켜지거나 색이 엉킵니다.</p>
+  그리고 반드시 <b>5 V / 16 MHz 버전</b>이어야 합니다. 이유는 LED가 아니라 <b>펌웨어</b>입니다 —
+  <code>cpu=16MHzatmega32U4</code>로 빌드되므로 8 MHz 보드에 구우면 클럭이 어긋나 USB가
+  열거되지 않습니다. LED 쪽은 원칙이 하나입니다: <b>급전 전압을 보드 로직 전압에 맞춥니다.</b>
+  이 보드는 둘 다 5 V라 <code>VCC</code>이고, 3.3 V 로직인 RP2040 판은 <code>3V3</code>에
+  물립니다.</p>
 </div>
 
 <h2><span class="n">03</span>조립 순서</h2>
@@ -463,7 +466,7 @@ arduino-cli compile --upload --fqbn SparkFun:avr:promicro:cpu=16MHzatmega32U4 \
 <table>
   <thead><tr><th style="width:32%">증상</th><th style="width:30%">가장 흔한 원인</th><th>확인/조치</th></tr></thead>
   <tbody>
-    <tr><td>LED가 전혀 안 켜짐</td><td>3.3 V 버전 보드이거나 DIN이 A0가 아님</td><td>보드 뒷면 전압 표기, <code>MK_LED_PIN</code>이 18인지 확인</td></tr>
+    <tr><td>LED가 전혀 안 켜짐</td><td>DIN이 A0가 아니거나, 모듈을 <code>RAW</code>에 물림</td><td><code>MK_LED_PIN</code>이 18인지, 모듈 전원이 <code>VCC</code>인지 확인</td></tr>
     <tr><td>색이 엉뚱하거나 깜빡임</td><td>직렬 저항 없음 또는 GND 미공통</td><td>330 Ω을 모듈 가까이로, GND를 한 점으로</td></tr>
     <tr><td>빨강↔초록이 바뀜</td><td>모듈 색 순서가 GRB가 아님</td><td><code>LedController.h</code>의 <code>NEO_GRB</code>를 <code>NEO_RGB</code>로</td></tr>
     <tr><td>전원 인가 때 한 번 번쩍임</td><td>커패시터 없음</td><td>100 µF를 VCC–GND 사이에 추가</td></tr>
@@ -487,7 +490,7 @@ arduino-cli compile --upload --fqbn SparkFun:avr:promicro:cpu=16MHzatmega32U4 \
 <table>
   <thead><tr><th>부품</th><th>수량</th><th>비고</th></tr></thead>
   <tbody>
-    <tr><td>Pro Micro (ATmega32u4)</td><td>1</td><td><b>5 V / 16 MHz 버전.</b> 3.3 V / 8 MHz는 안 됨</td></tr>
+    <tr><td>Pro Micro (ATmega32u4)</td><td>1</td><td><b>5 V / 16 MHz 버전.</b> 8 MHz 판은 펌웨어 클럭이 달라 USB가 안 잡힘</td></tr>
     <tr><td>6 mm 택트 스위치</td><td>8</td><td>4핀형이면 대각선 두 핀 사용</td></tr>
     <tr><td>WS2812B 모듈</td><td>1</td><td>5 V 품종. 단품 또는 스트립에서 1픽셀</td></tr>
     <tr><td>330 Ω 저항 (1/4 W)</td><td>1</td><td>300–500 Ω이면 무방</td></tr>
@@ -504,7 +507,7 @@ arduino-cli compile --upload --fqbn SparkFun:avr:promicro:cpu=16MHzatmega32U4 \
 
 <footer>
   macroKey · 배선 가이드 · 펌웨어 0.3.0 — 핀 정의의 출처는 <code>firmware/src/Config.h</code>.
-  사용법은 <a href="manual.html">manual.html</a>, 설계 배경은 <code>ARCHITECTURE.md</code>.
+  사용법은 <a href="../manual.html">manual.html</a>, 설계 배경은 <code>ARCHITECTURE.md</code>.
 </footer>
 
 </div>

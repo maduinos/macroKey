@@ -7,8 +7,10 @@
 `id`: `promicro` · 헤더: `firmware/src/boards/promicro_32u4.h` · FQBN:
 `SparkFun:avr:promicro:cpu=16MHzatmega32U4`
 
-macroKey의 원래 하드웨어입니다. **5 V / 16 MHz 버전**이어야 합니다 — 3.3 V / 8 MHz 버전은
-`VCC`가 3.3 V라서 WS2812B가 제대로 켜지지 않습니다.
+macroKey의 원래 하드웨어입니다. **5 V / 16 MHz 버전**이어야 합니다 — 펌웨어가
+`cpu=16MHzatmega32U4`로 빌드되므로 8 MHz 보드에 구우면 클럭이 어긋나 USB가 열거되지
+않습니다. 이게 넘을 수 없는 쪽이고, LED는 그다음 문제입니다: 이 보드는 로직이 5 V라
+WS2812B도 `VCC`(5 V)에서 급전해 전압을 맞춥니다.
 
 > 그림 배선도(핀 맵, 버튼 1개 상세, WS2812B 결선, 전체 결선도, 전력 예산)는
 > [온라인 배선 가이드](https://maduinos.github.io/macroKey/boards/wiring-promicro.html)에 있습니다. 인쇄해서 작업대에 두고 쓰세요.
@@ -33,6 +35,10 @@ macroKey의 원래 하드웨어입니다. **5 V / 16 MHz 버전**이어야 합�
 
 > **VCC와 RAW를 구분하세요.** `RAW`는 USB VBUS가 그대로 나오는 핀, `VCC`는 레귤레이터를 거친
 > 5 V 출력입니다. WS2812B는 `VCC`에 물립니다.
+
+> **원칙은 하나입니다 — LED 급전 전압을 보드 로직 전압에 맞춥니다.** 이 보드는 둘 다 5 V라
+> `VCC`이고, 3.3 V 로직인 RP2040 판은 `3V3`입니다. 섞으면 WS2812B의 입력 하이 임계
+> (0.7 × V<sub>DD</sub>)에 걸립니다.
 
 DIN 라인에 **330~470 Ω 직렬 저항**, VCC–GND 사이 모듈 가까이에 **100 µF 전해 커패시터**.
 용량 선택 이유는 [HARDWARE.md](../HARDWARE.md#전력-예산)에 있습니다.
