@@ -14,7 +14,7 @@ import threading
 import time
 from collections.abc import Callable
 
-from PySide6.QtCore import QEvent, Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, QObject, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QActionGroup, QColor
 from PySide6.QtWidgets import (
     QApplication,
@@ -107,6 +107,46 @@ def _button_width(button: QPushButton, *labels: str) -> int:
         widest = max(widest, button.sizeHint().width())
     button.setText(current)
     return widest
+
+
+class _EditorClickWatch(QObject):
+    """Tells the recorder which clicks were aimed at the editor itself.
+
+    Installed on the application, so it sees every press delivered anywhere in
+    this process -- the window, its dialogs, its menus. That delivery is the
+    whole signal: Qt hands a press to a widget here only when the click really
+    did land on one, which is what the screen rectangle this replaces was trying
+    to work out from coordinates and kept getting wrong. A click that went to
+    the application in front is never seen here, so it stays in the recording
+    where it belongs.
+
+    One per application and owned by it, rather than one per window. An
+    application-wide filter runs for every event in the process, so a filter
+    installed per window costs a Python call per event per window ever made --
+    which the tests, that build dozens, felt as the suite grinding to a halt.
+    """
+
+    def __init__(self, recorder, parent) -> None:
+        super().__init__(parent)
+        self.recorder = recorder
+
+    def eventFilter(self, watched, event) -> bool:  # noqa: N802 - Qt naming
+        if event.type() == QEvent.Type.MouseButtonPress:
+            self.recorder.note_editor_click()
+        return False
+
+
+def _watch_editor_clicks(recorder) -> None:
+    """Points the one watcher at this window's recorder, making it if needed."""
+    application = QApplication.instance()
+    if application is None:
+        return
+    watch = application.findChild(_EditorClickWatch)
+    if watch is None:
+        watch = _EditorClickWatch(recorder, application)
+        application.installEventFilter(watch)
+    else:
+        watch.recorder = recorder
 
 
 class MainWindow(QMainWindow):
@@ -278,6 +318,12 @@ class MainWindow(QMainWindow):
         self.app.session = self.session
         self.recordingChanged.connect(self._refresh_recording)
         self.liveCapture.connect(self._append_live_capture)
+
+        # On the application, not on this window: a press that reaches a dialog
+        # or a menu is still the editor being operated rather than the macro.
+        # See `_EditorClickWatch`, and `Recorder._drop_editor_clicks` for what
+        # it is evidence of.
+        _watch_editor_clicks(self.app.recorder)
 
         # Device writes are debounced and run on one ordered worker. Dragging a
         # slider or stepping a spin box must not issue a full EEPROM transfer for
@@ -2282,10 +2328,8 @@ class MainWindow(QMainWindow):
             )
             self.capture_list.clear()
             self.capture_list.addItem(tr("(listening…)"))
-            self._sync_ignored_region()
         outcome = session.last_outcome
         if outcome is not None and not session.recording:
-            self.app.recorder.ignore_click_region = None
             self._refresh_all()
             self._show_capture(outcome)
         self.record_banner.setVisible(recording)
@@ -2310,50 +2354,6 @@ class MainWindow(QMainWindow):
             self.capture_list.clear()
         self.capture_list.addItem(line)
         self.capture_list.scrollToBottom()
-
-    def _sync_ignored_region(self) -> None:
-        """Clicks on this window are operating the editor, not the macro.
-
-        pynput can filter by coordinates; evdev cannot, so under the preferred
-        backend this is best-effort only.
-
-        Only while this window is the active one, and that is the whole point.
-        A rectangle is not a window: recording is started from the pad and the
-        person then works in whatever application the macro is for, which is
-        usually maximised and therefore *over* this window. Every click that
-        happened to land inside these coordinates was thrown away even though
-        it went to the application in front -- so a macro recorded over a
-        maximised Excel came back with the pointer moving between cells and
-        never clicking one. Excel was in front, so this window was not active,
-        and that is exactly what tells the two cases apart.
-        """
-        if not self.isActiveWindow():
-            self.app.recorder.ignore_click_region = None
-            return
-        frame = self.frameGeometry()
-        self.app.recorder.ignore_click_region = (
-            frame.x(),
-            frame.y(),
-            frame.width(),
-            frame.height(),
-        )
-
-    def moveEvent(self, event) -> None:  # noqa: N802 - Qt naming
-        if self.session.recording:
-            self._sync_ignored_region()
-        super().moveEvent(event)
-
-    def resizeEvent(self, event) -> None:  # noqa: N802 - Qt naming
-        if self.session.recording:
-            self._sync_ignored_region()
-        super().resizeEvent(event)
-
-    def changeEvent(self, event) -> None:  # noqa: N802 - Qt naming
-        # Focus moving to or from this window changes whose clicks these are,
-        # so the rectangle has to follow it and not only the geometry.
-        if event.type() == QEvent.Type.ActivationChange and self.session.recording:
-            self._sync_ignored_region()
-        super().changeEvent(event)
 
     def _show_capture(self, outcome) -> None:
         """Lists what the last recording actually caught.

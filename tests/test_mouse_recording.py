@@ -142,37 +142,37 @@ def test_text_the_keypad_has_no_keys_for_still_needs_the_host() -> None:
 
 @pytest.fixture
 def recorder() -> Recorder:
-    device = Recorder(capture_mouse=True)
-    device.ignore_click_region = (100, 200, 400, 300)  # x, y, w, h
-    return device
+    return Recorder(capture_mouse=True)
 
 
 @pytest.mark.parametrize(
     "point",
-    [(100, 200), (499, 499), (300, 350)],
-    ids=["top-left corner", "bottom-right inside", "middle"],
+    [(100, 200), (499, 499), (300, 350), (0, 0)],
+    ids=["top-left corner", "bottom-right", "middle", "origin"],
 )
-def test_a_click_on_the_recorder_window_is_not_part_of_the_macro(recorder, point) -> None:
-    recorder._events.clear()
-    recorder._on_click(point[0], point[1], type("B", (), {"name": "left"}), True)
-    assert recorder._events == [], f"click at {point} was recorded"
+def test_where_a_click_happened_no_longer_decides_whether_it_is_kept(
+    recorder, point
+) -> None:
+    """No screen coordinate is grounds for dropping a click any more.
 
-
-@pytest.mark.parametrize(
-    "point",
-    [(99, 200), (100, 199), (500, 400), (100, 500), (0, 0)],
-    ids=["left of", "above", "right edge", "below", "origin"],
-)
-def test_a_click_anywhere_else_is_part_of_the_macro(recorder, point) -> None:
+    The editor's rectangle was, and it deleted real clicks made in the
+    application in front of it. What the editor received is what filters now,
+    and that is decided in `_drop_editor_clicks` rather than here.
+    """
     recorder._events.clear()
     recorder._on_click(point[0], point[1], type("B", (), {"name": "left"}), True)
     assert len(recorder._events) == 1, f"click at {point} was dropped"
 
 
-def test_scrolling_over_the_recorder_window_is_also_ignored(recorder) -> None:
+@pytest.mark.parametrize(
+    "point",
+    [(300, 350), (0, 0)],
+    ids=["over where the editor sits", "origin"],
+)
+def test_the_wheel_is_not_filtered_by_position_either(recorder, point) -> None:
     recorder._events.clear()
-    recorder._on_scroll(300, 350, 0, -2)
-    assert recorder._events == []
+    recorder._on_scroll(point[0], point[1], 0, -2)
+    assert len(recorder._events) == 1, f"scroll at {point} was dropped"
 
 
 def test_with_no_region_set_every_click_counts() -> None:
@@ -231,8 +231,8 @@ def test_travel_over_the_recorder_window_is_still_travel(recorder) -> None:
 
     recorder._events.clear()
     recorder.backend = "pynput"
-    # (100, 200)-(500, 500) is the ignored region; this line runs right through
-    # it, so three of the five samples land inside.
+    # The rectangle this used to be filtered against was (100, 200)-(500, 500);
+    # this line runs right through it, so three of the five samples were inside.
     for point in [(50, 150), (150, 250), (250, 350), (350, 450), (600, 700)]:
         recorder._on_move(*point)
     recorder._flush_pynput_motion()
@@ -241,9 +241,11 @@ def test_travel_over_the_recorder_window_is_still_travel(recorder) -> None:
     assert sum(event.data[1] for event in moves) == 550
 
 
-def test_a_click_on_the_recorder_window_still_is_not_part_of_the_macro(recorder) -> None:
-    """Keeping the travel must not bring the button back with it."""
-    from macrokey.recorder.events import MOUSE_MOVE
+def test_a_click_over_where_the_editor_sits_is_still_the_macro_s_click(recorder) -> None:
+    """The travel came back in 0.12.0 and the click was left behind, which is
+    how the same recording went from stopping short to landing on the right
+    cell and pressing nothing. Coordinates decide neither one now."""
+    from macrokey.recorder.events import MOUSE_CLICK, MOUSE_MOVE
 
     recorder._events.clear()
     recorder.backend = "pynput"
@@ -251,7 +253,7 @@ def test_a_click_on_the_recorder_window_still_is_not_part_of_the_macro(recorder)
     recorder._on_move(300, 350)
     recorder._on_click(300, 350, type("B", (), {"name": "left"}), True)
     recorder._flush_pynput_motion()
-    assert [event.kind for event in recorder._events] == [MOUSE_MOVE]
+    assert [event.kind for event in recorder._events] == [MOUSE_MOVE, MOUSE_CLICK]
 
 
 # ------------------------------------------------------- the self-echo blanket --
