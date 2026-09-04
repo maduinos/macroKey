@@ -1,12 +1,10 @@
-"""The one-key editor: shortcut binding, and a pointer at hold-to-record."""
+"""The one-key editor: what a shortcut this key sends."""
 
 from __future__ import annotations
 
 from PySide6.QtCore import QRect, Qt
 from PySide6.QtWidgets import (
-    QCheckBox,
     QDialog,
-    QGridLayout,
     QHBoxLayout,
     QLabel,
     QMessageBox,
@@ -17,27 +15,38 @@ from PySide6.QtWidgets import (
 
 from ..app import MacroKeyApp
 from ..config import Action
+from ..config.keycodes import KeyParseError, parse_hotkey
 from ..i18n import tr
 from .describe import describe_binding
+from .key_grab import KeyGrab
 from .widgets import ShortcutEdit, heading
 
 #: The dialog opens at 560 px; this is that minus the layout margins, and it is
-#: the width the record hint is measured against. Only used for that measurement.
+#: the width the status line is measured against. Only used for that measurement.
 _HINT_WRAP_WIDTH = 520
+
+#: A backend's own words, cut to what the status line has room for. The reason
+#: matters -- it is the half that says what to fix -- but it is not the whole
+#: sentence, and the height reserved below is measured against this length.
+_REASON_LIMIT = 160
 
 
 class SlotDialog(QDialog):
-    """Everything one key can be, in one window.
+    """What one key sends, in one window.
 
     Binding used to be two nested dialogs: pick an action kind and a value in
     one, and if you chose to record, a second window on top of it. The kinds
     were the serial wire format showing through -- key, consumer, mouse_button,
     host -- which is not how anyone thinks about what a key should do.
 
-    Recording itself is driven by the pad (hold 3 s, hold again to finish).
-    This window only sets the shortcut, toggles mouse capture, and points at
-    the main window's live log -- starting capture from a button here meant
-    the Stop click could land in the macro, and duplicated the pad's job.
+    What is left is the one question worth asking here: which shortcut. Mouse
+    actions and the recording switches used to sit underneath it; both were
+    settings for other features wearing the shape of a binding, and recording is
+    driven by the pad and reported by the main window anyway.
+
+    "Press keys" reads the keyboard through `KeyGrab` rather than through Qt, so
+    a key that the desktop normally keeps for itself is still bindable, and the
+    combination being bound does not fire whatever it is bound to today.
     """
 
     def __init__(self, parent: QWidget, app: MacroKeyApp, key: int, gesture: str):
@@ -45,12 +54,13 @@ class SlotDialog(QDialog):
         self.app = app
         self.key, self.gesture = key, gesture
         self.result_action: Action | None = None
+        self._before_grab = ""
 
         self.setWindowTitle(
             tr("Key {key} · {gesture}").format(key=key + 1, gesture=tr(gesture))
         )
         self.setModal(True)
-        self.resize(560, 400)
+        self.resize(560, 300)
 
         current = app.profile.action(key, gesture)
         self.now = QLabel(
@@ -66,102 +76,48 @@ class SlotDialog(QDialog):
         if current.kind == "key":
             self.shortcut.setText(current.hotkey)
         self.shortcut.changed.connect(lambda _v: self.shortcut.stop_capture())
-        press_keys = QPushButton(tr("Press keys"))
-        press_keys.setToolTip(
+        self.press_keys = QPushButton(tr("Press keys"))
+        self.press_keys.setToolTip(
             tr(
-                "Fills the field from the next combination pressed. The field can "
-                "also just be typed into."
+                "Fills the field from the next combination pressed on the keyboard. "
+                "The field can also just be typed into."
             )
         )
-        press_keys.clicked.connect(self.shortcut.start_capture)
+        self.press_keys.clicked.connect(self._press_keys)
         set_shortcut = QPushButton(tr("Set"))
         set_shortcut.clicked.connect(self._use_shortcut)
         shortcut_row = QHBoxLayout()
         shortcut_row.addWidget(self.shortcut, 1)
-        shortcut_row.addWidget(press_keys)
+        shortcut_row.addWidget(self.press_keys)
         shortcut_row.addWidget(set_shortcut)
 
-        # ---- direct mouse actions --------------------------------------------
-        mouse_grid = QGridLayout()
-        for index, (label, kind, value) in enumerate(
-            (
-                (tr("Left click"), "mouse_button", "left"),
-                (tr("Right click"), "mouse_button", "right"),
-                (tr("Middle click"), "mouse_button", "middle"),
-                (tr("Wheel up"), "mouse_wheel", 1),
-                (tr("Wheel down"), "mouse_wheel", -1),
-            )
-        ):
-            button = QPushButton(label)
-            button.setToolTip(
-                tr(
-                    "Runs at the current pointer. This direct action does not move "
-                    "or home the cursor."
-                )
-            )
-            button.clicked.connect(
-                lambda _checked=False, kind=kind, value=value: self._use_mouse(
-                    kind, value
-                )
-            )
-            mouse_grid.addWidget(button, index // 3, index % 3)
+        # ---- the line under the field ----------------------------------------
+        # `key_grab`, not `grab`: QWidget.grab() renders a widget to a pixmap,
+        # and an attribute of that name shadows it.
+        self.key_grab = KeyGrab(self)
+        self.key_grab.progress.connect(self.shortcut.setText)
+        self.key_grab.captured.connect(self._captured)
+        self.key_grab.finished.connect(self._grab_finished)
 
-        # ---- recording (settings only) ----------------------------------------
-        self.capture_mouse = QCheckBox(tr("Include mouse when recording"))
-        self.capture_mouse.setChecked(bool(app.settings.recorder_capture_mouse))
-        self.capture_mouse.setToolTip(
-            tr(
-                "Records clicks, wheel, and pointer movement. By default clicks use "
-                "the current pointer and movement is relative. Applies to the next "
-                "hold-to-record on the pad."
-            )
-        )
-        self.capture_mouse.toggled.connect(self._mouse_setting_changed)
-
-        self.anchor_mouse = QCheckBox(tr("Replay from a fixed screen position (experimental)"))
-        self.anchor_mouse.setChecked(bool(app.settings.recorder_anchor_mouse))
-        self.anchor_mouse.setEnabled(self.capture_mouse.isChecked())
-        self.anchor_mouse.setToolTip(
-            tr(
-                "Moves the pointer to the top-left before both recording and replay. "
-                "Use only with the same monitor layout, scaling, pointer speed, and "
-                "window positions; otherwise the click can land elsewhere."
-            )
-        )
-        self.anchor_mouse.toggled.connect(self._anchor_setting_changed)
-
-        if gesture == "double":
-            trigger = tr(
-                "Tap key {key}, then press and hold it within 250 ms for 3 seconds"
-            ).format(key=key + 1)
-        else:
-            trigger = tr("Hold key {key} on its own for 3 seconds").format(key=key + 1)
-        self.record_hint = QLabel(
-            tr(
-                "{trigger} to record into this {gesture} slot (pixel turns red). "
-                "Hold the same key again to finish. What is captured appears in the "
-                "main window as it happens."
-            ).format(trigger=trigger, gesture=tr(gesture))
-        )
-        self.record_hint.setWordWrap(True)
-        self.record_hint.setStyleSheet("color: palette(window-text);")
+        self.hint = QLabel(self._idle_hint())
+        self.hint.setWordWrap(True)
+        self.hint.setStyleSheet("color: palette(window-text);")
         # QLabel's wrapped minimum-size hint undercounts by roughly two lines
-        # with a 15 pt desktop font, and the bottom buttons then cover the most
-        # important part (how to finish).
+        # with a 15 pt desktop font, and the buttons underneath then cover the
+        # line that says what is happening to the keyboard right now.
         #
-        # Four lines is the floor the English copy was given, and it is kept:
-        # it was never an exact wrap count, it was slack against that
-        # undercount. The measured height is taken when it is larger, which is
-        # what a translation that wraps to more lines needs -- Korean sets this
-        # sentence in a different number of lines, and a fixed four would bury
-        # the same sentence the four was chosen to protect.
-        wrapped = self.record_hint.fontMetrics().boundingRect(
-            QRect(0, 0, _HINT_WRAP_WIDTH, 0),
-            Qt.TextWordWrap,
-            self.record_hint.text(),
+        # Measured against every sentence this label can hold rather than a
+        # hand-counted number of English lines: the messages differ in length,
+        # and a translation sets the same sentence in a different number of
+        # lines -- Korean does -- so a fixed count would bury one of them.
+        metrics = self.hint.fontMetrics()
+        tallest = max(
+            metrics.boundingRect(
+                QRect(0, 0, _HINT_WRAP_WIDTH, 0), Qt.TextWordWrap, text
+            ).height()
+            for text in self.possible_hints()
         )
-        floor = self.record_hint.fontMetrics().lineSpacing() * 4
-        self.record_hint.setMinimumHeight(max(wrapped.height(), floor) + 4)
+        self.hint.setMinimumHeight(tallest + 4)
 
         # ---- bottom -----------------------------------------------------------
         clear = QPushButton(tr("Clear {gesture} binding").format(gesture=tr(gesture)))
@@ -178,27 +134,130 @@ class SlotDialog(QDialog):
         layout.addSpacing(8)
         layout.addWidget(heading(tr("Send a shortcut")))
         layout.addLayout(shortcut_row)
-        layout.addSpacing(10)
-        layout.addWidget(heading(tr("Or use the mouse at its current position")))
-        layout.addLayout(mouse_grid)
-        layout.addSpacing(10)
-        layout.addWidget(heading(tr("Or replay something you do")))
-        layout.addWidget(self.capture_mouse)
-        layout.addWidget(self.anchor_mouse)
-        layout.addWidget(self.record_hint)
+        layout.addWidget(self.hint)
         layout.addStretch(1)
         layout.addLayout(bottom)
 
-    def _mouse_setting_changed(self, checked: bool) -> None:
-        self.app.settings.recorder_capture_mouse = checked
-        self.app.recorder.capture_mouse = checked
-        self.anchor_mouse.setEnabled(checked)
-        self.app.settings.save()
+    # ----------------------------------------------------------------- status --
+    #
+    # One line under the field, and it is the only place this window says what
+    # is happening to the keyboard. Each message is its own method so the
+    # English source stays a literal `tr` argument -- the translation check
+    # reads the source for those, and a table keyed by a variable is invisible
+    # to it.
 
-    def _anchor_setting_changed(self, checked: bool) -> None:
-        self.app.settings.recorder_anchor_mouse = checked
-        self.app.recorder.anchor_mouse = checked
-        self.app.settings.save()
+    def _idle_hint(self) -> str:
+        return tr(
+            "Press keys reads the keyboard itself, so every key arrives as the "
+            "key it is. The field can also just be typed into."
+        )
+
+    def _listening_hint(self, *, alone: bool) -> str:
+        if alone:
+            return tr(
+                "Listening. The combination is taken here, so it does not also "
+                "do whatever it is bound to today."
+            )
+        return tr(
+            "Listening. These keys reach the desktop too, so a combination it "
+            "owns will act on it while you press it."
+        )
+
+    def _window_only_hint(self, reason: str) -> str:
+        return tr(
+            "Reading this window only ({reason}). A key the desktop takes first "
+            "never arrives here; type that one into the field."
+        ).format(reason=reason)
+
+    def _unsendable_hint(self, value: str, reason: str) -> str:
+        return tr("Read {value}, but this keypad cannot send it: {reason}").format(
+            value=value, reason=reason
+        )
+
+    def possible_hints(self) -> list[str]:
+        """Every sentence the status line can hold, in the active language.
+
+        The label reserves height for the tallest of these, so this is what the
+        layout is sized against as well as a list of what the line can say. The
+        two that carry a backend's own words are measured with filler as long as
+        that text is allowed to be.
+        """
+        # Spaced words, not one long token: a 160-character run of "x" cannot
+        # be broken, so it would measure as a single line and reserve nothing.
+        filler = " ".join(["xxxxxxxx"] * (_REASON_LIMIT // 9))
+        return [
+            self._idle_hint(),
+            self._listening_hint(alone=True),
+            self._listening_hint(alone=False),
+            self._window_only_hint(filler),
+            self._unsendable_hint("ctrl+shift+x", filler),
+        ]
+
+    def _say(self, text: str) -> None:
+        self.hint.setText(text)
+
+    # ------------------------------------------------------------ reading keys --
+
+    def _press_keys(self) -> None:
+        """Reads the real keyboard, or says why it is reading this window instead."""
+        if self.key_grab.active:
+            self.key_grab.stop()
+            return
+
+        if self.app.recorder.recording:
+            # A hold-to-record is running on the pad. Taking the keyboard
+            # exclusively would take those events away from it, and the macro
+            # would silently lose whatever was typed while this window listened.
+            self.shortcut.start_capture()
+            self._say(self._window_only_hint(tr("a recording is running")))
+            return
+
+        # What the field held before it was cleared to listen. Stopping without
+        # pressing anything -- or waiting out the timeout -- puts it back, so
+        # starting to rebind a key and changing your mind does not silently
+        # empty the field the Set button reads.
+        self._before_grab = self.shortcut.text()
+        self.shortcut.begin_grab()
+        started, reason = self.key_grab.start()
+        if not started:
+            # Qt's own capture is the fallback, not an error: it binds most keys
+            # perfectly well, and the line underneath says what it cannot do.
+            self.shortcut.start_capture()
+            self._say(self._window_only_hint(reason[:_REASON_LIMIT]))
+            return
+
+        self.press_keys.setText(tr("Stop"))
+        self._say(self._listening_hint(alone=self.key_grab.exclusive))
+
+    def _captured(self, value: str) -> None:
+        self.shortcut.setText(value)
+        try:
+            parse_hotkey(value)
+        except KeyParseError as exc:
+            self._say(self._unsendable_hint(value, str(exc)[:_REASON_LIMIT]))
+            return
+        self._say(self._idle_hint())
+
+    def _grab_finished(self, reason: str) -> None:
+        """Listening has stopped, whatever ended it."""
+        self.press_keys.setText(tr("Press keys"))
+        self.shortcut.stop_capture()
+        # Modifiers alone are the shortcut half-built, not a shortcut; a grab
+        # that ended there captured nothing. When one was captured, `captured`
+        # follows this and writes it over whatever is restored here.
+        if not self.shortcut.text().strip("+"):
+            self.shortcut.setText(self._before_grab)
+        if reason:
+            self._say(reason)
+
+    def done(self, result: int) -> None:  # noqa: D102 - QDialog's own docstring
+        # Every way out of this window, including Esc and the close button. The
+        # grab holds the keyboard away from the desktop, so it must not outlive
+        # the window that started it.
+        self.key_grab.stop()
+        super().done(result)
+
+    # ---------------------------------------------------------------- results --
 
     def _use_shortcut(self) -> None:
         text = self.shortcut.text().strip()
@@ -213,13 +272,6 @@ class SlotDialog(QDialog):
             )
             return
         self.result_action = action
-        self.accept()
-
-    def _use_mouse(self, kind: str, value: str | int) -> None:
-        if kind == "mouse_button":
-            self.result_action = Action(kind=kind, button=str(value))
-        else:
-            self.result_action = Action(kind=kind, delta=int(value))
         self.accept()
 
     def _clear(self) -> None:

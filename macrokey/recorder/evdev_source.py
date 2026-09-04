@@ -69,6 +69,16 @@ _TOKENS = {
     "PAGEUP": "pageup",
     "PAGEDOWN": "pagedown",
     "PRINTSCREEN": "printscreen",
+    # The key labelled Print Screen reports as KEY_SYSRQ on a PC keyboard;
+    # KEY_PRINT is a separate code some keyboards send instead. Both are the
+    # same key to anyone binding it, and "printscreen" is the only spelling of
+    # it this project can send. Without these the key came through as "sysrq",
+    # which nothing downstream can turn into a keycode.
+    "SYSRQ": "printscreen",
+    "PRINT": "printscreen",
+    # The Menu key, next to the right control on most keyboards. evdev names it
+    # after the compose key it can also be configured as.
+    "COMPOSE": "menu",
     "SCROLLLOCK": "scrolllock",
     "NUMLOCK": "numlock",
 }

@@ -126,9 +126,11 @@ def test_state_swapping_labels_still_fit(build_window, point_size, language) -> 
 
 # ------------------------------------------------------------ slot dialog --
 #
-# The one-key editor has the same hazard in a different shape: its recording
-# hint is a wrapped paragraph with buttons underneath, and the height reserved
-# for it used to be a hand-counted number of English lines.
+# The one-key editor has the same hazard in a different shape: the line under
+# the shortcut field is a wrapped sentence with buttons underneath, and the
+# height reserved for it used to be a hand-counted number of English lines. It
+# now says what is happening to the keyboard while a key is being read, which
+# is the worst thing in this window to have covered.
 
 
 @pytest.fixture
@@ -145,7 +147,7 @@ def slot_app(monkeypatch, tmp_path):
 @pytest.mark.parametrize("language", LANGUAGES)
 @pytest.mark.parametrize("gesture", ("tap", "double"))
 @pytest.mark.parametrize("point_size", FONT_SIZES)
-def test_the_recording_hint_is_not_covered_by_the_buttons_under_it(
+def test_the_status_line_is_not_covered_by_the_buttons_under_it(
     slot_app, monkeypatch, point_size, gesture, language
 ) -> None:
     from PySide6.QtCore import QRect, Qt
@@ -160,16 +162,16 @@ def test_the_recording_hint_is_not_covered_by_the_buttons_under_it(
     i18n.set_language(language)
     try:
         dialog = SlotDialog(None, slot_app, 0, gesture)
-        needed = dialog.record_hint.fontMetrics().boundingRect(
-            QRect(0, 0, _HINT_WRAP_WIDTH, 0),
-            Qt.TextWordWrap,
-            dialog.record_hint.text(),
-        )
-        assert dialog.record_hint.minimumHeight() >= needed.height(), (
-            language,
-            gesture,
-            point_size,
-        )
+        for text in dialog.possible_hints():
+            needed = dialog.hint.fontMetrics().boundingRect(
+                QRect(0, 0, _HINT_WRAP_WIDTH, 0), Qt.TextWordWrap, text
+            )
+            assert dialog.hint.minimumHeight() >= needed.height(), (
+                language,
+                gesture,
+                point_size,
+                text,
+            )
     finally:
         qt_app.setFont(original)
         i18n.set_language("en")
@@ -183,8 +185,7 @@ def test_the_slot_dialog_labels_are_in_the_chosen_language(slot_app, language) -
     i18n.set_language(language)
     try:
         dialog = SlotDialog(None, slot_app, 0, "tap")
-        assert dialog.record_hint.text().startswith(
-            i18n.tr("Hold key {key} on its own for 3 seconds").format(key=1)
-        )
+        assert dialog.hint.text() == dialog.possible_hints()[0]
+        assert dialog.press_keys.text() == i18n.tr("Press keys")
     finally:
         i18n.set_language("en")

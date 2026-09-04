@@ -42,9 +42,9 @@ ALL_THREE = Qt.ControlModifier | Qt.AltModifier | Qt.ShiftModifier
 @pytest.mark.parametrize(
     "key, text, expected",
     [
-        (Qt.Key_1, "!", "ctrl+shift+alt+1"),
-        (Qt.Key_2, "@", "ctrl+shift+alt+2"),
-        (Qt.Key_8, "*", "ctrl+shift+alt+8"),
+        (Qt.Key_1, "!", "ctrl+alt+shift+1"),
+        (Qt.Key_2, "@", "ctrl+alt+shift+2"),
+        (Qt.Key_8, "*", "ctrl+alt+shift+8"),
     ],
     ids=["1 not !", "2 not @", "8 not *"],
 )
@@ -105,3 +105,31 @@ def test_capture_replaces_rather_than_appends(field) -> None:
     field.start_capture()
     press(field, Qt.Key_F6)
     assert field.text() == "f6"
+
+
+def test_the_modifiers_are_spelled_in_the_stored_order(field) -> None:
+    """The same combination has to read the same however it got into the field.
+
+    A shortcut can arrive three ways -- pressed here, read from the keyboard by
+    `key_grab`, or formatted back out of the pad by `format_hotkey` -- and the
+    other two spell it in `MODIFIER_ORDER`. Spelling it differently here made
+    the field change wording after a round trip that changed nothing.
+    """
+    from macrokey.config.keycodes import MODIFIER_ORDER, format_hotkey, parse_hotkey
+
+    press(field, Qt.Key_A, ALL_THREE | Qt.MetaModifier, "A")
+    assert field.text() == format_hotkey(*parse_hotkey(field.text()))
+    assert field.text().split("+")[:-1] == [
+        name for _bit, name in MODIFIER_ORDER if name in field.text().split("+")
+    ]
+
+
+def test_qt_keys_are_ignored_while_the_keyboard_is_read_directly(qt_app) -> None:
+    """The same press also arrives here, the long way round, when the grab is
+    not exclusive -- and it must not be typed into the field or captured twice."""
+    widget = ShortcutEdit()
+    widget.setText("f13")
+    widget.begin_grab()
+    press(widget, Qt.Key_A, Qt.NoModifier, "a")
+    assert widget.text() == ""
+    assert widget.capturing is False
