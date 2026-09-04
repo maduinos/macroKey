@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import threading
 import time
@@ -28,9 +29,25 @@ except Exception:  # pragma: no cover - pynput needs an input backend
     pynput_keyboard = None
     pynput_mouse = None
 
+log = logging.getLogger(__name__)
+
 # Raw events this close to a keypad event are the keypad's own HID output
 # arriving back at us. Without this the recorder eats its own tail.
 SELF_INPUT_WINDOW = 0.15
+
+# How long after a captured click this window's own mouse event may arrive and
+# still be that same click.
+#
+# Ordered, not symmetric, and that is the point. Capture sees a click before Qt
+# does -- a global hook runs ahead of the delivery to whichever window was hit --
+# so the window's event trails the captured one. Allowing the same slack in both
+# directions would make the *next* click anywhere else, made shortly after
+# clicking this window, look like the same one and disappear.
+#
+# The negative bound is clock jitter only: both stamps come from the same
+# monotonic clock on the same machine, so there is nothing real to absorb.
+EDITOR_CLICK_LEAD = 0.30
+EDITOR_CLICK_SLACK = 0.05
 
 #: A key that ends the recording instead of being recorded. There is no good
 #: default: Esc was one, and it meant a macro could never contain Esc -- which
@@ -87,14 +104,27 @@ class Recorder:
         self.anchor_mouse = anchor_mouse
         self._min_gap_ms = min_gap_ms
         self.stop_key = stop_key
-        #: Screen rectangle whose clicks belong to operating the recorder
-        #: rather than to the macro (pynput only -- it reports coordinates).
-        #: Used so clicks on the editor while hold-to-record is running do not
-        #: become steps. evdev has no pointer position, so it cannot filter this.
-        #: Buttons and the wheel only: pointer travel across this rectangle is
-        #: part of the gesture like any other travel, and taking it out left a
-        #: macro that stopped short of where the pointer had been taken.
-        self.ignore_click_region: tuple[int, int, int, int] | None = None
+        #: When the editor's own windows were clicked, by the same clock the
+        #: captured events carry. Clicks matching these are dropped at the end
+        #: of a recording, so operating the editor while hold-to-record runs
+        #: does not become a macro step.
+        #:
+        #: This used to be a screen rectangle, and a rectangle is not a window.
+        #: Recording is started from the pad, so the person works in whatever
+        #: application the macro is for, and that application is usually
+        #: maximised and therefore *over* this one -- every click that happened
+        #: to land inside these coordinates was thrown away even though it went
+        #: to the window in front. Gating the rectangle on this window being
+        #: active was not enough either: the recording that prompted it was made
+        #: with the editor sitting behind Excel, where the rectangle should have
+        #: been off, and three of its seven clicks still went missing.
+        #:
+        #: Qt receiving the press *is* the evidence the rectangle was guessing
+        #: at, and it needs no coordinates and no platform of its own: the event
+        #: reaches a widget here only when the click actually landed on one.
+        #: That makes it true for evdev as well, which never had coordinates to
+        #: filter by and so could never drop these clicks at all.
+        self._editor_click_ats: list[float] = []
         self._events: list[RawEvent] = []
         self._lock = threading.Lock()
         #: Guards the pointer accumulators below. pynput runs the keyboard and
@@ -150,6 +180,7 @@ class Recorder:
         self._stop_requested = False
         with self._lock:
             self._events.clear()
+            self._editor_click_ats.clear()
 
         # Prefer the kernel: it is the only source that sees every window under
         # Wayland. pynput stays as the fallback for boxes without the input
@@ -207,6 +238,7 @@ class Recorder:
         if self._evdev is not None:
             self._evdev.stop()
             self._evdev = None
+            self._drop_editor_clicks()
             with self._lock:
                 return list(self._events)
         self._flush_pynput_motion()
@@ -215,12 +247,66 @@ class Recorder:
                 listener.stop()
         self._keyboard_listener = None
         self._mouse_listener = None
+        self._drop_editor_clicks()
         with self._lock:
             return list(self._events)
 
     def note_device_key(self) -> None:
         """Call when the keypad reports a press, so its HID echo is dropped."""
         self._last_device_key_at = time.monotonic()
+
+    def note_editor_click(self) -> None:
+        """Call when one of the editor's own windows receives a mouse press."""
+        if not self.recording:
+            return
+        with self._lock:
+            self._editor_click_ats.append(time.monotonic())
+
+    def _drop_editor_clicks(self) -> None:
+        """Removes the clicks that were aimed at the editor, not at the macro.
+
+        At the end rather than as they arrive, because the evidence arrives
+        second: the capture hook sees a click before Qt delivers it, so at the
+        moment there is nothing yet to compare against. A recording is only read
+        once it has stopped, so waiting costs nothing.
+
+        A press takes its release with it. Left behind, an orphaned release is
+        not merely a stray step -- `normalize` reads a release with no press as
+        the tail of a drag that began before capture and skips it, so the pair
+        would half-vanish in a way that depends on what came after it.
+        """
+        with self._lock:
+            received = list(self._editor_click_ats)
+            if not received:
+                return
+            events = self._events
+            doomed: set[int] = set()
+            for index, event in enumerate(events):
+                if event.kind != MOUSE_CLICK or index in doomed:
+                    continue
+                if not any(
+                    -EDITOR_CLICK_SLACK <= at - event.at <= EDITOR_CLICK_LEAD
+                    for at in received
+                ):
+                    continue
+                doomed.add(index)
+                for later in range(index + 1, len(events)):
+                    if (
+                        events[later].kind == MOUSE_RELEASE
+                        and events[later].token == event.token
+                    ):
+                        doomed.add(later)
+                        break
+            if not doomed:
+                return
+            log.info(
+                "dropped %d captured event(s): the editor window received those "
+                "clicks itself",
+                len(doomed),
+            )
+            self._events = [
+                event for index, event in enumerate(events) if index not in doomed
+            ]
 
     # ----------------------------------------------------------------- result --
 
@@ -282,6 +368,14 @@ class Recorder:
             and event.kind in (KEY_DOWN, KEY_UP, MOUSE_CLICK, MOUSE_RELEASE, SCROLL)
             and 0.0 <= event.at - self._last_device_key_at < SELF_INPUT_WINDOW
         ):
+            # Logged because the other way a click goes missing looks identical
+            # from the outside, and telling them apart from a finished recording
+            # is guesswork otherwise.
+            log.info(
+                "dropped a captured %s: %.0f ms after the keypad's own event",
+                event.kind,
+                (event.at - self._last_device_key_at) * 1000,
+            )
             return
         with self._lock:
             self._events.append(event)
@@ -313,8 +407,6 @@ class Recorder:
         self._record(RawEvent(kind=KEY_UP, token=token, char=char, at=time.monotonic()))
 
     def _on_click(self, x: int, y: int, button, pressed: bool) -> None:
-        if self._inside_ignored_region(x, y):
-            return
         # Not filtered: a click is proof the travel before it was deliberate,
         # however small. Dropping it left the click a few pixels from where it
         # was made, which is the same complaint as a move that stops short.
@@ -330,16 +422,7 @@ class Recorder:
             )
         )
 
-    def _inside_ignored_region(self, x: int, y: int) -> bool:
-        region = self.ignore_click_region
-        if region is None:
-            return False
-        left, top, width, height = region
-        return left <= x < left + width and top <= y < top + height
-
     def _on_scroll(self, x: int, y: int, dx: int, dy: int) -> None:
-        if self._inside_ignored_region(x, y):
-            return
         self._flush_pynput_motion(filter_noise=False)
         self._record(
             RawEvent(kind=SCROLL, token="scroll", at=time.monotonic(), data=(int(dx), int(dy)))
@@ -352,14 +435,14 @@ class Recorder:
         the wheel, so a drag-and-drop recording came back as two clicks with the
         pointer never travelling between them.
 
-        `ignore_click_region` does not apply here, and used to. It is there so
-        that clicking this window while a recording runs does not become a step
-        -- but the *pointer* passing over the window is still the pointer
-        travelling, and dropping those samples deleted whichever part of the
-        gesture crossed it. The macro then stopped short by exactly that much.
-        A diagonal drawn across the screen crosses a window sitting in the
-        middle of it almost every time, which is why the diagonal was the one
-        that never arrived while an edge-hugging move was fine.
+        The editor's own rectangle used to be subtracted here, and the pointer
+        passing over a window is still the pointer travelling: dropping those
+        samples deleted whichever part of the gesture crossed it, and the macro
+        stopped short by exactly that much. A diagonal drawn across the screen
+        crosses a window sitting in the middle of it almost every time, which is
+        why the diagonal was the one that never arrived while an edge-hugging
+        move was fine. The rectangle is gone entirely now; see
+        `_drop_editor_clicks`.
         """
         pos = (int(x), int(y))
         previous, self._pynput_last_pos = self._pynput_last_pos, pos
