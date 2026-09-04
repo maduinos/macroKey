@@ -9,7 +9,7 @@
 
 32u4 보드와 외형은 닮았지만 핀 번호도, 저장소도 다릅니다. 매크로 용량이 **70배**입니다.
 
-> 그림 배선도는 [`wiring-promicro-rp2040.html`](wiring-promicro-rp2040.html)에 있습니다.
+> 그림 배선도는 [온라인 배선 가이드](https://maduinos.github.io/macroKey/boards/wiring-promicro-rp2040.html)에 있습니다.
 
 ## 핀 맵
 
