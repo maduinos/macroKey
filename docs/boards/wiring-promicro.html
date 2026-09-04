@@ -449,10 +449,13 @@ arduino-cli compile --upload --fqbn SparkFun:avr:promicro:cpu=16MHzatmega32U4 \
   -p /dev/ttyACM0 firmware</code></pre>
 
 <div class="note warn">
-  <p><b>업로드는 타이밍 싸움입니다.</b> Pro Micro는 리셋 버튼이 없고 부트로더가 8초만 떠 있습니다.
-  <code>RST</code>–<code>GND</code>를 빠르게 두 번 단락시킨 <b>직후에</b> upload를 실행하세요.
-  부트로더 모드에서는 포트 번호가 바뀌는 경우가 많으니 <code>arduino-cli board list</code> 또는
-  <code>arduino-cli board list</code> 또는 <code>python -m macrokey ports</code>로 확인하세요.</p>
+  <p><b>보통은 그냥 올라갑니다.</b> arduino-cli도 앱과 같은 1200 bps 터치로 Caterina를 부르므로
+  손댈 것이 없습니다. 부트로더 모드에서는 포트 번호가 바뀌니
+  <code>arduino-cli board list</code>나 <code>python -m macrokey ports</code>로 확인하세요.</p>
+  <p><b>터치가 통하지 않을 때만 타이밍 싸움이 됩니다.</b> 시리얼 포트를 열지 않는 스케치가
+  올라가 있거나 매크로가 폭주 중이면 부를 상대가 없습니다. 그때는
+  <code>RST</code>–<code>GND</code>를 빠르게 두 번 단락시킨 <b>직후에</b> upload를 실행하세요 —
+  부트로더는 8초만 떠 있습니다.</p>
 </div>
 
 <p class="small muted"><code>Keyboard</code>와 <code>Mouse</code>는 AVR 코어에 없으므로
