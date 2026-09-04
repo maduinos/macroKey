@@ -1238,24 +1238,15 @@ class MainWindow(QMainWindow):
 
     def _edit(self, key: int, gesture: str) -> None:
         dialog = SlotDialog(self, self.app, key, gesture)
-        if dialog.exec() != QDialog.Accepted:
-            self.capture_mouse.blockSignals(True)
-            self.capture_mouse.setChecked(bool(self.app.settings.recorder_capture_mouse))
-            self.capture_mouse.blockSignals(False)
-            self.anchor_mouse.blockSignals(True)
-            self.anchor_mouse.setChecked(bool(self.app.settings.recorder_anchor_mouse))
-            self.anchor_mouse.setEnabled(self.capture_mouse.isChecked())
-            self.anchor_mouse.blockSignals(False)
-            self._refresh_connection()
-            return
-        self.capture_mouse.blockSignals(True)
-        self.capture_mouse.setChecked(bool(self.app.settings.recorder_capture_mouse))
-        self.capture_mouse.blockSignals(False)
-        self.anchor_mouse.blockSignals(True)
-        self.anchor_mouse.setChecked(bool(self.app.settings.recorder_anchor_mouse))
-        self.anchor_mouse.setEnabled(self.capture_mouse.isChecked())
-        self.anchor_mouse.blockSignals(False)
+        accepted = dialog.exec() == QDialog.Accepted
+        # The recording checkboxes used to be read back here: the slot dialog
+        # carried its own copies of them, and closing it left this row showing
+        # the old values. They are only in this window now, so there is nothing
+        # to reconcile -- but the pad may well have connected or dropped while a
+        # modal dialog was over it, and that still has to be drawn.
         self._refresh_connection()
+        if not accepted:
+            return
         if dialog.result_action is not None:
             self.app.profile.set_action(key, gesture, dialog.result_action)
             self.app.profile.reclaim_storage()

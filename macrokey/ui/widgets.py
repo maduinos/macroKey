@@ -21,15 +21,20 @@ class ShortcutEdit(QLineEdit):
     none of that, and it is how every shortcut setting on this desktop already
     works.
 
-    This reads Qt key events rather than capturing globally: the dialog has
-    focus while it is open, so the combination arrives here and nowhere else --
-    which also means it cannot trigger whatever it is currently bound to.
+    This reads Qt key events, which is the fallback rather than the good path:
+    it only ever sees what the desktop chose to deliver to this window, so the
+    keys the compositor keeps for itself never arrive. `ui.key_grab` reads the
+    keyboard directly and is what the "Press keys" button uses when it can; this
+    stays for everywhere it cannot, and for typing a shortcut by hand.
     """
 
+    #: Ordered as `keycodes.MODIFIER_ORDER` spells a stored hotkey, so a
+    #: combination reads the same however it got into the field: pressed here,
+    #: read from the keyboard, or formatted back out of the pad.
     QT_MODIFIERS = (
         (Qt.ControlModifier, "ctrl"),
-        (Qt.ShiftModifier, "shift"),
         (Qt.AltModifier, "alt"),
+        (Qt.ShiftModifier, "shift"),
         (Qt.MetaModifier, "gui"),
     )
     #: Qt names these differently from macroKey's vocabulary.
@@ -63,23 +68,47 @@ class ShortcutEdit(QLineEdit):
 
     changed = Signal(str)
 
+    #: The empty-field prompt when nothing is being captured. An example rather
+    #: than an instruction, because the field is also typed into by hand.
+    IDLE_PLACEHOLDER = "ctrl+alt+shift+1"
+
     def __init__(self) -> None:
         super().__init__()
         self.capturing = False
-        self.setPlaceholderText("ctrl+alt+shift+1")
+        #: True while something else is reading the real keyboard for us. The
+        #: keys may still arrive here as well (a passive read is not exclusive),
+        #: and letting them through would either type into the field or capture
+        #: the combination a second time.
+        self.grabbing = False
+        self.setPlaceholderText(self.IDLE_PLACEHOLDER)
 
     def start_capture(self) -> None:
         """Next combination pressed fills the field."""
         self.capturing = True
+        self.grabbing = False
         self.clear()
         self.setPlaceholderText(tr("Press the shortcut..."))
         self.setFocus()
 
     def stop_capture(self) -> None:
         self.capturing = False
-        self.setPlaceholderText("ctrl+alt+shift+1")
+        self.grabbing = False
+        self.setPlaceholderText(self.IDLE_PLACEHOLDER)
+
+    def begin_grab(self) -> None:
+        """The keyboard is being read directly; show it and ignore Qt's copy."""
+        self.capturing = False
+        self.grabbing = True
+        self.clear()
+        self.setPlaceholderText(tr("Press the shortcut..."))
+        self.setFocus()
 
     def keyPressEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        if self.grabbing:
+            # Swallowed, not handled: the combination is being read from the
+            # kernel, and this is the same press arriving the long way round.
+            event.accept()
+            return
         # Typed editing stays available. Capture is a convenience for the common
         # case, not the only way in: some shortcuts are awkward or impossible to
         # press here -- anything the compositor swallows first, or a key this
@@ -122,6 +151,9 @@ class ShortcutEdit(QLineEdit):
         self.changed.emit(value)
 
     def keyReleaseEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        if self.grabbing:
+            event.accept()
+            return
         if event.key() in self.BARE_MODIFIERS and self.text().endswith("+"):
             self.setText("")
 

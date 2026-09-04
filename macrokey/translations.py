@@ -432,49 +432,42 @@ KO: dict[str, str] = {
     "Key {key} · {gesture}": "키 {key} · {gesture}",
     "Now: {description}": "현재: {description}",
     "Press keys": "키 입력받기",
-    "Fills the field from the next combination pressed. The field can also "
-    "just be typed into.": (
-        "다음에 누르는 조합으로 칸을 채웁니다. 칸에 직접 입력해도 됩니다."
+    "Stop": "중지",
+    "Fills the field from the next combination pressed on the keyboard. The "
+    "field can also just be typed into.": (
+        "키보드에서 다음에 누르는 조합으로 칸을 채웁니다. 칸에 직접 입력해도 됩니다."
     ),
     "Set": "적용",
     "Send a shortcut": "단축키 보내기",
-    "Or use the mouse at its current position": "또는 현재 위치에서 마우스 사용",
-    "Or replay something you do": "또는 직접 한 동작을 재생",
-    "Left click": "왼쪽 클릭",
-    "Right click": "오른쪽 클릭",
-    "Middle click": "가운데 클릭",
-    "Wheel up": "휠 위로",
-    "Wheel down": "휠 아래로",
-    "Runs at the current pointer. This direct action does not move or home "
-    "the cursor.": (
-        "현재 포인터 위치에서 실행됩니다. 이 동작은 커서를 옮기지 않습니다."
+    "Press keys reads the keyboard itself, so every key arrives as the key it "
+    "is. The field can also just be typed into.": (
+        "키 입력받기는 키보드를 직접 읽으므로, 어떤 키든 누른 그대로 들어옵니다. 칸에 "
+        "직접 입력해도 됩니다."
     ),
-    "Include mouse when recording": "녹음할 때 마우스 포함",
-    "Records clicks, wheel, and pointer movement. By default clicks use the "
-    "current pointer and movement is relative. Applies to the next "
-    "hold-to-record on the pad.": (
-        "클릭·휠·포인터 이동을 녹음합니다. 기본적으로 클릭은 현재 포인터를 쓰고 이동은 "
-        "상대 방식입니다. 패드에서 다음에 하는 홀드 녹음부터 적용됩니다."
+    "Listening. The combination is taken here, so it does not also do whatever "
+    "it is bound to today.": (
+        "듣는 중입니다. 누른 조합을 여기서 가져가므로, 지금 그 조합에 걸려 있는 동작은 "
+        "실행되지 않습니다."
     ),
-    "Replay from a fixed screen position (experimental)": (
-        "고정된 화면 위치에서 재생 (실험 기능)"
+    "Listening. These keys reach the desktop too, so a combination it owns "
+    "will act on it while you press it.": (
+        "듣는 중입니다. 누른 키가 데스크톱에도 전달되므로, 데스크톱이 쓰는 조합이면 "
+        "누르는 동안 그 동작도 실행됩니다."
     ),
-    "Moves the pointer to the top-left before both recording and replay. Use "
-    "only with the same monitor layout, scaling, pointer speed, and window "
-    "positions; otherwise the click can land elsewhere.": (
-        "녹음과 재생 모두 시작 전에 포인터를 좌측 상단으로 옮깁니다. 모니터 배치·배율·"
-        "포인터 속도·창 위치가 같을 때만 쓰세요. 아니면 클릭이 엉뚱한 곳에 떨어질 수 "
-        "있습니다."
+    "Reading this window only ({reason}). A key the desktop takes first never "
+    "arrives here; type that one into the field.": (
+        "이 창에서만 받는 중입니다 ({reason}). 데스크톱이 먼저 가져가는 키는 여기까지 "
+        "오지 않으니, 그런 키는 칸에 직접 입력하세요."
     ),
-    "Tap key {key}, then press and hold it within 250 ms for 3 seconds": (
-        "키 {key}을(를) 탭한 뒤 250 ms 안에 다시 눌러 3초 홀드"
+    "a recording is running": "녹음이 진행 중입니다",
+    "Read {value}, but this keypad cannot send it: {reason}": (
+        "{value}을(를) 읽었지만 이 키패드는 보낼 수 없습니다: {reason}"
     ),
-    "Hold key {key} on its own for 3 seconds": "키 {key}을(를) 단독으로 3초 홀드",
-    "{trigger} to record into this {gesture} slot (pixel turns red). Hold the "
-    "same key again to finish. What is captured appears in the main window as "
-    "it happens.": (
-        "{trigger}하면 이 {gesture} 슬롯에 녹음됩니다 (픽셀이 빨갛게 바뀝니다). 같은 키를 "
-        "다시 홀드하면 종료됩니다. 캡처되는 내용은 메인 창에 실시간으로 표시됩니다."
+    "no keyboard among the readable input devices": (
+        "읽을 수 있는 입력 장치 중에 키보드가 없습니다"
+    ),
+    "Stopped listening -- no key was pressed.": (
+        "아무 키도 누르지 않아 듣기를 멈췄습니다."
     ),
     "Clear {gesture} binding": "{gesture} 바인딩 지우기",
     "That is not a shortcut this keypad can send": (
