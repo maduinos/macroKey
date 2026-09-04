@@ -10,7 +10,7 @@ PC 앱은 설정·녹음할 때만 켭니다.
 지원 보드는 Pro Micro(ATmega32u4)와 ProMicro RP2040이고, 같은 펌웨어 소스로 돕니다.
 보드별 배선·플래싱은 [`docs/BOARDS.md`](docs/BOARDS.md)에 있습니다.
 
-버전: 펌웨어 `0.9.3` / 앱 `0.11.1`
+버전: 펌웨어 `0.9.4` / 앱 `0.15.0`
 
 ## 구성
 
@@ -172,5 +172,6 @@ Pro Micro는 `RST`–`GND`를 빠르게 두 번 단락시킵니다. 앱이 그 �
 | [`docs/HARDWARE.md`](docs/HARDWARE.md) | 전력·부품 (보드 공통) |
 | [`docs/PROTOCOL.md`](docs/PROTOCOL.md) | 시리얼 프로토콜 |
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | 내부 설계 |
+| [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) | 배포 바이너리에 함께 들어가는 제3자 코드와 라이선스 |
 
 개발용 CLI: `python -m macrokey --help` (배포 바이너리에는 GUI만).
