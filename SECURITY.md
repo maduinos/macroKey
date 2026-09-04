@@ -19,4 +19,4 @@ profiles should be handled as sensitive data too.
 
 If you find unsafe keyboard behavior or private data exposure, contact Maduinos through:
 
-<https://biz.maduinos.com/>
+<https://maduinos.blogspot.com/>
