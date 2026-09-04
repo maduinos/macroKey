@@ -4,6 +4,8 @@
 
 # Contributing
 
+빌드·실행·릴리스 절차는 [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md)에 있습니다.
+
 ```bash
 python -m pip install -r requirements.txt
 pytest

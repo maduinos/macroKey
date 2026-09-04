@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>macroKey 문서</title>
+<style>
+:root {
+  --ground:#F1F4F0; --surface:#FFFFFF;
+  --ink:#14201C; --ink-2:#55645E; --ink-3:#7C8A84;
+  --rule:#D3DBD5; --accent:#0E8F87; --accent-soft:#E0F0EE;
+  --f-sans: Ubuntu, "Segoe UI", -apple-system, BlinkMacSystemFont, "Noto Sans KR", Arial, sans-serif;
+  --f-mono: ui-monospace, "JetBrains Mono", "DejaVu Sans Mono", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ground:#0E1512; --surface:#16201C;
+    --ink:#E7EEE9; --ink-2:#9DAEA7; --ink-3:#74857E;
+    --rule:#26332E; --accent:#38C6B5; --accent-soft:#10312D;
+  }
+}
+* { box-sizing:border-box; }
+body {
+  margin:0; background:var(--ground); color:var(--ink);
+  font-family:var(--f-sans); font-size:15px; line-height:1.62;
+  -webkit-font-smoothing:antialiased;
+}
+.wrap { max-width:760px; margin:0 auto; padding:56px 24px 80px; }
+h1 { font-size:30px; line-height:1.25; margin:0 0 6px; letter-spacing:-0.01em; }
+.sub { color:var(--ink-2); margin:0 0 40px; }
+h2 {
+  font-size:13px; text-transform:uppercase; letter-spacing:0.09em;
+  color:var(--ink-3); margin:38px 0 12px; font-weight:600;
+}
+ul { list-style:none; margin:0; padding:0; }
+li { border-top:1px solid var(--rule); }
+li:last-child { border-bottom:1px solid var(--rule); }
+a.row {
+  display:block; padding:14px 4px; text-decoration:none; color:inherit;
+}
+a.row:hover { background:var(--accent-soft); }
+a.row .t { font-weight:600; color:var(--accent); }
+a.row .d { display:block; color:var(--ink-2); font-size:13.5px; margin-top:2px; }
+.note {
+  margin-top:44px; padding-top:20px; border-top:1px solid var(--rule);
+  color:var(--ink-3); font-size:13.5px;
+}
+.note a { color:var(--accent); }
+code { font-family:var(--f-mono); font-size:0.92em; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>macroKey 문서</h1>
+<p class="sub">8버튼 매크로 키패드. 패드는 앱 없이 USB 키보드/마우스로 동작하고,
+PC 앱은 설정·녹음할 때만 켭니다.</p>
+
+<h2>쓰는 사람</h2>
+<ul>
+  <li><a class="row" href="manual.html">
+    <span class="t">사용 설명서</span>
+    <span class="d">앱 화면 하나하나, 녹음·재생·프로필</span></a></li>
+  <li><a class="row" href="https://github.com/maduinos/macroKey/releases/latest">
+    <span class="t">최신 릴리스 내려받기</span>
+    <span class="d">Windows·Linux 실행 파일. 설치 과정도 Python도 필요 없습니다</span></a></li>
+</ul>
+
+<h2>만드는 사람 — 배선</h2>
+<ul>
+  <li><a class="row" href="boards/wiring-promicro.html">
+    <span class="t">Pro Micro (ATmega32u4) 배선 가이드</span>
+    <span class="d">기본 보드. 핀 맵, 버튼 1개 상세, 전체 결선도, 부품 목록</span></a></li>
+  <li><a class="row" href="boards/wiring-promicro-rp2040.html">
+    <span class="t">ProMicro RP2040 배선 가이드</span>
+    <span class="d">확장 보드. 매크로 용량 70배</span></a></li>
+</ul>
+<p class="note" style="margin-top:14px;border:0;padding:0;">
+인쇄해서 작업대에 두고 쓰시라고 만든 문서입니다.</p>
+
+<h2>설계</h2>
+<ul>
+  <li><a class="row" href="https://github.com/maduinos/macroKey/blob/main/docs/BOARDS.md">
+    <span class="t">지원 보드</span>
+    <span class="d">보드별 차이, 펌웨어 설치, 새 보드 추가 체크리스트</span></a></li>
+  <li><a class="row" href="https://github.com/maduinos/macroKey/blob/main/docs/HARDWARE.md">
+    <span class="t">하드웨어</span>
+    <span class="d">전력 예산, LED 합성, 부팅 안전장치</span></a></li>
+  <li><a class="row" href="https://github.com/maduinos/macroKey/blob/main/docs/PROTOCOL.md">
+    <span class="t">시리얼 프로토콜</span>
+    <span class="d">호스트와 패드가 주고받는 메시지</span></a></li>
+  <li><a class="row" href="https://github.com/maduinos/macroKey/blob/main/docs/ARCHITECTURE.md">
+    <span class="t">아키텍처</span>
+    <span class="d">8개 버튼을 96개 슬롯으로, 메모리 예산, 재생 속도</span></a></li>
+  <li><a class="row" href="https://github.com/maduinos/macroKey/blob/main/docs/DEVELOPMENT.md">
+    <span class="t">소스에서 빌드하기</span>
+    <span class="d">저장소 구조, 개발용 CLI, 릴리스 절차</span></a></li>
+</ul>
+
+<p class="note">
+소스: <a href="https://github.com/maduinos/macroKey">github.com/maduinos/macroKey</a> ·
+MIT (배포 바이너리에 포함된 제3자 코드는
+<a href="https://github.com/maduinos/macroKey/blob/main/THIRD_PARTY_NOTICES.md">THIRD_PARTY_NOTICES</a> 참고)<br>
+만든 사람: maduinos · <a href="https://maduinos.blogspot.com/">maduinos.blogspot.com</a>
+</p>
+
+</div>
+</body>
+</html>

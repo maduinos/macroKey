@@ -8,10 +8,12 @@ macroKey는 여러 보드에서 같은 펌웨어 소스로 돕니다. 보드가 
 저장소 크기와 종류, 이름, 부트로더** 넷뿐이고, 나머지 — 프로토콜, 매크로 형식, 앱, 녹음,
 LED 동작 — 는 전부 공통입니다.
 
+**기본 보드는 Pro Micro(ATmega32u4)**이고, RP2040은 매크로 용량을 위한 확장입니다.
+
 | 보드 | id | 저장소 | 슬롯당 최대 | 첫 플래싱 | 문서 |
 | --- | --- | --- | --- | --- | --- |
-| Pro Micro (ATmega32u4) | `promicro` | 1 KB EEPROM (308 레코드) | 255 | RST–GND 더블탭 | [promicro.md](boards/promicro.md) |
-| ProMicro RP2040 (16 MB) | `promicro-rp2040` | 65,520 B LittleFS (21,801 레코드) | 21,800 | BOOTSEL | [promicro-rp2040.md](boards/promicro-rp2040.md) |
+| **Pro Micro (ATmega32u4)** — 기본 | `promicro` | 1 KB EEPROM (308 레코드) | 255 | RST–GND 더블탭 | [promicro.md](boards/promicro.md) |
+| ProMicro RP2040 (16 MB) — 확장 | `promicro-rp2040` | 65,520 B LittleFS (21,801 레코드) | 21,800 | BOOTSEL | [promicro-rp2040.md](boards/promicro-rp2040.md) |
 
 `id`는 펌웨어가 `HELLO board=`로 보고하는 이름이자, 펌웨어 이미지 파일 이름이자, 문서 파일
 이름입니다. 셋이 어긋날 수 없도록 하나의 문자열을 씁니다.

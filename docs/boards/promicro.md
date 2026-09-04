@@ -11,7 +11,7 @@ macroKey의 원래 하드웨어입니다. **5 V / 16 MHz 버전**이어야 합�
 `VCC`가 3.3 V라서 WS2812B가 제대로 켜지지 않습니다.
 
 > 그림 배선도(핀 맵, 버튼 1개 상세, WS2812B 결선, 전체 결선도, 전력 예산)는
-> [`wiring-promicro.html`](wiring-promicro.html)에 있습니다. 인쇄해서 작업대에 두고 쓰세요.
+> [온라인 배선 가이드](https://maduinos.github.io/macroKey/boards/wiring-promicro.html)에 있습니다. 인쇄해서 작업대에 두고 쓰세요.
 
 ## 핀 맵
 
