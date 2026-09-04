@@ -621,7 +621,14 @@ class MainWindow(QMainWindow):
                 "Fixed position is experimental. It homes to the top-left and depends "
                 "on the same monitor layout, scaling, pointer speed/acceleration, window "
                 "positions, and application state. Test fixed-position macros on a safe "
-                "target before assigning them to destructive actions."
+                "target before assigning them to destructive actions.\n\n"
+                "Clicking the Windows taskbar is the trap worth naming. Windows 11 "
+                "centres taskbar icons by default, so every icon moves whenever the "
+                "number of open apps changes -- opening macroKey itself is enough to "
+                "shift them. A macro aimed at one then lands on its neighbour. Set "
+                "Settings > Personalisation > Taskbar > Taskbar behaviours > Taskbar "
+                "alignment to Left and pin what you aim at: pinned icons keep their "
+                "place and new windows are added to their right."
             ),
         )
         self._offer_flat_pointer(asked_for=True)
@@ -954,8 +961,8 @@ class MainWindow(QMainWindow):
                 "which cancels most of that. It does not cancel all of it: a "
                 "fast movement replays at the limit of what USB carries, so any "
                 "delay stretches the gesture and the curve then multiplies it by "
-                "less -- the macro lands short. Turning acceleration off removes "
-                "the variable entirely.\n\n"
+                "less, which can put the macro short of where you drew it. "
+                "Turning acceleration off removes the variable entirely.\n\n"
                 "Switch to flat pointer acceleration? It changes how the mouse "
                 "feels everywhere, not just in macros. To undo it later:\n\n"
                 "{undo}"
@@ -996,8 +1003,7 @@ class MainWindow(QMainWindow):
             because=tr(
                 "The recording you just made moves the pointer faster than the "
                 "keypad can replay a count at a time, so this desktop's "
-                "acceleration decides how far it goes and the macro lands short "
-                "of where you drew it.\n\n"
+                "acceleration has a say in how far it goes.\n\n"
             ),
         )
 
