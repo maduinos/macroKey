@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import datetime
 import logging
+import os
 import queue
 import sys
 import threading
@@ -15,7 +16,7 @@ import time
 from collections.abc import Callable
 
 from PySide6.QtCore import QEvent, QObject, Qt, QTimer, Signal
-from PySide6.QtGui import QAction, QActionGroup, QColor
+from PySide6.QtGui import QAction, QActionGroup, QColor, QIcon
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -61,6 +62,7 @@ from ..config.model import (
 )
 from ..device import DeviceError, candidates
 from ..i18n import LANGUAGES, active_language, language_name, set_language, tr
+from ..runtime import resource_path
 from ..session import RecordingSession
 from .describe import describe_binding
 from .slot_dialog import SlotDialog
@@ -2429,8 +2431,21 @@ class MainWindow(QMainWindow):
         super().closeEvent(event)
 
 
+def _apply_window_icon(qt_app: QApplication) -> None:
+    """Give every window the app icon, dialogs and message boxes included.
+
+    Windows takes the taskbar icon from the exe, so this is what fixes Linux and
+    every secondary window on both. A build packaged without the asset keeps the
+    toolkit default rather than failing to open.
+    """
+    icon = QIcon(resource_path(os.path.join("assets", "app_icon.png")))
+    if not icon.isNull():
+        qt_app.setWindowIcon(icon)
+
+
 def run_gui(port: str = "") -> int:
     qt_app = QApplication.instance() or QApplication(sys.argv)
+    _apply_window_icon(qt_app)
     # Before the first widget exists. Labels, tooltips and the pinned button
     # widths are all computed during construction, so a language chosen after
     # this point would only reach whatever is built later.

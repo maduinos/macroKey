@@ -99,11 +99,31 @@ class BuildReleaseEnvironmentTests(unittest.TestCase):
         self.xcb_library = Path(self.temp_dir.name) / "libxcb-cursor.so.0"
         self.xcb_library.touch()
 
-    def run_build(self, *, version="3.12.3", supported=True):
+        # Stands in for Git Bash's cygpath. Kept on its own PATH entry so only
+        # the test that asks for it finds one, the way Linux finds none.
+        self.cygwin_bin = Path(self.temp_dir.name) / "cygwin-bin"
+        self.cygwin_bin.mkdir()
+        cygpath = self.cygwin_bin / "cygpath"
+        cygpath.write_text(
+            textwrap.dedent(
+                r"""\
+                #!/usr/bin/env bash
+                set -euo pipefail
+                printf 'C:%s\n' "$(printf '%s' "$2" | tr '/' '\\')"
+                """
+            ),
+            encoding="utf-8",
+        )
+        cygpath.chmod(cygpath.stat().st_mode | stat.S_IXUSR)
+
+    def run_build(self, *, version="3.12.3", supported=True, cygpath=False):
+        search_path = f"{self.fake_bin}:/usr/bin:/bin"
+        if cygpath:
+            search_path = f"{self.cygwin_bin}:{search_path}"
         env = os.environ.copy()
         env.update(
             {
-                "PATH": f"{self.fake_bin}:/usr/bin:/bin",
+                "PATH": search_path,
                 "FAKE_PYTHON_LOG": str(self.python_log),
                 "FAKE_PYTHON_VERSION": version,
                 "FAKE_VERSION_SUPPORTED": "1" if supported else "0",
@@ -130,6 +150,24 @@ class BuildReleaseEnvironmentTests(unittest.TestCase):
         self.assertIn(f"--target {dependency_dir}", invocations)
         self.assertIn(f"PYTHONPATH={dependency_dir}", invocations)
         self.assertTrue((self.project_dir / "releases" / "linux" / "macrokey").is_file())
+
+    def test_dependency_path_reaches_python_in_its_own_spelling(self):
+        """The Git Bash case: POSIX paths the native Python cannot read.
+
+        MSYS rewrites path-shaped *arguments* on their way to a Windows binary
+        but never touches environment variables, so a PYTHONPATH of
+        ``/c/Users/...`` pointed the interpreter at nothing and the build died
+        claiming the dependencies it had just installed were missing.
+        """
+        result = self.run_build(cygpath=True)
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        dependency_dir = self.project_dir / ".build-deps" / "python3.12"
+        native = "C:" + str(dependency_dir).replace("/", "\\")
+        invocations = self.python_log.read_text(encoding="utf-8")
+        self.assertIn(f"PYTHONPATH={native}", invocations)
+        self.assertIn(f"--target {native}", invocations)
+        self.assertNotIn(f"PYTHONPATH={dependency_dir}", invocations)
 
     def test_python_older_than_3_10_is_rejected_before_install(self):
         result = self.run_build(version="3.9.18", supported=False)
