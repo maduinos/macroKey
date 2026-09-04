@@ -17,6 +17,7 @@ pytest.importorskip("PySide6")
 
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
+from macrokey.config import model  # noqa: E402
 from macrokey.ui.app import MainWindow  # noqa: E402
 
 # ------------------------------------------------------------- detection --
@@ -325,3 +326,90 @@ def test_turning_mouse_capture_on_is_what_raises_it(window, monkeypatch) -> None
 
     window._mouse_capture_toggled(True)
     assert len(window.box.questions) == 1
+
+
+# ------------------------------------------- the one evidence-backed re-ask --
+#
+# The startup question is asked before there is anything to point at, and a no
+# there is remembered for good. These cover the single follow-up allowed once a
+# recording exists that the setting will actually move.
+
+
+def drag_macro(*slices: int) -> list:
+    """A macro of `slices` movement slices, each its own pause-separated run."""
+    steps = []
+    for counts in slices:
+        while counts > 127:  # a slice past a signed byte becomes several records
+            steps.append(model.Action(kind="mouse_move", dx=127))
+            counts -= 127
+        steps.append(model.Action(kind="mouse_move", dx=counts))
+        steps.append(model.Action(kind="delay", delay_ms=50))
+    return steps
+
+
+def test_a_slow_drag_is_not_worth_warning_about() -> None:
+    """It is replayed a count at a time, at the speed the hand made it, so
+    whatever curve is in force applies to the replay as it applied to the
+    hand."""
+    assert model.accel_sensitive_macro_slots([drag_macro(20, 25)]) == []
+
+
+def test_a_fast_drag_is() -> None:
+    assert model.accel_sensitive_macro_slots([drag_macro(100)]) == [0]
+
+
+def test_a_slice_split_across_records_is_measured_whole() -> None:
+    """227 counts is one slice the host had to write down twice, not two slow
+    ones -- `runMoves` replays it as one, so it is one here too."""
+    assert model.accel_sensitive_macro_slots([drag_macro(227)]) == [0]
+
+
+def test_a_fast_recording_reopens_the_question_once(window, monkeypatch) -> None:
+    accel(monkeypatch, "default")
+    window.app.settings.pointer_accel_declined = True
+    window.app.profile.device_macros = [drag_macro(100)]
+
+    window._offer_flat_pointer_for_fast_macro()
+
+    assert len(window.box.questions) == 1
+    assert "lands short" in window.box.questions[0], "it has to say what changed"
+    assert window.app.settings.pointer_accel_evidence_shown
+
+    # And never again: a no that keeps being re-asked is not being respected.
+    window._offer_flat_pointer_for_fast_macro()
+    assert len(window.box.questions) == 1
+
+
+def test_a_slow_recording_says_nothing(window, monkeypatch) -> None:
+    accel(monkeypatch, "default")
+    window.app.settings.pointer_accel_declined = True
+    window.app.profile.device_macros = [drag_macro(20)]
+
+    window._offer_flat_pointer_for_fast_macro()
+
+    assert window.box.questions == []
+    assert not window.app.settings.pointer_accel_evidence_shown, "unspent"
+
+
+def test_the_follow_up_is_not_spent_on_someone_who_never_declined(
+    window, monkeypatch
+) -> None:
+    """The startup offer still speaks for itself; this would be a second copy
+    of the same question in one session."""
+    accel(monkeypatch, "default")
+    window.app.settings.pointer_accel_declined = False
+    window.app.profile.device_macros = [drag_macro(100)]
+
+    window._offer_flat_pointer_for_fast_macro()
+
+    assert window.box.questions == []
+
+
+def test_nothing_is_said_when_the_desktop_is_already_flat(window, monkeypatch) -> None:
+    accel(monkeypatch, "flat")
+    window.app.settings.pointer_accel_declined = True
+    window.app.profile.device_macros = [drag_macro(100)]
+
+    window._offer_flat_pointer_for_fast_macro()
+
+    assert window.box.questions == []

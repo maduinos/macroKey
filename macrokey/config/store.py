@@ -127,6 +127,12 @@ class Settings:
     #: on someone's desktop, so a no stays no -- Help > Mouse macro accuracy
     #: asks again for anyone who changes their mind.
     pointer_accel_declined: bool = False
+    #: Whether the one evidence-backed re-offer has been spent. The startup
+    #: question is asked before there is anything to point at; this is the
+    #: single follow-up allowed once a recording exists that the setting will
+    #: actually move. One, not a reminder: a no that keeps being re-asked is
+    #: not being respected.
+    pointer_accel_evidence_shown: bool = False
     #: Keep the app current: check the project's releases at startup and, when
     #: there is a newer one, download and stage it (a restart applies it).
     #: `MACROKEY_NO_UPDATE=1` overrules this for a whole machine.
@@ -184,6 +190,7 @@ class Settings:
             "recorder_anchor_mouse",
             "capture_setup_declined",
             "pointer_accel_declined",
+            "pointer_accel_evidence_shown",
             "auto_update_app",
             "auto_update_firmware",
         ):

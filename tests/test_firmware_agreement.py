@@ -391,10 +391,47 @@ def test_a_move_is_replayed_at_the_speed_it_was_recorded_at(harness) -> None:
 
     assert sum(dx for dx, _ in steps) == 500, "the pointer must still land there"
     assert all(dy == 0 for _, dy in steps)
-    # 100 counts over 50 ms is 2 counts per USB frame, which is what the mouse
-    # itself sent. Before this, it was five reports of 100.
-    assert max(abs(dx) for dx, _ in steps) <= 3
-    assert len(steps) >= 200
+    # 100 counts over 50 ms is 3 counts per report, against the 2 the mouse
+    # itself sent -- reports are paced at 3/2 of the USB frame rather than at
+    # the frame, so a late one still has room (Config.h explains why). Before
+    # any of this it was five reports of 100.
+    assert max(abs(dx) for dx, _ in steps) <= 4
+    assert len(steps) >= 150
+
+
+def test_a_fast_move_leaves_room_between_reports(harness) -> None:
+    """Pacing must not aim a report at every USB frame.
+
+    The frame is the floor, not a budget. At one report per frame a report
+    delayed by anything -- the pixel's bit-bang holding interrupts off, a
+    busier USB device once the editor opens the serial port -- has already
+    missed its deadline, and `emitMove` paces against an absolute deadline so
+    it cannot catch up. The gesture stretches, and a desktop with pointer
+    acceleration on multiplies the slower movement by less: the macro lands
+    short, by more the faster it was drawn. That was reported on Windows as
+    "the macro moves less far when the app is open", and it is the app opening
+    the serial port that made the difference.
+
+    A 50 ms slice has 50 frames on a board polled every millisecond. Asking for
+    all 50 is what left no room; this holds the replay to comfortably fewer
+    while the pointer still travels exactly as far.
+    """
+    slices = 5
+    blob = binary.encode_profile(recorded_drag(counts=100, slices=slices))
+
+    steps = moved(run(harness, "replay", "0", blob=blob))
+
+    assert sum(dx for dx, _ in steps) == 500, "the distance is not negotiable"
+    # Read off the firmware rather than restated here: a board that has to poll
+    # more slowly gets fewer frames to fit reports into, and the room this test
+    # is about is the ratio, not a count.
+    built = fields(run(harness, "layout"))
+    frames_per_slice = built["move_slice_ms"] // built["hid_poll_interval_ms"]
+    per_slice = len(steps) / slices
+    assert per_slice <= frames_per_slice * 0.8, (
+        f"{per_slice:.0f} reports into {frames_per_slice} frames leaves no room "
+        "for a late one"
+    )
 
 
 def test_a_slice_too_long_for_one_record_is_still_one_slice(harness) -> None:
@@ -406,9 +443,11 @@ def test_a_slice_too_long_for_one_record_is_still_one_slice(harness) -> None:
     steps = moved(run(harness, "replay", "0", blob=blob))
 
     assert sum(dx for dx, _ in steps) == 1500
-    # 500 counts across one 50 ms slice is 10 a frame, however many records the
-    # host needed to write it down.
-    assert max(abs(dx) for dx, _ in steps) <= 11
+    # 500 counts across one 50 ms slice is 16 a report at the 3/2 pacing,
+    # however many records the host needed to write it down. Still a long way
+    # below a flick: the whole point of slicing is that no single report is
+    # large enough for the acceleration curve to multiply.
+    assert max(abs(dx) for dx, _ in steps) <= 17
 
 
 def test_authored_pauses_do_not_truncate_the_keys_after_them(harness) -> None:

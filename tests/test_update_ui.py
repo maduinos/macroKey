@@ -23,6 +23,13 @@ from macrokey.ui.app import MainWindow  # noqa: E402
 @pytest.fixture
 def window(monkeypatch):
     QApplication.instance() or QApplication([])
+    # Before the window exists: `__init__` arms the auto-connect on a zero
+    # timer, so patching it afterwards is already too late. The timer fires
+    # during whatever later test next lets Qt run, and a profile that does not
+    # match the pad's opens a *modal* box there -- `_resolve_profile_mismatch`
+    # calls `exec()`, and offscreen nobody can answer it. The suite then hangs
+    # in a test that has nothing to do with the one that armed it.
+    monkeypatch.setattr(MainWindow, "_autoconnect", lambda _self: None)
     made = MainWindow()
     # A real keypad on the machine running the tests must not be touched, and
     # the window auto-connects to one at startup. Left alone, that connect is
@@ -41,6 +48,16 @@ def window(monkeypatch):
     made.flashed = []
     monkeypatch.setattr(made, "_update_firmware", lambda *args: made.flashed.append(args))
     return made
+
+
+@pytest.fixture
+def notices(window, monkeypatch):
+    """What went into a message box, without one opening."""
+    seen: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        MainWindow, "_notify", lambda _self, title, text: seen.append((title, text))
+    )
+    return seen
 
 
 def collect(signal) -> list:
@@ -199,16 +216,16 @@ def test_a_source_checkout_says_so_rather_than_pretending_to_check(
     assert any("git pull" in message for message in messages)
 
 
-def test_a_write_that_did_not_happen_is_not_reported_as_one(window) -> None:
+def test_a_write_that_did_not_happen_is_not_reported_as_one(window, notices) -> None:
     """`firmware.update` decides again what to write and can decide nothing.
     The link still has to come back, but "installed" about a write that never
     happened is a lie the status bar has no way to take back."""
     said = collect(window.statusMessage)
-    window._firmware_update_finished("")
+    window._firmware_update_finished("9.9.8", "")
     assert any("already current" in message for message in said)
     assert not any("updated to" in message for message in said)
 
-    window._firmware_update_finished("9.9.9")
+    window._firmware_update_finished("9.9.8", "9.9.9")
     assert any("updated to 9.9.9" in message for message in said)
 
 
@@ -227,3 +244,81 @@ def test_a_question_on_screen_holds_the_flash_off(window, monkeypatch) -> None:
     window._profile_prompt_open = False
     pending.pop()()
     assert window.flashed == [(DEFAULT_BOARD.id, "0.0.1", "9.9.9")]
+
+
+# ------------------------------------------------ saying what an update did --
+#
+# Both updates install themselves with nobody watching. A version number alone
+# leaves someone to work out why the app -- or the pad -- they did not choose to
+# change now behaves differently, which is the shape of a false bug report.
+
+
+def test_the_release_notes_go_in_the_box(window, notices) -> None:
+    window._app_update_ready("9.9.9", "Fixed the **thing** that was `broken`.")
+
+    _title, text = notices[0]
+    assert "9.9.9" in text
+    assert "Fixed the thing that was broken." in text, "markdown is punctuation here"
+
+
+def test_the_file_listing_is_not_release_notes(window, notices) -> None:
+    """The workflow writes the changelog, a rule, then what it uploaded. Only
+    the half above the rule answers "what changed"."""
+    window._app_update_ready(
+        "9.9.9", "Made the pointer land where you drew it.\n\n---\n\n- macrokey.exe"
+    )
+
+    _title, text = notices[0]
+    assert "Made the pointer land where you drew it." in text
+    assert "macrokey.exe" not in text
+
+
+def test_a_release_with_no_notes_still_says_it_installed(window, notices) -> None:
+    window._app_update_ready("9.9.9", "")
+
+    _title, text = notices[0]
+    assert "9.9.9" in text
+    assert "What changed" not in text, "an empty heading is worse than none"
+
+
+def test_a_very_long_release_note_is_cut(window, notices) -> None:
+    window._app_update_ready("9.9.9", "\n".join(f"line {n}" for n in range(500)))
+
+    _title, text = notices[0]
+    assert len(text) < app_module.RELEASE_SUMMARY_MAX_CHARS + 500
+    assert "…" in text
+
+
+def test_a_reflashed_pad_says_so_rather_than_only_mentioning_it(
+    window, notices
+) -> None:
+    """It is triggered by plugging a cable in and takes the keypad away for a
+    few seconds. A status bar line scrolls past; this must not."""
+    window._firmware_update_finished("0.9.3", "0.9.4")
+
+    title, text = notices[0]
+    assert "firmware" in title.lower()
+    assert "0.9.3" in text and "0.9.4" in text
+    assert "macros were not touched" in text, "the first worry is the macros"
+
+
+def test_nothing_is_announced_when_nothing_was_written(window, notices) -> None:
+    window._firmware_update_finished("0.9.4", "")
+
+    assert notices == []
+
+
+def test_about_names_who_made_it_and_where_to_find_them(window, monkeypatch) -> None:
+    """The one place the app points outside itself, so the address has to be
+    both correct and clickable."""
+    shown: list[str] = []
+    monkeypatch.setattr(
+        app_module.QMessageBox, "setText", lambda _self, text: shown.append(text)
+    )
+    monkeypatch.setattr(app_module.QMessageBox, "exec", lambda _self: 0)
+
+    window._show_about()
+
+    assert "maduinos" in shown[0]
+    assert app_module.MADUINOS_URL in shown[0]
+    assert f'href="{app_module.MADUINOS_URL}"' in shown[0], "it must be a link"

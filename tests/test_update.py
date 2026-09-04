@@ -409,3 +409,58 @@ def test_a_download_that_cannot_be_put_in_place_says_so(tmp_path) -> None:
     (into / "thing.bin").mkdir()  # the target name is not writable as a file
     with pytest.raises(UpdateError, match="in place"):
         releases.fetch_asset(release, "thing.bin", into)
+
+
+# --------------------------------------------- the notes that reach a person --
+#
+# `tools/release_notes.py` is what puts the changelog in the release body, and
+# the app shows that body after installing an update it chose to install. A
+# body that says only which files were uploaded answers the wrong question.
+
+
+def release_notes_module():
+    """Imports the tool by path -- `tools/` is scripts, not an importable package."""
+    import importlib.util
+
+    path = Path(__file__).resolve().parent.parent / "tools" / "release_notes.py"
+    spec = importlib.util.spec_from_file_location("release_notes", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+CHANGELOG_SAMPLE = """# Changelog
+
+## 0.14.0 — 2026-09-04
+
+Mouse macros land where they were drawn.
+
+- **Pacing** now leaves room.
+
+## 0.13.0 — 2026-09-04
+
+An older release nobody asked about.
+"""
+
+
+def test_the_section_is_the_one_version_asked_for() -> None:
+    body = release_notes_module().section(CHANGELOG_SAMPLE, "0.14.0")
+
+    assert "Mouse macros land where they were drawn." in body
+    assert "older release" not in body, "it must stop at the next heading"
+
+
+def test_the_date_belongs_to_the_heading_not_the_notes() -> None:
+    body = release_notes_module().section(CHANGELOG_SAMPLE, "0.14.0")
+
+    assert not body.startswith("—")
+
+
+def test_an_unreleased_version_has_no_section() -> None:
+    """The workflow falls back rather than publishing an empty release note."""
+    assert release_notes_module().section(CHANGELOG_SAMPLE, "9.9.9") == ""
+
+
+def test_a_version_that_is_a_prefix_of_another_is_not_matched() -> None:
+    """`0.1` must not answer for `0.14.0`."""
+    assert release_notes_module().section(CHANGELOG_SAMPLE, "0.1") == ""

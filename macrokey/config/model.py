@@ -365,6 +365,47 @@ class KeySlot:
         )
 
 
+#: A movement slice larger than this is replayed at the firmware's pacing cap
+#: rather than at one report per count -- which is the point where the
+#: desktop's acceleration curve stops cancelling out and starts deciding how
+#: far the pointer actually goes.
+#:
+#: It mirrors the budget the firmware computes in `KeyEngine::emitMove`:
+#: MK_MACRO_MOVE_SLICE_MS * MK_MACRO_MOVE_PACE_DEN / (poll * MK_MACRO_MOVE_PACE_NUM),
+#: which is 50 * 2 / (1 * 3) on both boards today. Duplicated rather than
+#: derived because this is only used to decide whether to *say* something, and
+#: a number that drifts by a count or two changes nothing about that.
+ACCEL_SENSITIVE_SLICE_COUNTS = 33
+
+
+def accel_sensitive_macro_slots(macros: list[list[Action]]) -> list[int]:
+    """Slots whose mouse movement is fast enough for acceleration to move it.
+
+    Consecutive move records are one slice of motion -- the host splits a slice
+    only because a count past 127 does not fit in a signed byte -- so they are
+    summed before being measured, exactly as `KeyEngine::runMoves` does.
+
+    A slow drag is replayed a count at a time, at the speed the hand made it,
+    and any acceleration curve applies to the replay as it applied to the hand.
+    A fast one cannot be: there are only so many USB frames in the pause, so
+    the counts arrive in larger steps than the mouse sent them, and the curve
+    no longer cancels. Those are the recordings worth warning about.
+    """
+    sensitive: list[int] = []
+    for slot, macro in enumerate(macros):
+        run_x = run_y = 0
+        for action in list(macro) + [Action()]:
+            if action.kind == "mouse_move":
+                run_x += abs(action.dx)
+                run_y += abs(action.dy)
+                continue
+            if max(run_x, run_y) > ACCEL_SENSITIVE_SLICE_COUNTS:
+                sensitive.append(slot)
+                break
+            run_x = run_y = 0
+    return sensitive
+
+
 def macro_records(macro: list[Action]) -> int:
     """How many 3-byte records a compiled macro occupies on the device.
 

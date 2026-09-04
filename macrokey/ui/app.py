@@ -10,6 +10,7 @@ import datetime
 import logging
 import os
 import queue
+import re
 import sys
 import threading
 import time
@@ -55,6 +56,7 @@ from ..config.model import (
     EDITABLE_GESTURES,
     MAX_TEXT_SPEED_MS,
     MIN_TEXT_SPEED_MS,
+    accel_sensitive_macro_slots,
     default_profile,
     macro_storage_usage,
     text_speed_shown,
@@ -172,13 +174,16 @@ class MainWindow(QMainWindow):
     #: Firmware is on, so the pad can be connected to.
     flashSucceeded = Signal()
     recordingChanged = Signal()
-    #: A newer app release was found, downloaded and put in place: its version.
-    appUpdateReady = Signal(str)
+    #: A newer app release was found, downloaded and put in place: its version
+    #: and the release's own notes. The notes travel with it because an update
+    #: that installs itself has to be able to say what it changed -- a version
+    #: number alone leaves someone to guess why the app now behaves differently.
+    appUpdateReady = Signal(str, str)
     #: The pad is behind: board id, the version it runs, the version on offer.
     firmwareUpdateFound = Signal(str, str, str)
-    #: A firmware update finished: the version written, or empty if it turned
-    #: out there was nothing to write after all.
-    firmwareUpdateFinished = Signal(str)
+    #: A firmware update finished: the version replaced and the version
+    #: written, the latter empty if it turned out there was nothing to write.
+    firmwareUpdateFinished = Signal(str, str)
     profileMismatch = Signal()
     profileAdopted = Signal(object)
     syncSucceeded = Signal(str)
@@ -208,9 +213,9 @@ class MainWindow(QMainWindow):
         #: it keeps reporting the same version -- so asking the network again on
         #: each retry of a flapping cable would be all cost and no news.
         self._firmware_checked: set[str] = set()
-        #: Set once a downloaded release is in place, so the restart notice is
-        #: shown once rather than on every later check.
-        self._app_update_staged = ""
+        #: `(version, notes)` once a downloaded release is in place, so the
+        #: restart notice is shown once rather than on every later check.
+        self._app_update_staged: tuple[str, str] = ()
         #: The open non-modal question, if any. Nothing owns it otherwise.
         self._open_question = None
         #: Same, for a notice. Separate, so one cannot evict the other.
@@ -431,8 +436,13 @@ class MainWindow(QMainWindow):
         help_menu.addAction(check_updates)
         help_menu.addAction(auto_app)
         help_menu.addAction(auto_firmware)
+        about = QAction(tr("About macroKey"), self)
+        about.triggered.connect(lambda: self._show_about())
+
         help_menu.addSeparator()
         help_menu.addMenu(self._build_language_menu())
+        help_menu.addSeparator()
+        help_menu.addAction(about)
 
     def _build_language_menu(self) -> QMenu:
         """The language picker, under Help because it is set once and forgotten.
@@ -615,6 +625,25 @@ class MainWindow(QMainWindow):
             ),
         )
         self._offer_flat_pointer(asked_for=True)
+
+    def _show_about(self) -> None:
+        """Who made this, and where the rest of it is.
+
+        Rich text for one reason: the address is worth clicking. `exec` rather
+        than the non-modal `_notify` because a person opened this from a menu
+        and is waiting on it, which is the case a modal box is actually for.
+        """
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Information)
+        box.setWindowTitle(tr("About macroKey"))
+        box.setTextFormat(Qt.RichText)
+        box.setText(
+            f"<b>macroKey v{__version__}</b>"
+            f"<p>{tr('Created by maduinos')}</p>"
+            f'<p><a href="{MADUINOS_URL}">{MADUINOS_URL}</a></p>'
+        )
+        box.setTextInteractionFlags(Qt.TextBrowserInteraction)
+        box.exec()
 
     def _show_gesture_help(self) -> None:
         QMessageBox.information(
@@ -865,7 +894,7 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------- pointer acceleration --
 
-    def _offer_flat_pointer(self, *, asked_for: bool = False) -> None:
+    def _offer_flat_pointer(self, *, asked_for: bool = False, because: str = "") -> None:
         """Offers to remove pointer acceleration from mouse replay.
 
         The pad sends relative movement, so the desktop decides how far that is
@@ -918,13 +947,15 @@ class MainWindow(QMainWindow):
         MainWindow._pointer_prompt_open = True
         self._ask(
             title=tr("Pointer acceleration"),
-            text=tr(
+            text=because + tr(
                 "Your desktop scales pointer movement by how fast it is "
                 "(acceleration profile: {profile}).\n\n"
-                "The keypad replays a recorded movement at the speed it was made, "
-                "so this largely cancels out. Turning it off removes the variable "
-                "entirely and is what makes a mouse macro land exactly where it "
-                "was recorded.\n\n"
+                "The keypad replays a movement at the speed it was recorded, "
+                "which cancels most of that. It does not cancel all of it: a "
+                "fast movement replays at the limit of what USB carries, so any "
+                "delay stretches the gesture and the curve then multiplies it by "
+                "less -- the macro lands short. Turning acceleration off removes "
+                "the variable entirely.\n\n"
                 "Switch to flat pointer acceleration? It changes how the mouse "
                 "feels everywhere, not just in macros. To undo it later:\n\n"
                 "{undo}"
@@ -935,6 +966,39 @@ class MainWindow(QMainWindow):
             then=self._make_pointer_flat,
             otherwise=lambda: self._pointer_fix_declined(asked_for=asked_for),
             always=self._pointer_prompt_closed,
+        )
+
+    def _offer_flat_pointer_for_fast_macro(self) -> None:
+        """A recording just landed that this desktop's acceleration will move.
+
+        The startup question is asked before there is anything to point at, and
+        a no there is kept for good. This is the one moment the answer stops
+        being abstract: a macro now exists whose replay cannot be paced finely
+        enough for the curve to cancel, so it lands short of where it was drawn.
+        Offered once, saying what changed, and then never again -- Help > Mouse
+        macro accuracy is still there for anyone who wants it later.
+        """
+        settings = self.app.settings
+        if self._closing or settings.pointer_accel_evidence_shown:
+            return
+        # Not declined yet means the startup offer still speaks for itself, and
+        # spending the follow-up here would waste it on someone already asked.
+        if not settings.pointer_accel_declined:
+            return
+        if not capture_setup.pointer_accel_can_be_flattened():
+            return
+        if not accel_sensitive_macro_slots(self.app.profile.device_macros):
+            return
+        settings.pointer_accel_evidence_shown = True
+        settings.save()
+        self._offer_flat_pointer(
+            asked_for=True,
+            because=tr(
+                "The recording you just made moves the pointer faster than the "
+                "keypad can replay a count at a time, so this desktop's "
+                "acceleration decides how far it goes and the macro lands short "
+                "of where you drew it.\n\n"
+            ),
         )
 
     @staticmethod
@@ -1705,7 +1769,7 @@ class MainWindow(QMainWindow):
                 )
             return
         if self._app_update_staged:
-            self.appUpdateReady.emit(self._app_update_staged)
+            self.appUpdateReady.emit(*self._app_update_staged)
             return
 
         def worker() -> None:
@@ -1730,26 +1794,33 @@ class MainWindow(QMainWindow):
                 return
             except RuntimeError:
                 return  # window closed mid-download
-            self.appUpdateReady.emit(release.version)
+            self.appUpdateReady.emit(release.version, release.notes)
 
         self._in_background(worker)
 
-    def _app_update_ready(self, version: str) -> None:
-        """The new binary is in place; only a restart can start running it."""
+    def _app_update_ready(self, version: str, notes: str = "") -> None:
+        """The new binary is in place; only a restart can start running it.
+
+        The release's own notes go in the box. An update nobody asked for and
+        nobody watched happen has to say what it did: a version number alone
+        leaves someone to work out on their own why the app they did not choose
+        to change now behaves differently.
+        """
         if self._closing:
             return
-        self._app_update_staged = version
+        self._app_update_staged = (version, notes)
         self.statusMessage.emit(
             tr("macroKey v{version} installed - restart to use it").format(version=version)
         )
-        self._notify(
-            tr("Update installed"),
-            tr(
-                "macroKey v{version} has been downloaded and installed.\n\n"
-                "Close and reopen the app to start using it. The keypad keeps "
-                "working as a keyboard either way."
-            ).format(version=version),
-        )
+        text = tr(
+            "macroKey v{version} has been downloaded and installed.\n\n"
+            "Close and reopen the app to start using it. The keypad keeps "
+            "working as a keyboard either way."
+        ).format(version=version)
+        summary = _release_summary(notes)
+        if summary:
+            text = f"{text}\n\n{tr('What changed:')}\n\n{summary}"
+        self._notify(tr("Update installed"), text)
 
     def _check_firmware_update(self, hello, *, asked_for: bool = False) -> None:
         """Is the pad behind? Runs on the connect worker, never on the GUI.
@@ -1877,18 +1948,39 @@ class MainWindow(QMainWindow):
             # current. The link still has to come back either way, but saying
             # "installed" about a write that did not happen is a lie the status
             # bar has no way to take back.
-            self.firmwareUpdateFinished.emit(installed or "")
+            self.firmwareUpdateFinished.emit(running, installed or "")
 
         self._in_background(worker)
 
-    def _firmware_update_finished(self, version: str) -> None:
+    def _firmware_update_finished(self, previous: str, version: str) -> None:
+        """Says the pad was rewritten, rather than only mentioning it.
+
+        This one happens with nobody watching -- it is triggered by plugging a
+        cable in, takes the keypad away for a few seconds, and used to leave a
+        single status bar line that scrolls past. A pad that has been reflashed
+        behind someone's back and then behaves differently is a bug report
+        waiting to happen, so it gets a box and both version numbers.
+        """
         if self._closing:
             return
         self._flash_offered.clear()
+        if not version:
+            self.statusMessage.emit(tr("Keypad firmware was already current"))
+            self._toggle_connection(quiet=True)
+            return
         self.statusMessage.emit(
             tr("Keypad firmware updated to {version}").format(version=version)
-            if version
-            else tr("Keypad firmware was already current")
+        )
+        self._notify(
+            tr("Keypad firmware updated"),
+            tr(
+                "The keypad was running firmware {old} and this build carries "
+                "{new}, so it was written to the pad. Your macros were not "
+                "touched.\n\n"
+                "Firmware comes with the app and follows it, so this happens "
+                "whenever the app moves ahead. What changed is in the app's "
+                "release notes."
+            ).format(old=previous or tr("an older version"), new=version),
         )
         self._toggle_connection(quiet=True)
 
@@ -2334,6 +2426,9 @@ class MainWindow(QMainWindow):
         if outcome is not None and not session.recording:
             self._refresh_all()
             self._show_capture(outcome)
+            # Deferred so it opens over a window that has finished redrawing
+            # the recording it is about, rather than during it.
+            QTimer.singleShot(600, self._offer_flat_pointer_for_fast_macro)
         self.record_banner.setVisible(recording)
         self.cancel_recording_button.setVisible(recording)
         self._refresh_connection()
@@ -2429,6 +2524,38 @@ class MainWindow(QMainWindow):
         if thread is not None and thread is not threading.current_thread():
             thread.join(timeout=1.0)
         super().closeEvent(event)
+
+
+#: Where the project lives. Shown in About, and the only place in the app that
+#: points anywhere outside it.
+MADUINOS_URL = "https://maduinos.blogspot.com/"
+
+#: Longest release note a box gets. Past this it stops being something read on
+#: the way back to work and becomes a wall nobody finishes; the full text is on
+#: the releases page either way.
+RELEASE_SUMMARY_MAX_CHARS = 1200
+
+
+def _release_summary(notes: str) -> str:
+    """The "what changed" half of a release body, as plain text.
+
+    The workflow writes the changelog entry, a `---`, and then the file listing
+    that belongs to the releases page rather than to a dialog. Everything above
+    the rule is what someone wants here.
+
+    Markdown is flattened rather than rendered: `**bold**` and backticks are
+    punctuation in a text box, not emphasis, and a release written by hand may
+    contain neither. Anything unrecognised passes through untouched, so a body
+    from some other repository (`MACROKEY_UPDATE_REPO`) still reads as itself.
+    """
+    body = notes.split("\n---", 1)[0].strip()
+    if not body:
+        return ""
+    body = re.sub(r"\*\*(.+?)\*\*", r"\1", body)
+    body = body.replace("`", "")
+    if len(body) > RELEASE_SUMMARY_MAX_CHARS:
+        body = body[:RELEASE_SUMMARY_MAX_CHARS].rsplit("\n", 1)[0].rstrip() + "\n…"
+    return body
 
 
 def _apply_window_icon(qt_app: QApplication) -> None:

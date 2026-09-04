@@ -12,7 +12,7 @@
 
 #include <Arduino.h>
 
-#define MK_FIRMWARE_VERSION "0.9.3"
+#define MK_FIRMWARE_VERSION "0.9.4"
 #define MK_PROTOCOL_VERSION 1
 
 // ---------------------------------------------------------------- topology --
@@ -181,6 +181,26 @@ static_assert(MK_KEY_COUNT <= (int)(sizeof(mk_keymask_t) * 8),
 // a single jump would put the overshoot this whole mechanism removes back on
 // the end of every drag -- which is exactly where a drag is aimed.
 #define MK_MACRO_MOVE_SLICE_MS 50
+
+// Reports are paced at this multiple of the host's HID poll interval, not at
+// the interval itself. Aiming a report at every USB frame leaves no room: the
+// frame is the floor, so a report delayed by anything at all -- the pixel's
+// bit-bang holding interrupts off, a busier USB device once the editor opens
+// the serial port -- has already missed its deadline. The loop cannot catch
+// up from an absolute deadline, so the gesture stretches, and a desktop with
+// pointer acceleration on multiplies the slower movement by less. The macro
+// then lands *short*, by more the faster it was drawn.
+//
+// Measured: a 50 ms slice used to be 50 reports 1.05 ms apart -- 0.05 ms of
+// slack. At 3/2 it is 33 reports 1.5 ms apart, the same distance in the same
+// time, with half a millisecond of room per report.
+//
+// Two constants because this wants to be 1.5 and the arithmetic is integer.
+// Raising the numerator buys slack and coarsens the deltas; the ceiling is the
+// point where one report is large enough for the acceleration curve to read it
+// as a flick, which is the overshoot this whole mechanism exists to remove.
+#define MK_MACRO_MOVE_PACE_NUM 3
+#define MK_MACRO_MOVE_PACE_DEN 2
 
 // Between characters of a text run. The host needs a report boundary to see
 // them as separate keystrokes; below about 4 ms fast applications drop some.
