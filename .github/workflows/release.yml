@@ -6,6 +6,11 @@
 # 빌드는 로컬과 같은 ./build_release.sh 를 쓴다. 테스트는 아래 test 잡에서
 # 한 번만 돌리고, 빌드 잡은 --skip-tests 로 중복 실행을 피한다.
 #
+# 문서만 바뀐 커밋은 gate 잡이 걸러낸다. 트리거의 paths-ignore를 쓰지 않는 이유는
+# 태그 때문이다 — 이미 push된 커밋에 태그만 붙이면 그 push에 담긴 커밋이 0개라
+# 경로 필터가 아무것도 못 맞추고 정식 릴리스가 통째로 스킵된다. 태그는 무조건 통과시키고
+# main push일 때만 바뀐 파일을 보는 편이 안전하다.
+#
 # firmware 잡이 등록된 모든 보드의 펌웨어를 굽는다. 그 이미지는 (1) 앱 바이너리 안에
 # 번들되어 사용자가 arduino-cli 없이 키패드를 플래싱할 수 있게 하고, (2) 릴리스에도
 # 따로 첨부된다. 보드 목록은 macrokey/boards.py 하나에서 나오므로 보드를 추가해도
@@ -29,7 +34,43 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # 빌드를 돌릴 가치가 있는 push인지 한 번만 판단한다. 태그는 항상 참이고, main push는
+  # 문서(.md, docs/) 밖의 파일이 하나라도 바뀌었을 때만 참이다.
+  gate:
+    runs-on: ubuntu-22.04
+    outputs:
+      build: ${{ steps.decide.outputs.build }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - id: decide
+        run: |
+          if [[ "${{ github.ref_type }}" == "tag" || "${{ github.event_name }}" != "push" ]]; then
+            echo "태그 또는 수동 실행 - 빌드한다"
+            echo "build=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # 첫 커밋이거나 부모를 못 찾으면 판단을 포기하고 빌드한다.
+          if ! git rev-parse -q --verify HEAD^ >/dev/null; then
+            echo "부모 커밋 없음 - 빌드한다"
+            echo "build=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          changed=$(git diff --name-only HEAD^ HEAD)
+          echo "바뀐 파일:"; echo "$changed"
+          # grep -qv 는 구현에 따라 종료 코드가 갈린다. 남은 줄이 있는지로 판단한다.
+          code=$(printf '%s\n' "$changed" | grep -vE '(^docs/|\.md$)' || true)
+          if [ -n "$code" ]; then
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "문서만 바뀌었다 - 빌드를 건너뛴다"
+            echo "build=false" >> "$GITHUB_OUTPUT"
+          fi
+
   test:
+    needs: gate
+    if: needs.gate.outputs.build == 'true'
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
@@ -55,6 +96,8 @@ jobs:
         run: python -m ruff check .
 
   firmware:
+    needs: gate
+    if: needs.gate.outputs.build == 'true'
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
