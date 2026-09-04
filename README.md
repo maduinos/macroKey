@@ -23,6 +23,7 @@ macroKey/
 ├── tests/
 ├── tools/
 │   ├── build_firmware.sh   # 등록된 모든 보드의 펌웨어 빌드
+│   ├── make_icon.py        # assets/app_icon.png + .ico 생성
 │   └── setup_linux_serial.sh # Ubuntu USB 시리얼 권한 설정
 ├── docs/                   # 사용·배선·설계 (필요할 때)
 │   ├── manual.html
@@ -31,7 +32,7 @@ macroKey/
 │   ├── HARDWARE.md
 │   ├── PROTOCOL.md
 │   └── ARCHITECTURE.md
-├── assets/                 # 선택: 앱 아이콘
+├── assets/                 # 앱 아이콘 (tools/make_icon.py가 생성)
 └── tools/pyinstaller_hooks/
 ```
 

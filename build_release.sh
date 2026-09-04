@@ -27,6 +27,11 @@ CURRENT_OS="$(uname -s)"
 PYTHON_CMD=""
 MIN_PYTHON_VERSION="3.10"
 DEPS_DIR=""
+# Same directory as DEPS_DIR, spelled the way the Python we invoke understands.
+# Git Bash hands us POSIX paths (/c/Users/...) but runs a native Windows Python,
+# and MSYS only rewrites command arguments -- never environment variables. So
+# PYTHONPATH has to carry the native spelling or the deps are simply not there.
+DEPS_DIR_NATIVE=""
 RUN_TESTS=1
 
 # Heavy packages never imported by this app. Excluding them keeps the onefile
@@ -113,16 +118,20 @@ detect_python() {
   python_series="$("$PYTHON_CMD" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
   path_separator="$("$PYTHON_CMD" -c 'import os; print(os.pathsep)')"
   DEPS_DIR="$ROOT_DIR/.build-deps/python$python_series"
-  export PYTHONPATH="$DEPS_DIR${PYTHONPATH:+$path_separator$PYTHONPATH}"
+  DEPS_DIR_NATIVE="$DEPS_DIR"
+  if command -v cygpath >/dev/null 2>&1; then
+    DEPS_DIR_NATIVE="$(cygpath -w "$DEPS_DIR")"
+  fi
+  export PYTHONPATH="$DEPS_DIR_NATIVE${PYTHONPATH:+$path_separator$PYTHONPATH}"
 
   log "Python: $("$PYTHON_CMD" --version 2>&1)"
-  log "의존성 경로: $DEPS_DIR"
+  log "의존성 경로: $DEPS_DIR_NATIVE"
 }
 
 ensure_deps() {
   log "의존성 확인 (requirements.txt)"
   mkdir -p "$DEPS_DIR"
-  "$PYTHON_CMD" -m pip install -q --upgrade --target "$DEPS_DIR" \
+  "$PYTHON_CMD" -m pip install -q --upgrade --target "$DEPS_DIR_NATIVE" \
     -r "$ROOT_DIR/requirements.txt"
   "$PYTHON_CMD" - <<'PY' || fail "런타임 의존성 import 실패"
 import importlib.util

@@ -11,6 +11,19 @@ def frozen() -> bool:
     return bool(getattr(sys, "frozen", False)) or hasattr(sys, "_MEIPASS")
 
 
+def resource_path(name: str) -> str:
+    """Absolute path to a data file that `build_release.sh` bundles.
+
+    PyInstaller unpacks ``--add-data`` payloads under ``sys._MEIPASS``; running
+    from a checkout they sit next to the package. Returns the path either way,
+    without promising the file is there -- a build made before the file existed
+    still has to start.
+    """
+    here = os.path.dirname(os.path.abspath(__file__))
+    root = getattr(sys, "_MEIPASS", None) or os.path.dirname(here)
+    return os.path.join(root, name)
+
+
 def ensure_stdio() -> None:
     """Give a ``--windowed`` build somewhere to print.
 
