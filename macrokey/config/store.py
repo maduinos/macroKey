@@ -115,6 +115,11 @@ class Settings:
     #: the pointer before recording and replay. Relative/current-pointer replay
     #: is the safe default; this opt-in exists for unchanged single-screen rigs.
     recorder_anchor_mouse: bool = False
+    #: Keep key holds as press / wait / release with the recorded durations,
+    #: instead of collapsing every keystroke to a tap. Off by default: ordinary
+    #: shortcut and typing macros do not want human dwell times, and a held key
+    #: costs several records per second of hold (delay steps max out at 2550 ms).
+    recorder_preserve_key_timing: bool = False
     theme: str = "system"
     #: UI language: "system" to follow the OS, or a code from `i18n.LANGUAGES`.
     #: Read once at startup -- widgets keep the language they were built with,
@@ -188,6 +193,7 @@ class Settings:
             "auto_connect",
             "recorder_capture_mouse",
             "recorder_anchor_mouse",
+            "recorder_preserve_key_timing",
             "capture_setup_declined",
             "pointer_accel_declined",
             "pointer_accel_evidence_shown",

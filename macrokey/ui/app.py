@@ -867,6 +867,20 @@ class MainWindow(QMainWindow):
         )
         self.anchor_mouse.toggled.connect(self._anchor_mouse_toggled)
 
+        self.preserve_key_timing = QCheckBox(tr("Real timing"))
+        self.preserve_key_timing.setChecked(
+            bool(self.app.settings.recorder_preserve_key_timing)
+        )
+        self.preserve_key_timing.setToolTip(
+            tr(
+                "Record how long each key stays down (press, wait, release) instead of\n"
+                "turning every keystroke into a tap. Use this for game holds like\n"
+                "Shift+W. Ordinary shortcuts and typing macros usually leave this off.\n"
+                "Long holds use several records (delays max out at 2550 ms each)."
+            )
+        )
+        self.preserve_key_timing.toggled.connect(self._preserve_key_timing_toggled)
+
         self.cancel_recording_button = QPushButton(tr("Discard recording"))
         self.cancel_recording_button.setToolTip(
             tr("Stop global capture and discard everything recorded this time.")
@@ -878,6 +892,7 @@ class MainWindow(QMainWindow):
         row.addStretch(1)
         row.addWidget(self.capture_mouse)
         row.addWidget(self.anchor_mouse)
+        row.addWidget(self.preserve_key_timing)
         row.addWidget(self.cancel_recording_button)
 
         self.capture_list = QListWidget()
@@ -1032,6 +1047,11 @@ class MainWindow(QMainWindow):
     def _anchor_mouse_toggled(self, checked: bool) -> None:
         self.app.settings.recorder_anchor_mouse = checked
         self.app.recorder.anchor_mouse = checked
+        self.app.settings.save()
+
+    def _preserve_key_timing_toggled(self, checked: bool) -> None:
+        self.app.settings.recorder_preserve_key_timing = checked
+        self.app.recorder.preserve_key_timing = checked
         self.app.settings.save()
 
     def _cancel_recording(self) -> None:
@@ -2184,6 +2204,7 @@ class MainWindow(QMainWindow):
         self.capture_setup_button.setEnabled(setup_enabled)
         self.capture_mouse.setEnabled(enabled)
         self.anchor_mouse.setEnabled(enabled and self.capture_mouse.isChecked())
+        self.preserve_key_timing.setEnabled(enabled)
         self.swatch.setEnabled(enabled)
         for button in self.buttons.values():
             button.setEnabled(enabled)

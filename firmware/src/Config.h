@@ -12,7 +12,7 @@
 
 #include <Arduino.h>
 
-#define MK_FIRMWARE_VERSION "0.9.4"
+#define MK_FIRMWARE_VERSION "0.9.5"
 #define MK_PROTOCOL_VERSION 1
 
 // ---------------------------------------------------------------- topology --

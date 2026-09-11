@@ -37,6 +37,21 @@ void KeyEngine::dispatchKey(const Action &action) {
     return;
   }
 
+  // Press and release are the two halves of a hold. A recording of Shift+W
+  // held for seconds is press, then authored delays, then release -- the same
+  // shape as a mouse drag. Leaving either half out is how a key gets stuck,
+  // and runMacro's Keyboard.releaseAll at the end is the safety net.
+  if (action.type == ACT_KEY_PRESS) {
+    mkPressModifiers(modifiers);
+    if (action.b != 0) Keyboard.press(action.b);
+    return;
+  }
+  if (action.type == ACT_KEY_RELEASE) {
+    if (action.b != 0) Keyboard.release(action.b);
+    mkReleaseModifiers(modifiers);
+    return;
+  }
+
   mkPressModifiers(modifiers);
   if (action.b != 0) {
     Keyboard.press(action.b);
@@ -52,6 +67,8 @@ void KeyEngine::dispatch(const Action &action, uint8_t key, uint32_t now) {
 
   switch (action.type) {
     case ACT_KEY:
+    case ACT_KEY_PRESS:
+    case ACT_KEY_RELEASE:
       dispatchKey(action);
       break;
 

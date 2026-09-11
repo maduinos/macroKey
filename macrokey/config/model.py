@@ -117,11 +117,19 @@ ACTION_TYPE_IDS: dict[str, int] = {
 #: bit stays reserved because it is a wire format; the field is gone.
 KEYF_STICKY = 0x02
 
-#: `Action.mode` for kind="mouse_button", stored in the record's `b` byte.
-#: A press that is never released is what a drag is made of, so the button is
-#: not implicitly let go the way a click does it.
+#: `Action.mode` for kind="mouse_button" and kind="key", stored differently on
+#: the wire for each. Mouse puts it in the record's `b` byte. Keys use distinct
+#: action type ids (ACT_KEY / ACT_KEY_PRESS / ACT_KEY_RELEASE) because a macro
+#: record is only three bytes and the keycode already owns `b`.
+#:
+#: A press that is never released is what a hold (or a drag) is made of, so the
+#: button/key is not implicitly let go the way a click does it.
 MOUSE_MODES: dict[str, int] = {"click": 0, "press": 1, "release": 2}
 ID_TO_MOUSE_MODE = {value: key for key, value in MOUSE_MODES.items()}
+#: Wire type ids for kind="key" by mode. Click keeps ACT_KEY (= 1) so existing
+#: profiles stay bit-identical; press/release are new ids past ACT_MOUSE_HOME.
+KEY_MODE_TYPE_IDS: dict[str, int] = {"click": 1, "press": 14, "release": 15}
+TYPE_ID_TO_KEY_MODE = {value: key for key, value in KEY_MODE_TYPE_IDS.items()}
 
 
 class ProfileError(ValueError):
@@ -145,7 +153,7 @@ class Action:
     hotkey: str = ""       # kind="key"
     usage: str = ""        # kind="consumer"
     button: str = "left"   # kind="mouse_button"
-    mode: str = "click"    # click, press or release -- press is half a drag
+    mode: str = "click"    # click, press or release -- press is half a hold/drag
     text: str = ""         # kind="text", macro records only
     dx: int = 0            # kind="mouse_move"
     dy: int = 0
@@ -161,8 +169,8 @@ class Action:
     def __post_init__(self) -> None:
         if self.kind not in ACTION_TYPE_IDS:
             raise ProfileError(f"unknown action kind: {self.kind!r}")
-        if self.kind == "mouse_button" and self.mode not in MOUSE_MODES:
-            raise ProfileError(f"unknown mouse mode: {self.mode!r}")
+        if self.kind in ("mouse_button", "key") and self.mode not in MOUSE_MODES:
+            raise ProfileError(f"unknown mode: {self.mode!r}")
         if self.kind == "text":
             if not self.text:
                 raise ProfileError("a text action needs text")
@@ -209,6 +217,7 @@ class Action:
         type_id = ACTION_TYPE_IDS[self.kind]
         if self.kind == "key":
             modifiers, code = keycodes.parse_hotkey(self.hotkey)
+            type_id = KEY_MODE_TYPE_IDS[self.mode]
             return type_id, modifiers, code, KEYF_STICKY if self.sticky else 0
         if self.kind == "consumer":
             usage = keycodes.CONSUMER_USAGES.get(self.usage)
@@ -240,13 +249,14 @@ class Action:
 
     @classmethod
     def decode(cls, type_id: int, a: int, b: int, c: int) -> Action:
-        kind = ID_TO_KIND.get(type_id, "none")
-        if kind == "key":
+        if type_id in TYPE_ID_TO_KEY_MODE:
             return cls(
                 kind="key",
                 hotkey=keycodes.format_hotkey(a, b),
                 sticky=bool(c & KEYF_STICKY),
+                mode=TYPE_ID_TO_KEY_MODE[type_id],
             )
+        kind = ID_TO_KIND.get(type_id, "none")
         if kind == "consumer":
             usage = a | (b << 8)
             name = next((k for k, v in keycodes.CONSUMER_USAGES.items() if v == usage), "")
@@ -273,6 +283,10 @@ class Action:
         """Human-readable summary, shown before a recording is saved."""
         if self.kind == "key":
             suffix = " then the next key" if self.sticky else ""
+            if self.mode == "press":
+                return f"hold {self.hotkey}{suffix}"
+            if self.mode == "release":
+                return f"let go of {self.hotkey}{suffix}"
             return f"{self.hotkey}{suffix}"
         if self.kind == "consumer":
             return f"media: {self.usage}"

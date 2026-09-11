@@ -62,6 +62,7 @@ class MacroKeyApp:
             min_gap_ms=self.settings.recorder_min_gap_ms,
             capture_mouse=self.settings.recorder_capture_mouse,
             anchor_mouse=self.settings.recorder_anchor_mouse,
+            preserve_key_timing=self.settings.recorder_preserve_key_timing,
         )
         #: How many steps the last recording lost to the password filter.
         self.last_redacted = 0

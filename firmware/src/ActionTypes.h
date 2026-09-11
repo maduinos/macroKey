@@ -37,6 +37,12 @@ enum ActionType : uint8_t {
   // to be. One record: the firmware does the whole slam, which as host-emitted
   // moves would have been forty of them.
   ACT_MOUSE_HOME,
+  // Key hold halves, same idea as MB_MODE_PRESS / RELEASE. Macro records are
+  // only three bytes (type, a, b), so the mode cannot sit in the flags byte the
+  // way a keymap slot could -- the type itself carries it. ACT_KEY stays a
+  // click. a = modifier mask, b = keycode, matching ACT_KEY.
+  ACT_KEY_PRESS,
+  ACT_KEY_RELEASE,
   ACT_TYPE_COUNT
 };
 

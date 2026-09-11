@@ -96,12 +96,14 @@ class Recorder:
         on_event: Callable[[RawEvent], None] | None = None,
         capture_mouse: bool = False,
         anchor_mouse: bool = False,
+        preserve_key_timing: bool = False,
         min_gap_ms: int = DEFAULT_MIN_GAP_MS,
         stop_key: str | None = None,
     ) -> None:
         self._on_event = on_event
         self.capture_mouse = capture_mouse
         self.anchor_mouse = anchor_mouse
+        self.preserve_key_timing = preserve_key_timing
         self._min_gap_ms = min_gap_ms
         self.stop_key = stop_key
         #: When the editor's own windows were clicked, by the same clock the
@@ -312,7 +314,11 @@ class Recorder:
 
     def steps(self, events: list[RawEvent] | None = None) -> list[dict[str, Any]]:
         source = events if events is not None else self._events
-        return normalize(source, min_gap_ms=self._min_gap_ms)
+        return normalize(
+            source,
+            min_gap_ms=self._min_gap_ms,
+            preserve_key_timing=self.preserve_key_timing,
+        )
 
     @staticmethod
     def summary(steps: list[dict[str, Any]]) -> list[str]:
