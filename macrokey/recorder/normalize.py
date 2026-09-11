@@ -107,13 +107,23 @@ def normalize(
     *,
     min_gap_ms: int = DEFAULT_MIN_GAP_MS,
     keep_delays: bool = True,
+    preserve_key_timing: bool = False,
 ) -> list[dict[str, Any]]:
-    """Raw events -> a list of host action specs."""
+    """Raw events -> a list of host action specs.
+
+    ``preserve_key_timing`` keeps key holds as press / wait / release instead of
+    collapsing every keystroke to a tap. That is what a game-style Shift+W hold
+    needs; the default path still folds typing into text runs and treats
+    modifiers as decorations on the next key, which is what shortcuts want.
+    """
     steps: list[dict[str, Any]] = []
     held: list[str] = []
     text = ""
     last_at: float | None = None
     mouse_modes, wobble = _mouse_modes(events)
+    # When preserving holds, gaps are the point -- a 10 s Shift+W must stay
+    # 10 s. The ordinary cap treats long pauses as "thinking" and clips them.
+    delay_cap_ms: int | None = None if preserve_key_timing else MAX_DELAY_MS
 
     def flush_text() -> None:
         nonlocal text
@@ -126,17 +136,51 @@ def normalize(
         if last_at is not None and keep_delays:
             gap_ms = int(round((at - last_at) * 1000))
             if gap_ms >= min_gap_ms:
-                quantized = min(MAX_DELAY_MS, _quantize(gap_ms))
+                quantized = _quantize(gap_ms)
+                if delay_cap_ms is not None:
+                    quantized = min(delay_cap_ms, quantized)
                 steps.append({"type": "delay", "params": {"ms": quantized}})
         last_at = at
 
+    def emit_hotkey(token: str, *, mode: str = "click") -> None:
+        params: dict[str, Any] = {"hotkey": token}
+        if mode != "click":
+            params["mode"] = mode
+        steps.append({"type": "hotkey", "params": params})
+
     for position, event in enumerate(events):
         if event.kind == KEY_UP:
+            if preserve_key_timing:
+                flush_text()
+                if event.token in keycodes.MODIFIER_BITS:
+                    if event.token in held:
+                        held.remove(event.token)
+                        add_delay(event.at)
+                        emit_hotkey(event.token, mode="release")
+                    continue
+                add_delay(event.at)
+                emit_hotkey(event.token, mode="release")
+                continue
             if event.token in held:
                 held.remove(event.token)
             continue
 
         if event.kind == KEY_DOWN:
+            if preserve_key_timing:
+                # Each physical down is its own press, including modifiers.
+                # Baking Shift into "shift+w" as a single click would press and
+                # release both together and never hold them for the recorded
+                # duration.
+                flush_text()
+                add_delay(event.at)
+                if event.token in keycodes.MODIFIER_BITS:
+                    if event.token not in held:
+                        held.append(event.token)
+                    emit_hotkey(event.token, mode="press")
+                else:
+                    emit_hotkey(event.token, mode="press")
+                continue
+
             if event.token in keycodes.MODIFIER_BITS:
                 # Modifiers are never steps of their own; they decorate the key
                 # that follows, which is what the user actually meant.
@@ -293,7 +337,11 @@ def summarize(steps: list[dict[str, Any]]) -> list[str]:
         kind = step.get("type", "?")
         params = step.get("params", {})
         if kind == "hotkey":
-            lines.append(f"press  {params.get('hotkey')}")
+            mode = params.get("mode", "click")
+            verb = {"click": "press ", "press": "hold  ", "release": "let go"}.get(
+                mode, "press "
+            )
+            lines.append(f"{verb} {params.get('hotkey')}")
         elif kind == "text":
             value = params.get("text", "")
             preview = value if len(value) <= 40 else value[:37] + "..."
@@ -330,6 +378,10 @@ def reduce_to_device_action(steps: list[dict[str, Any]]) -> Action | None:
         return None
     step = meaningful[0]
     if step.get("type") != "hotkey":
+        return None
+    # A lone press or release is half a hold -- binding it to a pad key would
+    # leave the key down (or try to release something that was never pressed).
+    if step.get("params", {}).get("mode", "click") != "click":
         return None
 
     hotkey = step.get("params", {}).get("hotkey", "")
@@ -421,13 +473,14 @@ def compile_device_macro(
 
         if kind == "hotkey":
             hotkey = params.get("hotkey", "")
+            mode = params.get("mode", "click")
             try:
                 keycodes.parse_hotkey(hotkey)
             except keycodes.KeyParseError as exc:
                 raise UnsupportedRecording(
                     f"the keypad cannot send {hotkey!r}"
                 ) from exc
-            compiled.append(Action(kind="key", hotkey=hotkey))
+            compiled.append(Action(kind="key", hotkey=hotkey, mode=mode))
             continue
 
         if kind == "consumer":

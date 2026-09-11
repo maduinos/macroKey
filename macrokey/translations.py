@@ -216,6 +216,15 @@ KO: dict[str, str] = {
         "포인터 속도·창 위치가 모두 같을 때만 재현됩니다. 상대/현재 포인터 재생이 더 "
         "안전합니다."
     ),
+    "Real timing": "실제 타이밍",
+    "Record how long each key stays down (press, wait, release) instead of\n"
+    "turning every keystroke into a tap. Use this for game holds like\n"
+    "Shift+W. Ordinary shortcuts and typing macros usually leave this off.\n"
+    "Long holds use several records (delays max out at 2550 ms each).": (
+        "키를 탭으로 줄이지 않고 누른 시간 그대로(press → 대기 → release) 녹음합니다.\n"
+        "Shift+W처럼 게임에서 길게 누르는 동작에 씁니다. 일반 단축키·타이핑 매크로는\n"
+        "보통 끕니다. 긴 홀드는 레코드를 여러 개 씁니다(delay는 스텝당 최대 2550 ms)."
+    ),
     "Discard recording": "녹음 버리기",
     "Stop global capture and discard everything recorded this time.": (
         "전역 캡처를 멈추고 이번에 녹음한 내용을 모두 버립니다."
