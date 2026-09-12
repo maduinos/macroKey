@@ -82,6 +82,82 @@ def text_speed_stored(shown: int) -> int:
     """
     return 0 if shown == FIRMWARE_TEXT_SPEED_MS else shown
 
+#: A binding that names a macro slot may ask for it more than once. The count
+#: rides in the spare `b` byte of that keymap entry, so the ceiling is what one
+#: byte holds -- no EEPROM is spent on this and no schema bump is needed, the
+#: same trick byte 11 plays for the typing speed.
+#:
+#: This is what makes a "real timing" recording usable at scale. A ten second
+#: hold costs a press, four delays and a release, and the pad holds 308 records
+#: in total; repeating it by recording it again 255 times does not fit, and a
+#: single slot caps out at 42 passes. Looping it costs six records.
+MIN_MACRO_REPEAT = 1
+#: Must match MK_MACRO_MAX_LOOPS in firmware/src/Config.h.
+MAX_MACRO_REPEAT = 255
+
+
+def macro_repeat_stored(shown: int) -> int:
+    """The editor's number as the pad stores it: once goes back as 0, not 1.
+
+    A pad that has never been told a loop count has zero in that byte, and the
+    app compares profiles as raw bytes -- writing 1 for the same behaviour would
+    report a difference that isn't one, which is a "Profile differs" prompt on
+    the first connect of every install. Exactly the trap `text_speed_stored`
+    sidesteps, for exactly the same reason.
+    """
+    return 0 if shown <= MIN_MACRO_REPEAT else min(shown, MAX_MACRO_REPEAT)
+
+
+def macro_repeat_shown(stored: int) -> int:
+    """The stored byte as the editor spells it: 0 is one pass."""
+    return stored or MIN_MACRO_REPEAT
+
+
+#: The pause a repeated shortcut gets between presses.
+#:
+#: A shortcut is not a macro, and the four bytes it stores are all spoken for --
+#: type, modifiers, keycode, flags -- so there is nowhere to put a count. Asking
+#: for one wraps it into a one-shortcut macro instead, which costs a slot and
+#: two records and brings the whole replay path with it: stopping the loop with
+#: any pad key, the runaway budget, the busy pixel. None of that would exist on
+#: a count squeezed into the flags byte.
+#:
+#: The pause is what the wrapping is for. `runMacro` does not rest between
+#: passes, so ten presses would leave the pad inside a couple of milliseconds --
+#: and a desktop opening a terminal per press does not see ten of them. 50 ms is
+#: slow enough for a window manager to keep up and fast enough to still read as
+#: one action.
+SHORTCUT_REPEAT_GAP_MS = 50
+
+
+def repeated_shortcut(macro: list[Action]) -> Action | None:
+    """The shortcut a wrapped slot holds, or None when it is a real recording.
+
+    Recognised by shape, because nothing else distinguishes the two: a wrapped
+    shortcut is exactly one key action and the gap put there to pace it. The
+    editor and the key grid use this so a repeated shortcut still reads as the
+    shortcut it is rather than as "recording, 1 key", which is true and useless.
+
+    The gap has to match exactly. A hand recording that happens to be one key
+    and one pause would otherwise be relabelled, and a recorded pause landing on
+    50 ms to the millisecond is not something a hand does.
+    """
+    if (
+        len(macro) == 2
+        and macro[0].kind == "key"
+        and macro[1].kind == "delay"
+        and macro[1].delay_ms == SHORTCUT_REPEAT_GAP_MS
+    ):
+        return macro[0]
+    return None
+
+
+def wrap_shortcut(action: Action) -> list[Action]:
+    """The macro that replays `action` once, ready to be repeated."""
+    return [replace(action, repeat=MIN_MACRO_REPEAT),
+            Action(kind="delay", delay_ms=SHORTCUT_REPEAT_GAP_MS)]
+
+
 #: What the pixel rests at, as RRGGBB. Must match the firmware's writeDefaults.
 #: A dim blue-grey rather than off, because off reads as unplugged.
 DEFAULT_RESTING_COLOR = "3c5073"  # (60, 80, 115)
@@ -159,6 +235,10 @@ class Action:
     dy: int = 0
     delta: int = 0         # kind="mouse_wheel"
     slot: int = 0          # kind="sequence"
+    #: kind="sequence": how many times to replay the slot. 1 is once. The pad
+    #: stops a loop of two or more when any of its keys is pressed; a single
+    #: pass keeps queuing presses the way it always has.
+    repeat: int = MIN_MACRO_REPEAT
     scene: int = 0         # kind="led_scene", reserved: the pad has one scene
     delay_ms: int = 0      # kind="delay", macro steps only
     #: A one-shot modifier: arms the modifiers for the *next* key rather than
@@ -171,6 +251,13 @@ class Action:
             raise ProfileError(f"unknown action kind: {self.kind!r}")
         if self.kind in ("mouse_button", "key") and self.mode not in MOUSE_MODES:
             raise ProfileError(f"unknown mode: {self.mode!r}")
+        if self.kind == "sequence" and not (
+            MIN_MACRO_REPEAT <= self.repeat <= MAX_MACRO_REPEAT
+        ):
+            raise ProfileError(
+                f"a macro repeats between {MIN_MACRO_REPEAT} and "
+                f"{MAX_MACRO_REPEAT} times, got {self.repeat}"
+            )
         if self.kind == "text":
             if not self.text:
                 raise ProfileError("a text action needs text")
@@ -240,7 +327,12 @@ class Action:
         if self.kind == "mouse_wheel":
             return type_id, _clamp(self.delta, -127, 127) & 0xFF, 0, 0
         if self.kind == "sequence":
-            return type_id, _clamp(self.slot, 0, MACRO_SLOTS - 1), 0, 0
+            return (
+                type_id,
+                _clamp(self.slot, 0, MACRO_SLOTS - 1),
+                macro_repeat_stored(self.repeat),
+                0,  # reserved; widening the count into it is not worth the byte
+            )
         if self.kind == "led_scene":
             return type_id, _clamp(self.scene, 0, 255), 0, 0
         if self.kind == "delay":
@@ -269,7 +361,7 @@ class Action:
         if kind == "mouse_wheel":
             return cls(kind="mouse_wheel", delta=_signed(a))
         if kind == "sequence":
-            return cls(kind="sequence", slot=a)
+            return cls(kind="sequence", slot=a, repeat=macro_repeat_shown(b))
         if kind == "led_scene":
             return cls(kind="led_scene", scene=a)
         if kind == "mouse_home":
@@ -301,6 +393,8 @@ class Action:
         if self.kind == "mouse_wheel":
             return f"wheel {self.delta:+d}"
         if self.kind == "sequence":
+            if self.repeat > MIN_MACRO_REPEAT:
+                return f"device macro #{self.slot} x{self.repeat}"
             return f"device macro #{self.slot}"
         if self.kind == "led_scene":
             return f"led scene {self.scene}"

@@ -11,6 +11,7 @@ import logging
 import queue
 import threading
 from collections.abc import Callable
+from dataclasses import replace
 
 from .boards import DEFAULT_BOARD, Board, board_by_id, board_by_profile_size
 from .config import (
@@ -421,6 +422,64 @@ class MacroKeyApp:
         if len(macros) < MACRO_SLOTS:
             return len(macros)
         return None
+
+    def set_repeat(self, key: int, gesture: str, repeat: int) -> str:
+        """Makes this key's binding replay `repeat` times, wrapping a shortcut.
+
+        A recording already has somewhere to put the count -- the keymap entry
+        naming its slot. A shortcut does not: its four bytes are type, modifiers,
+        keycode and flags, with nothing spare. So asking a shortcut to repeat
+        turns it into a one-shortcut macro, which is what the pad can repeat.
+
+        Going back to once unwraps it again, rather than leaving a slot holding
+        a macro that exists only to be run a single time.
+
+        Returns what happened, for the status line. Raises `ProfileError` when
+        there is no room for the wrapping.
+        """
+        from .config.model import (
+            MACRO_SLOTS,
+            MIN_MACRO_REPEAT,
+            Action,
+            repeated_shortcut,
+            wrap_shortcut,
+        )
+
+        current = self.profile.action(key, gesture)
+        macros = self.profile.device_macros
+
+        if current.kind == "sequence":
+            held = macros[current.slot] if current.slot < len(macros) else []
+            shortcut = repeated_shortcut(held)
+            # A wrapped shortcut asked to run once is just the shortcut again.
+            # Unwrapping returns the slot; `reclaim_storage` then empties it.
+            if shortcut is not None and repeat <= MIN_MACRO_REPEAT:
+                self.profile.set_action(key, gesture, shortcut)
+                self.profile.reclaim_storage()
+                return f"{shortcut.describe()}, once"
+            self.profile.set_action(key, gesture, replace(current, repeat=repeat))
+            return f"repeats {repeat} times"
+
+        if current.kind != "key":
+            raise ProfileError("only a shortcut or a recording can be repeated.")
+        if repeat <= MIN_MACRO_REPEAT:
+            return f"{current.describe()}, once"
+
+        macro = wrap_shortcut(current)
+        slot = self._find_macro_slot(macro)
+        if slot is None:
+            raise ProfileError(
+                "the keypad's macro storage is full, and repeating a shortcut "
+                "needs a macro slot. Clear a key you no longer use."
+            )
+        while len(macros) < MACRO_SLOTS:
+            macros.append([])
+        macros[slot] = macro
+        self.profile.set_action(
+            key, gesture, Action(kind="sequence", slot=slot, repeat=repeat)
+        )
+        self.profile.reclaim_storage()
+        return f"{current.describe()} repeats {repeat} times"
 
     def recording_fits(self, steps: list[dict], key: int, gesture: str) -> bool:
         """True when `assign_recording` would succeed without changing the profile."""

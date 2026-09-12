@@ -11,8 +11,14 @@
 //   layout            the layout constants, as the firmware computes them
 //   profile           read a blob on stdin, print the keymap and macro records
 //   buttons           press patterns -> which slot a record request names
-//   replay <slot>     run a macro through the real KeyEngine, print HID calls
+//   replay <slot> [loops] [stop-at-ms]
+//                     run a macro through the real KeyEngine, print HID calls.
+//                     `stop-at-ms` presses a second key at that point on the
+//                     clock, which is how a looping macro is stopped.
 //   serial            feed lines to the real SerialProtocol, print what changed
+//   macro-serial <slot> <line>
+//                     send a line to the pad from *inside* a replaying macro,
+//                     which is where a long loop leaves the link
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -41,6 +47,8 @@ EEPROMStub EEPROM;
 KeyboardStub Keyboard;
 MouseStub Mouse;
 uint8_t DDRB, PORTB, DDRD, PORTD;
+uint32_t gPressPinAt = 0;
+uint8_t gPressPin = 0;
 
 static Profile gProfile;
 static ButtonInput gInput;
@@ -70,6 +78,7 @@ static int modeLayout() {
   printf("text_delay_default %u\n", MK_MACRO_TEXT_DELAY_MS);
   printf("move_slice_ms %u\n", MK_MACRO_MOVE_SLICE_MS);
   printf("hid_poll_interval_ms %u\n", MK_HID_POLL_INTERVAL_MS);
+  printf("macro_max_loops %u\n", MK_MACRO_MAX_LOOPS);
   return 0;
 }
 
@@ -180,6 +189,8 @@ static int modeButtons() {
 static int modeReplay(int argc, char **argv) {
   if (!readBlob()) return 2;
   uint8_t slot = argc > 2 ? (uint8_t)atoi(argv[2]) : 0;
+  uint8_t loops = argc > 3 ? (uint8_t)atoi(argv[3]) : 0;
+  uint32_t stopAt = argc > 4 ? (uint32_t)strtoul(argv[4], NULL, 10) : 0;
 
   gInput.begin();
   gProfile.begin();
@@ -193,11 +204,34 @@ static int modeReplay(int argc, char **argv) {
   // key's macro, and if the scan stopped there the second press would be
   // timestamped after it finished -- seconds past the pair window, so recording
   // into the double slot was impossible on any key that already had one.
+  //
+  // It is also the key the macro is running *for*, which is why it does not
+  // stop a loop: runMacro takes the mask at entry and only counts what arrives
+  // after. Without that, every looped macro would stop in its first pass here.
   gPinLow[MK_KEY_PINS[0]] = true;
+  // Debounced before the macro starts, because that is the state the pad is
+  // really in: a key held across a macro has been held for scans beforehand.
+  // runMacro reads the mask at entry, and an undebounced pin is not in it yet,
+  // so without this the key arrives mid-macro looking like a fresh press --
+  // which is precisely what stops a loop.
+  for (uint8_t settle = 0; settle < 8; settle++) {
+    gClock += MK_DEBOUNCE_MS;
+    gInput.update(gClock);
+  }
 
-  Action run = {ACT_SEQUENCE, slot, 0, 0};
+  // A different key, pressed from inside the macro by the pin stub.
+  if (stopAt != 0) {
+    gPressPinAt = gClock + stopAt;
+    gPressPin = MK_KEY_PINS[1];
+  }
+
+  Action run = {ACT_SEQUENCE, slot, loops, 0};
   gEngine.dispatch(run, 0, gClock);
   printf("scanned-during-replay %d\n", gInput.pressedMask() != 0 ? 1 : 0);
+  // Whether the key that stopped the loop was swallowed. It must not also fire
+  // whatever it is bound to: stopping a macro is not using the key.
+  printf("stop-key-suppressed %d\n",
+         stopAt == 0 ? -1 : (gInput.keys_[1].suppressed ? 1 : 0));
   return 0;
 }
 
@@ -247,6 +281,43 @@ static int modeSerial(int argc, char **argv) {
   return 0;
 }
 
+// ------------------------------------------------------- serial in a macro --
+
+// Sent once, from the first yield inside the macro. That is the window the
+// firmware opens by pumping serial from macroYield: a loop can run for most of
+// an hour, and the app polls the link every second, so a pad that answered
+// nothing would read as unplugged for the whole loop.
+static const char *gLineFromInsideMacro = NULL;
+
+static void macroYieldWithSerial() {
+  if (gLineFromInsideMacro != NULL) {
+    Serial.feed(gLineFromInsideMacro);
+    gLineFromInsideMacro = NULL;
+  }
+  gSerial.update(gClock);
+}
+
+static int modeMacroSerial(int argc, char **argv) {
+  if (!readBlob()) return 2;
+  uint8_t slot = argc > 2 ? (uint8_t)atoi(argv[2]) : 0;
+
+  bootDevice();
+  gEngine.setMacroYield(macroYieldWithSerial);
+  if (argc > 3) gLineFromInsideMacro = argv[3];
+
+  Serial.out_length = 0;
+  Serial.out[0] = '\0';
+
+  Action run = {ACT_SEQUENCE, slot, 1, 0};
+  gEngine.dispatch(run, 0, gClock);
+
+  // After the macro, so the contrast is visible: the same line that was refused
+  // from inside is accepted once runMacro is off the stack.
+  printf("macro_running_after %d\n", gEngine.macroRunning() ? 1 : 0);
+  printf("--- transcript\n%s", Serial.out);
+  return 0;
+}
+
 int main(int argc, char **argv) {
   const char *mode = argc > 1 ? argv[1] : "layout";
   if (strcmp(mode, "layout") == 0) return modeLayout();
@@ -254,6 +325,7 @@ int main(int argc, char **argv) {
   if (strcmp(mode, "buttons") == 0) return modeButtons();
   if (strcmp(mode, "replay") == 0) return modeReplay(argc, argv);
   if (strcmp(mode, "serial") == 0) return modeSerial(argc, argv);
+  if (strcmp(mode, "macro-serial") == 0) return modeMacroSerial(argc, argv);
   fprintf(stderr, "unknown mode %s\n", mode);
   return 2;
 }

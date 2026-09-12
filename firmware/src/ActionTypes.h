@@ -17,7 +17,12 @@ enum ActionType : uint8_t {
   // the ones above would turn every stored macro into a different macro.
   ACT_RESERVED_6,
   ACT_RESERVED_7,
-  ACT_SEQUENCE,        // a = macro slot
+  // a = macro slot, b = loop count. 0 and 1 both mean "run it once": a
+  // profile written before loop counts existed has zero in that byte, and so
+  // does every binding that never asked for one. Only ever appears in a
+  // keymap entry, which is four bytes -- nesting is refused, and a macro
+  // record has no room for a `b` that means this.
+  ACT_SEQUENCE,
   // 9 was ACT_HOST (desktop-run tokens). Reserved: the pad is HID-only; the PC
   // app is config-only. Do not reuse this id.
   ACT_RESERVED_9,

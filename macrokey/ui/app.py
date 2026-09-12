@@ -1267,6 +1267,16 @@ class MainWindow(QMainWindow):
         self._refresh_connection()
         if not accepted:
             return
+        if dialog.repeat_applied:
+            # The repeat row wrote the binding itself: it may have had to place
+            # a macro, and which slot is free is the app's business, not a
+            # dialog's. Everything after the write is the same as any edit.
+            self.app.profile.reclaim_storage()
+            self._refresh_all()
+            self._apply(
+                tr("Key {key} {gesture}").format(key=key + 1, gesture=tr(gesture))
+            )
+            return
         if dialog.result_action is not None:
             self.app.profile.set_action(key, gesture, dialog.result_action)
             self.app.profile.reclaim_storage()

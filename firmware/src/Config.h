@@ -12,7 +12,7 @@
 
 #include <Arduino.h>
 
-#define MK_FIRMWARE_VERSION "0.9.5"
+#define MK_FIRMWARE_VERSION "0.9.6"
 #define MK_PROTOCOL_VERSION 1
 
 // ---------------------------------------------------------------- topology --
@@ -156,6 +156,15 @@ static_assert(MK_KEY_COUNT <= (int)(sizeof(mk_keymask_t) * 8),
 // continuous work still stops a corrupt slot spinning forever; a plain 30 s
 // wall clock used to make the desktop app decide the link was dead.
 #define MK_MACRO_MAX_RUN_MS 10000
+// How many times one binding may re-run its macro. The count rides in the spare
+// `b` byte of the keymap entry that names the slot, so the ceiling is what a
+// byte holds and raising it means finding somewhere else to put it. `c` stays
+// reserved rather than being spent widening this.
+//
+// The budget above is per pass, not per run: authored pauses extend it, but the
+// HID work of 255 passes sharing one 10 s budget would stop the loop partway --
+// silently, and further in the longer the macro.
+#define MK_MACRO_MAX_LOOPS 255
 // How far ACT_MOUSE_HOME pushes, in steps of 127 raw units on each axis. The
 // pointer stops at the edge, so this only has to be further than the desktop is
 // wide. 128 covers 16256 raw units, including two 8K-wide displays; the old
