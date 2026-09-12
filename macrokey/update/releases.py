@@ -253,6 +253,7 @@ def fetch_asset(
     name: str,
     into: Path,
     *,
+    filename: str | None = None,
     status: Status = lambda _message: None,
     require_checksum: bool = True,
 ) -> Path:
@@ -262,6 +263,14 @@ def fetch_asset(
     publishes no hash for is refused rather than trusted, because the whole
     reason to check is that this file is about to be written to a keypad or
     over the running program.
+
+    `filename` is what to call it on disk, when that must differ from the asset
+    name. It has to exist for the self-update: someone who downloads a release
+    binary runs it under the name it was published as, so `into / name` is then
+    the running program itself -- and the download landed on top of it instead
+    of beside it. On Windows that is refused outright and the update could never
+    happen; everywhere else it meant the binary being replaced was also the
+    download's own scratch space.
     """
     url = release.asset(name)
     if url is None:
@@ -272,4 +281,4 @@ def fetch_asset(
         raise UpdateError(
             f"release {release.tag} publishes no checksum for {name} -- refusing it"
         )
-    return download(url, into / name, sha256=expected, status=status)
+    return download(url, into / (filename or name), sha256=expected, status=status)

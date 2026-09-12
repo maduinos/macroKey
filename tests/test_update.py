@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import sys
 from pathlib import Path
@@ -290,6 +291,69 @@ def test_the_running_binary_is_replaced_only_after_the_new_one_is_verified(
     assert os.access(current, os.X_OK), "a downloaded binary arrives without +x"
 
 
+def test_the_download_never_lands_on_the_running_binary(tmp_path, monkeypatch) -> None:
+    """Someone who downloads a release runs it under the name it was published
+    as, which made `into / name` the running program itself. The download then
+    went on top of the thing it was replacing: Windows refuses to write a
+    running .exe, so the update failed there every single time, and elsewhere
+    the binary being replaced doubled as the download's scratch space.
+
+    Every other test here names the running file `macrokey` while the asset is
+    `macrokey-linux-x86_64`, which is why none of them saw it.
+    """
+    source = tmp_path / "release"
+    source.mkdir()
+    name = "macrokey-linux-x86_64"
+    release = publish(source, {name: b"new"})
+    monkeypatch.setattr(selfupdate, "asset_name", lambda: name)
+
+    current = tmp_path / "bin" / name  # run under the published name
+    current.parent.mkdir()
+    current.write_bytes(b"old")
+
+    seen: list[Path] = []
+    real_download = releases.download
+
+    def watched(url, target, **kwargs):
+        seen.append(Path(target))
+        return real_download(url, target, **kwargs)
+
+    monkeypatch.setattr(releases, "download", watched)
+    selfupdate.apply(release, target=current)
+
+    assert seen, "nothing was downloaded"
+    assert current not in seen, "the download was written over the running binary"
+    assert current.read_bytes() == b"new"
+    assert [path.name for path in current.parent.iterdir()] == [name]
+
+
+def test_a_download_onto_a_locked_binary_is_reported_not_swallowed(
+    tmp_path, monkeypatch
+) -> None:
+    """What Windows does, on a machine that is not Windows: the running .exe
+    cannot be opened for writing. It has to arrive as an `UpdateError` naming
+    the file, because the caller logs that and nothing else knows.
+    """
+    source = tmp_path / "release"
+    source.mkdir()
+    name = "macrokey-windows-x86_64.exe"
+    release = publish(source, {name: b"new"})
+    monkeypatch.setattr(selfupdate, "asset_name", lambda: name)
+
+    current = tmp_path / "bin" / name
+    current.parent.mkdir()
+    current.write_bytes(b"old")
+
+    def refuse(url, target, **kwargs):
+        raise PermissionError(13, "Access is denied")
+
+    monkeypatch.setattr(releases, "download", refuse)
+    with pytest.raises(UpdateError, match="Access is denied"):
+        selfupdate.apply(release, target=current)
+    assert current.read_bytes() == b"old"
+    assert list(current.parent.iterdir()) == [current], "a staged file was left behind"
+
+
 def test_a_failed_download_leaves_the_running_binary_alone(tmp_path, monkeypatch) -> None:
     source = tmp_path / "release"
     source.mkdir()
@@ -464,3 +528,46 @@ def test_an_unreleased_version_has_no_section() -> None:
 def test_a_version_that_is_a_prefix_of_another_is_not_matched() -> None:
     """`0.1` must not answer for `0.14.0`."""
     assert release_notes_module().section(CHANGELOG_SAMPLE, "0.1") == ""
+
+
+# ------------------------------------------------------------------- logging --
+
+
+def test_a_failed_update_is_logged_loudly_enough_to_find(tmp_path, monkeypatch, caplog) -> None:
+    """An update that silently does not happen is the hardest kind of bug to
+    hear about: the automatic check says nothing when it fails, so the person
+    has no reason to suspect anything went wrong. It used to be logged at INFO,
+    which is below the console threshold and lost in the file.
+    """
+    source = tmp_path / "release"
+    source.mkdir()
+    name = "macrokey-linux-x86_64"
+    release = publish(source, {name: b"new"})
+    (source / name).write_bytes(b"tampered")
+    monkeypatch.setattr(selfupdate, "asset_name", lambda: name)
+
+    current = tmp_path / "bin" / name
+    current.parent.mkdir()
+    current.write_bytes(b"old")
+
+    with caplog.at_level(logging.INFO, logger="macrokey.update.selfupdate"):
+        with pytest.raises(UpdateError):
+            selfupdate.apply(release, target=current)
+
+    # What it was doing when it failed, not only that it failed.
+    said = " ".join(record.message for record in caplog.records)
+    assert name in said, "the log does not say which asset it was fetching"
+    assert str(current) in said, "the log does not say what it was replacing"
+
+
+def test_the_log_file_can_be_pointed_at(tmp_path, monkeypatch) -> None:
+    """On Windows the log lives under %APPDATA% and nobody finds it by looking.
+    "There are no logs" is usually "I could not find them", and the answer has
+    to be obtainable from the app.
+    """
+    from macrokey import logging_setup
+
+    monkeypatch.setenv("MACROKEY_CONFIG_DIR", str(tmp_path))
+    path = logging_setup.log_path()
+    assert path.name == logging_setup.LOG_NAME
+    assert path.parent == tmp_path

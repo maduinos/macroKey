@@ -5,7 +5,12 @@ updating it is `git pull` -- overwriting somebody's checkout with a binary would
 be a surprising thing for a keypad editor to do, so it is refused with a
 sentence saying what to run instead.
 
-The swap is a rename, not a copy over the running file:
+The download never lands on the running file. It is staged under a name of its
+own beside it, because a release binary is normally run under the name it was
+published as -- and downloading "the new version" straight onto that path is
+writing over the program doing the writing.
+
+The swap is then a rename, not a copy over the running file:
 
 * Linux replaces the path while the old inode stays open. The running process
   keeps working off the file it started from and the next launch gets the new
@@ -127,16 +132,35 @@ def apply(
     current = target or executable()
     staged = current.with_name(f".{current.name}.new")
     staged.unlink(missing_ok=True)
+    log.info(
+        "updating %s to v%s from asset %s, staging at %s",
+        current, release.version, name, staged,
+    )
 
-    downloaded = releases.fetch_asset(release, name, current.parent, status=status)
+    # Downloaded *as* the staging name, not as the asset's own name. Someone who
+    # downloads a release binary runs it under the name it was published as, so
+    # `current.parent / name` is the running program -- and the download used to
+    # land on top of it. Windows refuses to replace a running .exe, so the
+    # update failed there every time for anyone who had not renamed the file.
     try:
-        downloaded.replace(staged)
+        downloaded = releases.fetch_asset(
+            release, name, current.parent, filename=staged.name, status=status
+        )
+    except OSError as exc:
+        # `download` turns its own OSErrors into UpdateError, so this is for the
+        # ones raised before it gets that far -- an unwritable directory is the
+        # ordinary case. The contract above says UpdateError, and the caller
+        # catches exactly that; anything else reached the UI as a bare traceback.
+        staged.unlink(missing_ok=True)
+        raise UpdateError(f"could not download {name}: {exc}") from exc
+    try:
         # The archive bit is not carried by an HTTPS body, so a downloaded
         # Linux binary arrives unrunnable unless this is done.
         staged.chmod(staged.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
     except OSError as exc:
         staged.unlink(missing_ok=True)
         raise UpdateError(f"could not prepare {staged}: {exc}") from exc
+    assert downloaded == staged, "the download did not land where it was staged"
 
     retired = current.with_name(current.name + RETIRED_SUFFIX)
     status(f"Installing v{release.version}")
@@ -147,9 +171,11 @@ def apply(
         os.replace(staged, current)
     except OSError as exc:
         # Put back whatever was moved, so a failure here leaves a working app.
+        log.warning("could not install %s over %s: %s", staged, current, exc)
         if not current.exists() and retired.exists():
             try:
                 os.replace(retired, current)
+                log.warning("restored %s from %s", current, retired)
             except OSError:
                 log.error("could not restore %s from %s", current, retired)
         staged.unlink(missing_ok=True)
@@ -161,4 +187,5 @@ def apply(
             retired.unlink(missing_ok=True)
         except OSError:
             pass
+    log.info("installed v%s at %s", release.version, current)
     return current

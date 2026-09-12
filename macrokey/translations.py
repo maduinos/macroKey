@@ -500,6 +500,10 @@ KO: dict[str, str] = {
     "once": "1회",
     "Bind a shortcut or record into this key first.": "먼저 단축키를 넣거나 녹음하세요.",
     "That repeat will not fit": "반복을 넣을 자리가 없습니다",
+    "Open the log folder": "로그 폴더 열기",
+    "Where the diagnostic log is written. Useful when reporting a problem.":
+        "진단 로그가 쌓이는 곳입니다. 문제를 알릴 때 첨부하면 됩니다.",
+    "Log file": "로그 파일",
     "about {seconds} seconds": "약 {seconds}초",
     "about {minutes} minutes": "약 {minutes}분",
     "about {hours} hours": "약 {hours}시간",
