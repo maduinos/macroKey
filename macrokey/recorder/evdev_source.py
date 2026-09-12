@@ -190,11 +190,33 @@ class EvdevRecorder:
         self._pending_dy = 0
         self._motion_started_at: float | None = None
         self._motion_last_at = 0.0
+        # Kernel event time, moved onto this process's monotonic clock.
+        #
+        # Every event carries the moment the kernel stamped it, and that is the
+        # timing the recording is supposed to keep. Stamping events with the
+        # clock at the moment *this* thread got round to them instead makes the
+        # recording a record of the reader's scheduling: a batch that arrives
+        # late is read in one go, and its events -- however far apart they
+        # really were -- all land on the same instant, with the whole gap
+        # showing up in front of the batch. A recording of a game, made while
+        # the editor is redrawing, is exactly when that happens.
+        #
+        # The two clocks cannot be compared directly (the kernel stamps with
+        # CLOCK_REALTIME here, and everything else in the recorder is
+        # monotonic), so the offset is taken from the first event and every
+        # event after it is placed relative to that. Only the gaps between
+        # events matter, and this keeps them exactly as the kernel saw them.
+        self._clock_offset: float | None = None
 
     def start(self) -> None:
         usable, reason = available()
         if not usable:
             raise RuntimeError(reason)
+
+        # Taken again per recording: the offset between the two clocks drifts,
+        # and a stale one would shift a whole session against the pauses the
+        # editor measures on its own clock.
+        self._clock_offset = None
 
         for path in evdev.list_devices():
             try:
@@ -268,8 +290,18 @@ class EvdevRecorder:
             self._flush_motion()
             selector.close()
 
+    def _event_time(self, event) -> float:
+        """When the kernel stamped `event`, on the monotonic clock."""
+        stamped = getattr(event, "timestamp", None)
+        if stamped is None:
+            return time.monotonic()
+        at = stamped()
+        if self._clock_offset is None:
+            self._clock_offset = time.monotonic() - at
+        return at + self._clock_offset
+
     def _handle(self, event) -> None:
-        now = time.monotonic()
+        now = self._event_time(event)
 
         if event.type == ecodes.EV_REL and event.code in (ecodes.REL_X, ecodes.REL_Y):
             if (

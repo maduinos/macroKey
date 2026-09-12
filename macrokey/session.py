@@ -273,6 +273,12 @@ class RecordingSession:
         # to be told. "It moved on its own" is what this is for: the answer is
         # in here, and without it the only move is to guess.
         self.last_steps = steps
+        # Which backend produced these steps, next to the steps themselves. The
+        # two capture the same gesture differently enough that a recording
+        # cannot be read without knowing -- and the fallback is chosen silently,
+        # so by the time a recording looks wrong there is no way back to which
+        # one it came from.
+        log.info("  backend: %s", self.app.recorder.backend or "unknown")
         for line in self.app.recorder.summary(steps):
             log.info("  captured: %s", line)
 

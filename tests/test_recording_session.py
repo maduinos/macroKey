@@ -61,6 +61,8 @@ class FakeApp:
     #: The session writes every captured step to the log, so it needs this.
     class recorder:  # noqa: N801 - stands in for the real Recorder
         capture_mouse = True
+        #: The session logs which backend captured a recording alongside it.
+        backend = "evdev"
 
         @staticmethod
         def summary(steps):
@@ -128,6 +130,21 @@ def test_holding_the_same_key_again_stores_it_on_that_key() -> None:
     assert app.assigned[1] == 2, "stored against the key that was held"
     assert app.assigned[2] == "tap"
     assert app.saved and app.pushed
+
+
+def test_the_log_says_which_backend_captured_the_recording(caplog) -> None:
+    """Next to the steps themselves. The two backends turn the same gesture
+    into different steps, so the steps cannot be read without knowing which one
+    produced them -- and the fallback is chosen without saying.
+    """
+    import logging
+
+    app, session, _ = session_for()
+    with caplog.at_level(logging.INFO, logger="macrokey.session"):
+        session.handle_request(2)
+        session.handle_request(2)
+
+    assert "backend: evdev" in caplog.text
 
 
 def test_the_result_says_whether_the_pad_can_replay_it_alone() -> None:

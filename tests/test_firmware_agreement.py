@@ -386,15 +386,35 @@ def test_a_key_held_before_the_loop_started_does_not_stop_it(harness) -> None:
     assert typed_text(run(harness, "replay", "0", "2", blob=blob)) == SAMPLE_TEXT * 2
 
 
-def test_a_single_pass_macro_is_not_stopped_by_a_press(harness) -> None:
-    """Only a loop is interruptible. A press during an ordinary macro has always
-    queued and fired afterwards, and a short macro that a second press killed
-    would be one nobody could press twice in a row.
+def test_a_press_inside_the_arming_window_does_not_stop_a_macro(harness) -> None:
+    """A press this early is someone pressing the key again, not stopping it: it
+    queues and fires afterwards, the way an ordinary macro has always behaved. A
+    short macro that a second press killed would be one nobody could press twice
+    in a row.
     """
     blob = binary.encode_profile(sample_profile())
     lines = run(harness, "replay", "0", "1", "300", blob=blob)
     assert typed_text(lines) == SAMPLE_TEXT
     assert "stop-key-suppressed 0" in lines
+
+
+def test_a_long_single_pass_macro_can_still_be_stopped(harness) -> None:
+    """The pass count is the wrong thing to gate stopping on, and this is the
+    recording that proved it: 39 s of real hold timing bound to a key at one
+    repeat could not be stopped by anything short of the cable. Arming on how
+    long the run has lasted covers a loop and a long recording both.
+    """
+    profile = model.default_profile()
+    profile.device_macros = [
+        [
+            model.Action(kind="delay", delay_ms=12000),
+            model.Action(kind="key", hotkey="esc"),
+        ]
+    ]
+    lines = run(harness, "replay", "0", "1", "2000", blob=binary.encode_profile(profile))
+    # KEY_ESC is 0xB1 = 177 in Keyboard.h. The macro never reaches it.
+    assert "key press 177" not in lines, "the press did not stop the macro"
+    assert "stop-key-suppressed 1" in lines
 
 
 def test_a_status_query_is_answered_from_inside_a_macro(harness) -> None:

@@ -91,3 +91,64 @@ def test_key_press_and_release_round_trip_on_the_wire() -> None:
 def test_describe_names_holds_clearly() -> None:
     assert "hold" in Action(kind="key", hotkey="w", mode="press").describe()
     assert "let go" in Action(kind="key", hotkey="w", mode="release").describe()
+
+
+# ------------------------------------------------------- desktop auto-repeat --
+
+
+def repeats(token: str, first: float, count: int, period: float) -> list[RawEvent]:
+    """A held key as a desktop repeats it: press after press, no release."""
+    return [down(token, first + step * period) for step in range(count)]
+
+
+def test_a_held_key_is_one_press_however_often_the_desktop_repeats_it() -> None:
+    """What put 190 `w press` records on a pad for one held key.
+
+    evdev drops repeats at the source, but the pynput fallback hands them over
+    as ordinary presses and nothing here caught them. The pad then replayed the
+    burst: a keyboard that will not stop typing W.
+    """
+    events = [down("w", 1.0, char="w"), *repeats("w", 1.5, 200, 0.03), up("w", 11.0)]
+    steps = normalize(events, preserve_key_timing=True, min_gap_ms=40)
+    assert modes(steps) == ["press", "release"]
+    assert sum(s["params"]["ms"] for s in steps if s["type"] == "delay") == 10_000
+
+
+def test_repeats_of_a_held_modifier_are_dropped_too() -> None:
+    """Shift arrived the same way, and a burst of shift presses is worse than a
+    burst of letters: every one of them is a step the pad has to store."""
+    events = [
+        down("shift", 1.0),
+        down("w", 1.1, char="w"),
+        *repeats("shift", 1.6, 50, 0.03),
+        *repeats("w", 1.6, 50, 0.03),
+        up("w", 11.1),
+        up("shift", 11.2),
+    ]
+    steps = normalize(events, preserve_key_timing=True, min_gap_ms=40)
+    keys = [s["params"]["hotkey"] for s in steps if s["type"] == "hotkey"]
+    assert keys == ["shift", "w", "w", "shift"]
+
+
+def test_pressing_a_key_again_after_letting_go_is_still_two_presses() -> None:
+    """The suppression is "already down", not "seen before" -- tapping the same
+    key twice is the most ordinary thing a recording contains.
+    """
+    events = [
+        down("w", 1.0, char="w"),
+        up("w", 1.2),
+        down("w", 1.6, char="w"),
+        up("w", 1.8),
+    ]
+    steps = normalize(events, preserve_key_timing=True, min_gap_ms=40)
+    assert modes(steps) == ["press", "release", "press", "release"]
+
+
+def test_the_default_path_does_not_type_a_repeated_character() -> None:
+    """Holding A recorded "aaaaaaa" on the pynput backend and "a" on evdev. The
+    hold is not a request to type the letter fifty times.
+    """
+    events = [down("a", 1.0, char="a"), *repeats("a", 1.5, 20, 0.03), up("a", 3.0)]
+    steps = normalize(events)
+    assert [s["type"] for s in steps] == ["text"]
+    assert steps[0]["params"]["text"] == "a"

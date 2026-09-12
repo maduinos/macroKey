@@ -147,19 +147,31 @@ void KeyEngine::macroWait(uint16_t milliseconds) {
 }
 
 void KeyEngine::macroPump() {
-  input_->update(millis());
+  uint32_t now = millis();
+  input_->update(now);
 
-  // Any pad key pressed since the loop started stops it. The scan is already
-  // running through a macro (see macroWait), so this costs a mask compare.
+  // A run that has lasted this long is not one anybody is pressing again, so
+  // from here on it can be stopped -- however many passes it was asked for.
+  // The mask is retaken here, not left over from entry: a key pressed inside
+  // the un-armed window went to the gesture queue as an ordinary press, and
+  // arming under a finger that is still down would turn that press into a stop
+  // it was never meant to be.
+  if (!macroAbortArmed_ && (int32_t)(now - macroAbortArmAt_) >= 0) {
+    macroAbortArmed_ = true;
+    macroStartMask_ = input_->pressedMask();
+  }
+
+  // Any pad key pressed since then stops the macro. The scan is already
+  // running through it (see macroWait), so this costs a mask compare.
   //
   // Read from `pressedMask` rather than the gesture queue on purpose: a queued
-  // gesture fires on release, so by the time it arrived the loop would have run
-  // on for however long the key was held. The mask is the press itself.
+  // gesture fires on release, so by the time it arrived the macro would have
+  // run on for however long the key was held. The mask is the press itself.
   if (macroAbortArmed_ && !macroAborted_) {
     mk_keymask_t pressed = (mk_keymask_t)(input_->pressedMask() & ~macroStartMask_);
     if (pressed != 0) {
       macroAborted_ = true;
-      // The key that stopped the loop must not then do whatever it is bound to.
+      // The key that stopped the macro must not then do whatever it is bound to.
       // This is the same swallow a record request uses when it claims a key.
       input_->suppressUntilRelease(pressed);
     }
@@ -323,9 +335,12 @@ void KeyEngine::runMacro(uint8_t slot, uint8_t key, uint32_t now, uint8_t loops)
   // loop counts existed has in that byte, so this is also the migration.
   if (loops == 0) loops = 1;
 
-  // Only a loop can be stopped early, and only presses that arrive after it
-  // started count as a stop. See the members' comment in the header.
+  // A loop can be stopped from the start; a single pass has to earn it by
+  // lasting MK_MACRO_ABORT_ARM_MS, so that pressing a short macro twice in a
+  // row still means "run it again" rather than "stop". Either way only presses
+  // that arrive after arming count. See the members' comment in the header.
   macroAbortArmed_ = loops > 1;
+  macroAbortArmAt_ = millis() + MK_MACRO_ABORT_ARM_MS;
   macroStartMask_ = input_->pressedMask();
   macroAborted_ = false;
 
@@ -384,6 +399,7 @@ void KeyEngine::runMacro(uint8_t slot, uint8_t key, uint32_t now, uint8_t loops)
 
   macroDeadline_ = 0;
   macroAbortArmed_ = false;
+  macroAbortArmAt_ = 0;
 
   leds_->noteMacroDone(key, millis());
 }

@@ -12,7 +12,7 @@
 
 #include <Arduino.h>
 
-#define MK_FIRMWARE_VERSION "0.9.6"
+#define MK_FIRMWARE_VERSION "0.9.7"
 #define MK_PROTOCOL_VERSION 1
 
 // ---------------------------------------------------------------- topology --
@@ -165,6 +165,20 @@ static_assert(MK_KEY_COUNT <= (int)(sizeof(mk_keymask_t) * 8),
 // HID work of 255 passes sharing one 10 s budget would stop the loop partway --
 // silently, and further in the longer the macro.
 #define MK_MACRO_MAX_LOOPS 255
+// How long a macro must have been running before a pad key stops it.
+//
+// Stopping used to be offered only to a loop, on the grounds that a press
+// during a short macro is someone pressing the key again -- and a second tap
+// that killed the first would make a short macro un-spammable. That reasoning
+// is about *length*, not about the pass count: a 40 s recording played once is
+// exactly as impossible to sit through as a loop, and the pad is a keyboard the
+// whole time. A run that has already lasted a second is not one anybody is
+// spamming, so from here on any press stops it.
+//
+// One second is above the double-tap window (MK_DOUBLE_TAP_MS) and above the
+// 50 ms spacing the app puts in a wrapped hotkey, so every macro short enough
+// to be pressed in a row is over before this arms.
+#define MK_MACRO_ABORT_ARM_MS 1000
 // How far ACT_MOUSE_HOME pushes, in steps of 127 raw units on each axis. The
 // pointer stops at the edge, so this only has to be further than the desktop is
 // wide. 128 covers 16256 raw units, including two 8K-wide displays; the old

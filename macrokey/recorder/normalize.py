@@ -118,6 +118,17 @@ def normalize(
     """
     steps: list[dict[str, Any]] = []
     held: list[str] = []
+    # Every key currently down, which is how an auto-repeat is recognised: the
+    # desktop repeats a held key by sending press after press with no release
+    # between them, and a person cannot press a key that is already pressed.
+    #
+    # The evdev backend drops repeats at the source (value == 2 is the keyboard
+    # talking, not the person), but pynput hands them over as ordinary presses
+    # and there was nothing here to catch them. A ten-second Shift+W came back
+    # as one press, then a burst of two hundred more with no release -- which is
+    # what the pad then replayed. Doing it here covers both backends and the
+    # recordings a future one produces.
+    down: set[str] = set()
     text = ""
     last_at: float | None = None
     mouse_modes, wobble = _mouse_modes(events)
@@ -150,6 +161,7 @@ def normalize(
 
     for position, event in enumerate(events):
         if event.kind == KEY_UP:
+            down.discard(event.token)
             if preserve_key_timing:
                 flush_text()
                 if event.token in keycodes.MODIFIER_BITS:
@@ -166,6 +178,11 @@ def normalize(
             continue
 
         if event.kind == KEY_DOWN:
+            # A repeat, not a keystroke. See `down` above.
+            if event.token in down:
+                continue
+            down.add(event.token)
+
             if preserve_key_timing:
                 # Each physical down is its own press, including modifiers.
                 # Baking Shift into "shift+w" as a single click would press and

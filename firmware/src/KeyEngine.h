@@ -102,15 +102,21 @@ class KeyEngine {
   // renews it per pass.
   uint32_t macroDeadline_ = 0;
 
-  // Stopping a loop. Only armed when there is more than one pass to stop: a
-  // single-run macro keeps queuing presses the way it always has, and changing
-  // that would make a short macro un-spammable.
+  // Stopping a macro. A loop is stoppable from its first pass; anything else
+  // becomes stoppable once it has run for MK_MACRO_ABORT_ARM_MS, which is what
+  // separates "stop this, it has been going for a minute" from "I am pressing
+  // the key again". The count of passes cannot make that call: a single pass of
+  // a recording with real hold timing runs for as long as a loop of a short one.
   //
-  // Whatever was already held when the macro started does not count. The key
-  // that fired it is normally up -- tap and double both fire on release -- but
-  // a second key held from before would otherwise stop the loop before its
-  // first pass, which is exactly what the replay harness does.
+  // Whatever was already held when the arming happened does not count. The key
+  // that fired the macro is normally up -- tap and double both fire on release
+  // -- but a second key held from before would otherwise stop the run
+  // immediately, which is exactly what the replay harness does. The mask is
+  // taken again at the moment of arming for the same reason: a press that
+  // arrived during the un-armed window has already been queued as an ordinary
+  // press, and must not also be read as a stop when the window closes under it.
   bool macroAbortArmed_ = false;
+  uint32_t macroAbortArmAt_ = 0;
   mk_keymask_t macroStartMask_ = 0;
   bool macroAborted_ = false;
 

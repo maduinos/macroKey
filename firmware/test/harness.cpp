@@ -14,7 +14,7 @@
 //   replay <slot> [loops] [stop-at-ms]
 //                     run a macro through the real KeyEngine, print HID calls.
 //                     `stop-at-ms` presses a second key at that point on the
-//                     clock, which is how a looping macro is stopped.
+//                     clock, which is how a running macro is stopped.
 //   serial            feed lines to the real SerialProtocol, print what changed
 //   macro-serial <slot> <line>
 //                     send a line to the pad from *inside* a replaying macro,
@@ -206,14 +206,15 @@ static int modeReplay(int argc, char **argv) {
   // into the double slot was impossible on any key that already had one.
   //
   // It is also the key the macro is running *for*, which is why it does not
-  // stop a loop: runMacro takes the mask at entry and only counts what arrives
-  // after. Without that, every looped macro would stop in its first pass here.
+  // stop the macro: the mask is taken when stopping arms and only presses that
+  // arrive after that count. Without it every loop would stop in its first pass
+  // here, and every long macro the moment it armed.
   gPinLow[MK_KEY_PINS[0]] = true;
   // Debounced before the macro starts, because that is the state the pad is
   // really in: a key held across a macro has been held for scans beforehand.
-  // runMacro reads the mask at entry, and an undebounced pin is not in it yet,
-  // so without this the key arrives mid-macro looking like a fresh press --
-  // which is precisely what stops a loop.
+  // The mask is read from debounced state, and an undebounced pin is not in it
+  // yet, so without this the key arrives mid-macro looking like a fresh press --
+  // which is precisely what stops one.
   for (uint8_t settle = 0; settle < 8; settle++) {
     gClock += MK_DEBOUNCE_MS;
     gInput.update(gClock);

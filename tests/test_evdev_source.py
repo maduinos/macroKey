@@ -9,6 +9,7 @@ and nothing reported a problem.
 from __future__ import annotations
 
 import types
+from itertools import pairwise
 
 import pytest
 
@@ -153,6 +154,13 @@ def _fake(kind: int, code: int, value: int):
     return SimpleNamespace(type=kind, code=code, value=value)
 
 
+def _stamped(kind: int, code: int, value: int, at: float):
+    """A fake event that carries a kernel timestamp, as a real one does."""
+    from types import SimpleNamespace
+
+    return SimpleNamespace(type=kind, code=code, value=value, timestamp=lambda: at)
+
+
 def _source():
     from macrokey.recorder.evdev_source import EvdevRecorder
 
@@ -281,3 +289,44 @@ def test_a_real_move_before_a_keystroke_keeps_its_place() -> None:
     source._handle(_fake(ecodes.EV_KEY, ecodes.KEY_A, 1))
 
     assert [event.kind for event in got] == [MOUSE_MOVE, KEY_DOWN]
+
+
+# ------------------------------------------------------------ event timing --
+
+
+def test_events_are_timed_by_the_kernel_not_by_when_they_were_read(monkeypatch) -> None:
+    """A batch drained late used to collapse into one instant.
+
+    Every event got the clock at the moment this thread got round to it, so
+    keystrokes 15 ms apart came out simultaneous and the whole gap turned up in
+    front of the batch. Recording a game while the editor redraws is exactly
+    when the reader falls behind, and the recording is then a record of the
+    reader's scheduling rather than of the hand.
+    """
+    import macrokey.recorder.evdev_source as source_module
+
+    source, got = _source()
+    # One wake, six events, and this process's own clock does not move at all
+    # while they are handled.
+    monkeypatch.setattr(source_module.time, "monotonic", lambda: 500.0)
+    for step in range(3):
+        base = 1000.0 + step * 0.03
+        source._handle(_stamped(ecodes.EV_KEY, ecodes.KEY_A, 1, base))
+        source._handle(_stamped(ecodes.EV_KEY, ecodes.KEY_A, 0, base + 0.015))
+
+    ats = [event.at for event in got]
+    gaps = [round(later - earlier, 4) for earlier, later in pairwise(ats)]
+    assert gaps == [0.015] * 5
+    # Placed on this process's clock, not the kernel's: everything else in the
+    # recorder measures against monotonic.
+    assert ats[0] == 500.0
+
+
+def test_an_event_with_no_timestamp_still_gets_one() -> None:
+    """Not every source of an event is the kernel -- the fallback keeps the
+    recorder working rather than raising in the reading thread, where an
+    exception would end the recording silently."""
+    source, got = _source()
+    source._handle(_fake(ecodes.EV_KEY, ecodes.KEY_A, 1))
+    assert len(got) == 1
+    assert got[0].at > 0

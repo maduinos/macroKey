@@ -187,7 +187,9 @@ class Recorder:
         # Prefer the kernel: it is the only source that sees every window under
         # Wayland. pynput stays as the fallback for boxes without the input
         # group, and on X11 where it works properly.
-        if evdev_source.available()[0]:
+        evdev_usable, evdev_reason = evdev_source.available()
+        if evdev_usable:
+            log.info("recording through evdev, the kernel's own input stream")
             self._evdev = evdev_source.EvdevRecorder(
                 self._record, capture_mouse=self.capture_mouse
             )
@@ -199,7 +201,11 @@ class Recorder:
             self.recording = True
             try:
                 self._evdev.start()
-            except Exception:
+            except Exception as exc:
+                # Loud, because the recording does not happen at all after this
+                # and the window only says it could not start. Which backend was
+                # refused, and why, is the whole diagnosis.
+                log.warning("evdev would not start: %s", exc, exc_info=True)
                 self.recording = False
                 self._evdev = None
                 raise
@@ -208,6 +214,18 @@ class Recorder:
         usable, reason = self.available()
         if not usable:
             raise RecorderError(reason)
+        # A warning, not a note: pynput is the lesser backend and the recording
+        # it produces is measurably different. It sees only what the desktop
+        # forwards -- under Wayland that is this window and nothing else -- and
+        # it times events by when its callback ran rather than by when the key
+        # was struck. Which one a recording came from is the first question
+        # asked of a recording that came back wrong, and nothing used to say.
+        log.warning(
+            "evdev is not usable (%s); recording through pynput instead, "
+            "which under Wayland sees only this window and times events by "
+            "when its callback ran",
+            evdev_reason or "no reason given",
+        )
         self.backend = "pynput"
         self._pynput_last_pos = None
         if self.capture_mouse and pynput_mouse is not None:
