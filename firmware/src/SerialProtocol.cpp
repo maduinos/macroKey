@@ -107,6 +107,10 @@ void SerialProtocol::sendState() {
   Serial.print(leds_->hostMode() ? F("host") : F("local"));
   Serial.print(F(" hid="));
   Serial.print(engine_->hidEnabled() ? 1 : 0);
+  // So a host that gets `busy` back knows why, and so a long loop reads as the
+  // pad being busy rather than as a link that is answering strangely.
+  Serial.print(F(" macro="));
+  Serial.print(engine_->macroRunning() ? 1 : 0);
   Serial.print(F(" up="));
   Serial.println(millis());
 }
@@ -425,6 +429,19 @@ void SerialProtocol::cmdProfile(uint32_t now) {
   sendErr("arg");
 }
 
+// What may be answered while a macro is replaying. Reads only, and the reason
+// is the whole point of pumping serial from inside one: a 255-pass loop can run
+// for the better part of an hour, and the app polls the link every second, so
+// without these the pad looks unplugged for as long as the loop lasts.
+//
+// Everything else is refused rather than queued. Committing a profile while
+// runMacro is reading its records out of EEPROM would change the steps out from
+// under it, which is why serial was kept out of the macro yield to begin with.
+static bool isMacroSafeVerb(const char *verb) {
+  return strcmp(verb, "PING") == 0 || strcmp(verb, "IDENT") == 0 ||
+         strcmp(verb, "STATE?") == 0;
+}
+
 void SerialProtocol::handleLine(uint32_t now) {
   if (lineOverflow_) {
     lineOverflow_ = false;
@@ -432,6 +449,11 @@ void SerialProtocol::handleLine(uint32_t now) {
     return;
   }
   if (!parseLine()) return;
+
+  if (engine_->macroRunning() && !isMacroSafeVerb(verb_)) {
+    sendErr("busy");
+    return;
+  }
 
   if (strcmp(verb_, "PING") == 0) {
     leds_->noteHostAlive(now);

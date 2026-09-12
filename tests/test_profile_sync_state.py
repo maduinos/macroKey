@@ -134,6 +134,7 @@ def test_directly_replacing_a_recording_reclaims_its_macro_slot(
 
     class Dialog:
         result_action = Action()
+        repeat_applied = False
 
         def __init__(self, *_args, **_kwargs):
             pass

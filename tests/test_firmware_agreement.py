@@ -154,6 +154,9 @@ def test_the_two_layouts_are_the_same_layout(build_harness, board: Board) -> Non
         "macro_record_size": binary.RECORD_SIZE,
         "macro_record_capacity": layout.record_capacity,
         "macro_max_records": board.max_records_per_slot,
+        # One byte of a keymap entry, so this is a ceiling neither side can
+        # raise alone.
+        "macro_max_loops": model.MAX_MACRO_REPEAT,
         "macro_slots": model.MACRO_SLOTS,
         "profile_size": board.profile_size,
         "schema": board.schema,
@@ -311,6 +314,128 @@ def test_the_buttons_are_still_scanned_while_a_macro_replays(harness) -> None:
 
 
 # ------------------------------------------------------------------- replay --
+
+
+# --------------------------------------------------------------------- loops --
+
+
+def typed_text(lines: list[str]) -> str:
+    return "".join(chr(int(line.split()[1])) for line in lines if line.startswith("type "))
+
+
+SAMPLE_TEXT = "sudo apt update && sudo apt upgrade -y"
+
+
+def test_the_loop_ceiling_agrees_with_the_host(harness) -> None:
+    """One byte in a keymap entry, described in two places."""
+    assert fields(run(harness, "layout"))["macro_max_loops"] == model.MAX_MACRO_REPEAT
+
+
+def test_a_loop_replays_the_macro_once_per_pass(harness) -> None:
+    blob = binary.encode_profile(sample_profile())
+    lines = run(harness, "replay", "0", "3", blob=blob)
+    assert typed_text(lines) == SAMPLE_TEXT * 3
+
+
+def test_a_binding_with_no_loop_count_runs_once(harness) -> None:
+    """Zero is what every profile written before loop counts existed holds.
+
+    It has to mean one pass rather than none, or upgrading the firmware would
+    silently stop every macro already on the pad.
+    """
+    blob = binary.encode_profile(sample_profile())
+    assert typed_text(run(harness, "replay", "0", "0", blob=blob)) == SAMPLE_TEXT
+
+
+def test_each_pass_lets_go_of_what_it_was_holding(harness) -> None:
+    """A recording may end mid-hold -- a press with no release is half a hold,
+    and the normaliser keeps it. Looping that would press an already-pressed key
+    and then leave it down when the loop stopped.
+    """
+    blob = binary.encode_profile(sample_profile())
+    lines = run(harness, "replay", "1", "3", blob=blob)
+    assert lines.count("key release-all") == 3
+
+
+def test_a_key_pressed_during_a_loop_stops_it(harness) -> None:
+    """The reason a ceiling of 255 is safe to offer at all: 255 passes of a
+    recording with real hold timing in it is most of an hour, and the pad is a
+    keyboard the whole time.
+    """
+    blob = binary.encode_profile(sample_profile())
+    passes = typed_text(run(harness, "replay", "0", "20", "300", blob=blob))
+    assert len(passes) < len(SAMPLE_TEXT) * 20, "the press did not stop the loop"
+
+
+def test_the_key_that_stops_a_loop_does_not_also_fire(harness) -> None:
+    """Stopping a macro is not using the key. Without the swallow, letting go
+    of it fires its tap -- so stopping one macro starts another.
+    """
+    blob = binary.encode_profile(sample_profile())
+    lines = run(harness, "replay", "0", "20", "300", blob=blob)
+    assert "stop-key-suppressed 1" in lines
+
+
+def test_a_key_held_before_the_loop_started_does_not_stop_it(harness) -> None:
+    """The key the macro is running *for* is normally up by the time it runs --
+    tap and double both fire on release -- but the scan is alive through a macro
+    and the harness holds key 1 down throughout. Counting what was already held
+    would stop every loop in its first pass.
+    """
+    blob = binary.encode_profile(sample_profile())
+    assert typed_text(run(harness, "replay", "0", "2", blob=blob)) == SAMPLE_TEXT * 2
+
+
+def test_a_single_pass_macro_is_not_stopped_by_a_press(harness) -> None:
+    """Only a loop is interruptible. A press during an ordinary macro has always
+    queued and fired afterwards, and a short macro that a second press killed
+    would be one nobody could press twice in a row.
+    """
+    blob = binary.encode_profile(sample_profile())
+    lines = run(harness, "replay", "0", "1", "300", blob=blob)
+    assert typed_text(lines) == SAMPLE_TEXT
+    assert "stop-key-suppressed 0" in lines
+
+
+def test_a_status_query_is_answered_from_inside_a_macro(harness) -> None:
+    """Why serial is pumped from the macro yield at all. The app polls the link
+    every second; a loop that answered nothing would read as an unplugged pad
+    for as long as it ran.
+    """
+    blob = binary.encode_profile(sample_profile())
+    lines = run(harness, "macro-serial", "0", "STATE?\n", blob=blob)
+    state = next(line for line in lines if line.startswith("STATE "))
+    assert "macro=1" in state, state
+
+
+def test_a_profile_write_is_refused_from_inside_a_macro(harness) -> None:
+    """The guarantee that kept serial out of the yield in the first place:
+    committing a profile while runMacro is reading its records out of EEPROM
+    would change the steps out from under it.
+    """
+    blob = binary.encode_profile(sample_profile())
+    lines = run(harness, "macro-serial", "0", "PROF begin bytes=1024 crc=0000\n", blob=blob)
+    assert any("ERR" in line and "busy" in line for line in lines), lines
+    assert "macro_running_after 0" in lines
+
+
+def test_the_firmware_reads_a_double_binding_repeat_too(harness) -> None:
+    """Tap and double are separate keymap entries, and the count lives in the
+    entry -- so the pad has to read it from whichever one fired. The sample
+    binds slot 1 to key 2's double, which is the gesture that is easy to leave
+    out of a keymap walk.
+    """
+    profile = sample_profile()
+    profile.set_action(1, "double", model.Action(kind="sequence", slot=1, repeat=9))
+    lines = run(harness, "profile", blob=binary.encode_profile(profile))
+
+    entry = next(line for line in lines if line.startswith("key 1 double "))
+    _, _, _, type_id, slot, repeat = entry.split()
+    assert (int(type_id), int(slot), int(repeat)) == (
+        model.ACTION_TYPE_IDS["sequence"],
+        1,
+        9,
+    )
 
 
 def test_a_text_macro_types_its_characters(harness) -> None:

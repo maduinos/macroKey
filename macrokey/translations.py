@@ -489,6 +489,20 @@ KO: dict[str, str] = {
     "double": "더블",
     "Tap": "탭",
     "Double": "더블",
+    # -- repeating a recording -----------------------------------------------
+    # 횟수와 그 횟수가 실제로 몇 분인지를 같이 보여 줍니다. 255는 숫자일 뿐이고,
+    # 결정을 내리게 하는 쪽은 시간입니다.
+    "Repeat the recording": "녹음 반복",
+    "How many times one press replays the recording. The pad stops a repeat early "
+    "when any of its keys is pressed.": "한 번 눌렀을 때 녹음을 몇 번 재생할지입니다. "
+    "반복 중에 패드의 아무 키나 누르면 멈춥니다.",
+    ", repeated {repeat} times ({duration})": ", {repeat}회 반복 ({duration})",
+    "once": "1회",
+    "Bind a shortcut or record into this key first.": "먼저 단축키를 넣거나 녹음하세요.",
+    "That repeat will not fit": "반복을 넣을 자리가 없습니다",
+    "about {seconds} seconds": "약 {seconds}초",
+    "about {minutes} minutes": "약 {minutes}분",
+    "about {hours} hours": "약 {hours}시간",
     # -- widgets -------------------------------------------------------------
     # `AUTO_PORT` ("Auto") is deliberately absent: it is compared against the
     # combo box text in `_chosen_port`, so it is a sentinel before it is a word.

@@ -9,15 +9,21 @@ from PySide6.QtWidgets import (
     QLabel,
     QMessageBox,
     QPushButton,
+    QSpinBox,
     QVBoxLayout,
     QWidget,
 )
 
 from ..app import MacroKeyApp
-from ..config import Action
+from ..config import Action, ProfileError
 from ..config.keycodes import KeyParseError, parse_hotkey
+from ..config.model import (
+    MAX_MACRO_REPEAT,
+    MIN_MACRO_REPEAT,
+    SHORTCUT_REPEAT_GAP_MS,
+)
 from ..i18n import tr
-from .describe import describe_binding
+from .describe import describe_binding, format_duration, macro_pass_ms
 from .key_grab import KeyGrab
 from .widgets import ShortcutEdit, heading
 
@@ -54,6 +60,9 @@ class SlotDialog(QDialog):
         self.app = app
         self.key, self.gesture = key, gesture
         self.result_action: Action | None = None
+        #: Set when the repeat row already wrote the binding through the app.
+        #: The caller then persists and pushes without replacing anything.
+        self.repeat_applied = False
         self._before_grab = ""
 
         self.setWindowTitle(
@@ -62,7 +71,7 @@ class SlotDialog(QDialog):
         self.setModal(True)
         self.resize(560, 300)
 
-        current = app.profile.action(key, gesture)
+        current = self.current = app.profile.action(key, gesture)
         self.now = QLabel(
             tr("Now: {description}").format(
                 description=describe_binding(app.profile, current)
@@ -135,6 +144,47 @@ class SlotDialog(QDialog):
         layout.addWidget(heading(tr("Send a shortcut")))
         layout.addLayout(shortcut_row)
         layout.addWidget(self.hint)
+
+        # ---- repeat -----------------------------------------------------------
+        # Shown for every key, not only the ones holding a recording. Hiding the
+        # row made the feature unfindable: a pad out of the box has eight
+        # shortcuts and no recordings at all, so every key opened this window
+        # with the row absent and nothing anywhere saying what would bring it
+        # back. Disabled, it says what this key is missing instead.
+        #
+        # Here rather than as a third column in the key grid, where a number
+        # between Tap and Double would not say which of them it belonged to.
+        layout.addSpacing(8)
+        layout.addWidget(heading(tr("Repeat the recording")))
+        self.repeat = QSpinBox()
+        self.repeat.setRange(MIN_MACRO_REPEAT, MAX_MACRO_REPEAT)
+        self.repeat.setValue(current.repeat)
+        self.repeat.setToolTip(
+            tr(
+                "How many times one press replays the recording. The pad "
+                "stops a repeat early when any of its keys is pressed."
+            )
+        )
+        self.repeat.valueChanged.connect(self._repeat_changed)
+        self.repeat_cost = QLabel()
+        self.repeat_cost.setWordWrap(True)
+        self.set_repeat = QPushButton(tr("Set"))
+        self.set_repeat.clicked.connect(self._use_repeat)
+
+        # A shortcut can be repeated too: asking for it wraps the shortcut in a
+        # one-shortcut macro, because a macro is the only thing the pad knows how
+        # to replay more than once. Only an empty key has nothing to repeat.
+        repeatable = current.kind in ("sequence", "key")
+        self.repeat.setEnabled(repeatable)
+        self.set_repeat.setEnabled(repeatable)
+
+        repeat_row = QHBoxLayout()
+        repeat_row.addWidget(self.repeat)
+        repeat_row.addWidget(self.repeat_cost, 1)
+        repeat_row.addWidget(self.set_repeat)
+        layout.addLayout(repeat_row)
+        self._repeat_changed(current.repeat)
+
         layout.addStretch(1)
         layout.addLayout(bottom)
 
@@ -272,6 +322,40 @@ class SlotDialog(QDialog):
             )
             return
         self.result_action = action
+        self.accept()
+
+    def _repeat_changed(self, value: int) -> None:
+        """How long that many passes takes, next to the number that asked."""
+        if self.current.kind not in ("sequence", "key"):
+            self.repeat_cost.setText(tr("Bind a shortcut or record into this key first."))
+            return
+        if value <= MIN_MACRO_REPEAT:
+            self.repeat_cost.setText(tr("once"))
+            return
+        if self.current.kind == "key":
+            # Not stored yet: this is what the wrapping will pace it at.
+            pass_ms = SHORTCUT_REPEAT_GAP_MS
+        else:
+            pass_ms = macro_pass_ms(self.app.profile, self.current.slot)
+        self.repeat_cost.setText(format_duration(pass_ms * value))
+
+    def _use_repeat(self) -> None:
+        """Applies the count through the app, which owns macro slot allocation.
+
+        Unlike this window's other exits it does not hand back an action for the
+        caller to store: repeating a shortcut has to put a macro somewhere, and
+        which slot is free is not something a dialog knows. `set_repeat` reads
+        the binding itself, which also settles the stale-state problem -- the
+        pad drives recording on a background thread and its signals are
+        delivered while this modal dialog is up, so the key being edited can be
+        rebound between opening this window and pressing Set.
+        """
+        try:
+            self.app.set_repeat(self.key, self.gesture, self.repeat.value())
+        except ProfileError as exc:
+            QMessageBox.critical(self, tr("That repeat will not fit"), str(exc))
+            return
+        self.repeat_applied = True
         self.accept()
 
     def _clear(self) -> None:

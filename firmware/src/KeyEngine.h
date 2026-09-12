@@ -23,9 +23,10 @@ typedef void (*MkRecordRequestFn)(uint8_t key, uint8_t gesture);
 
 // Called while a macro is replaying, roughly every few milliseconds. A macro
 // runs inside loop(), so without this the pixel freezes on whatever it was
-// showing for as long as the macro lasts. Deliberately not a serial pump: the
-// host writes profiles, and letting one land while a macro is reading EEPROM
-// would change the steps out from under it.
+// showing for as long as the macro lasts -- and a looped macro lasts long
+// enough that the link goes quiet too, which a host reads as an unplugged pad.
+// The sketch may pump serial from here; `macroRunning()` is what keeps a
+// profile commit from landing while a macro is reading EEPROM.
 typedef void (*MkMacroYieldFn)();
 
 class KeyEngine {
@@ -48,6 +49,12 @@ class KeyEngine {
   // True once the boot grace window has passed and HID output is allowed.
   bool hidEnabled() const { return hidEnabled_; }
 
+  //: True while a macro is replaying, which is to say while `runMacro` is on
+  //: the stack. The serial layer reads this to refuse anything that writes:
+  //: committing a profile while a macro is reading its records out of EEPROM
+  //: would change the steps out from under it.
+  bool macroRunning() const { return macroDeadline_ != 0; }
+
  private:
   void handleEvent(const KeyEvent &event, uint32_t now);
   void refreshDoubleTapMask();
@@ -55,7 +62,8 @@ class KeyEngine {
   // Runs one action. `key` is only used for reporting.
   void dispatch(const Action &action, uint8_t key, uint32_t now);
   void dispatchKey(const Action &action);
-  void runMacro(uint8_t slot, uint8_t key, uint32_t now);
+  // `loops` is how many times to replay the slot; 0 and 1 both mean once.
+  void runMacro(uint8_t slot, uint8_t key, uint32_t now, uint8_t loops);
   // Types one text run. Returns the record index just past it.
   uint16_t runText(uint16_t base, uint16_t header, uint8_t length, uint16_t count);
   // Replays a run of consecutive move records at the speed they were recorded
@@ -90,8 +98,21 @@ class KeyEngine {
   uint8_t stickyModifiers_ = 0;
 
   // Non-zero while runMacro is on the stack: millis() deadline for runaway
-  // work. macroWait pushes it forward by the pause length.
+  // work. macroWait pushes it forward by the pause length, and a looped macro
+  // renews it per pass.
   uint32_t macroDeadline_ = 0;
+
+  // Stopping a loop. Only armed when there is more than one pass to stop: a
+  // single-run macro keeps queuing presses the way it always has, and changing
+  // that would make a short macro un-spammable.
+  //
+  // Whatever was already held when the macro started does not count. The key
+  // that fired it is normally up -- tap and double both fire on release -- but
+  // a second key held from before would otherwise stop the loop before its
+  // first pass, which is exactly what the replay harness does.
+  bool macroAbortArmed_ = false;
+  mk_keymask_t macroStartMask_ = 0;
+  bool macroAborted_ = false;
 
   bool hidEnabled_ = false;
 };

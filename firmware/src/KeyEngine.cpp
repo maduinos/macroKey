@@ -93,7 +93,7 @@ void KeyEngine::dispatch(const Action &action, uint8_t key, uint32_t now) {
       break;
 
     case ACT_SEQUENCE:
-      runMacro(action.a, key, now);
+      runMacro(action.a, key, now, action.b);
       break;
 
     case ACT_LED_SCENE:
@@ -125,10 +125,11 @@ void KeyEngine::macroWait(uint16_t milliseconds) {
   // Double recording was therefore impossible on exactly the keys that already
   // had a macro on them -- which is every key worth re-recording.
   //
-  // `onYield_` is the rest: the pixel, and whatever else the sketch wants kept
-  // alive. Serial is deliberately not in it -- the host writes profiles, and
-  // committing one while this macro is reading its records out of EEPROM would
-  // change the steps out from under it.
+  // `onYield_` is the rest: the pixel, the link, and whatever else the sketch
+  // wants kept alive. Serial is in it, but only far enough to answer a status
+  // query -- the protocol refuses anything that writes while a macro is on the
+  // stack, because committing a profile while this macro is reading its records
+  // out of EEPROM would change the steps out from under it.
   //
   // Authored pauses do not spend the runaway budget: MK_MACRO_MAX_RUN_MS is for
   // a corrupt slot that never yields, not for "wait 2 s then press Esc".
@@ -136,11 +137,34 @@ void KeyEngine::macroWait(uint16_t milliseconds) {
     macroDeadline_ += milliseconds;
   }
   uint32_t until = millis() + milliseconds;
-  while ((int32_t)(millis() - until) < 0) macroPump();
+  while ((int32_t)(millis() - until) < 0) {
+    macroPump();
+    // A stopped loop must not sit out the rest of a recorded pause. Holding a
+    // key for ten seconds is one ACT_DELAY chain, and waiting it out would mean
+    // pressing stop and watching nothing happen for most of a pass.
+    if (macroAborted_) return;
+  }
 }
 
 void KeyEngine::macroPump() {
   input_->update(millis());
+
+  // Any pad key pressed since the loop started stops it. The scan is already
+  // running through a macro (see macroWait), so this costs a mask compare.
+  //
+  // Read from `pressedMask` rather than the gesture queue on purpose: a queued
+  // gesture fires on release, so by the time it arrived the loop would have run
+  // on for however long the key was held. The mask is the press itself.
+  if (macroAbortArmed_ && !macroAborted_) {
+    mk_keymask_t pressed = (mk_keymask_t)(input_->pressedMask() & ~macroStartMask_);
+    if (pressed != 0) {
+      macroAborted_ = true;
+      // The key that stopped the loop must not then do whatever it is bound to.
+      // This is the same swallow a record request uses when it claims a key.
+      input_->suppressUntilRelease(pressed);
+    }
+  }
+
   if (onYield_ != NULL) onYield_();
 }
 
@@ -165,13 +189,19 @@ uint16_t KeyEngine::runText(
       if (index >= length) break;
       mkTypeChar(bytes[offset]);
       macroWait(profile_->textDelayMs());
+      // macroWait returns early once the loop is stopped, so without this the
+      // rest of the run would be typed at full speed with no pause at all.
+      if (macroAborted_) return next;
     }
   }
   return next;
 }
 
 void KeyEngine::pumpUntil(uint32_t at) {
-  while ((int32_t)(millis() - at) < 0) macroPump();
+  while ((int32_t)(millis() - at) < 0) {
+    macroPump();
+    if (macroAborted_) return;
+  }
 }
 
 // A recorded move is a *slice* of motion, not a jump. The host sums 50 ms of
@@ -271,6 +301,9 @@ uint16_t KeyEngine::runMoves(uint16_t base, uint16_t first, uint16_t count) {
   for (uint16_t at = first; at < end; at++) {
     MacroStep move = profile_->macroRecord(base, at);
     emitMove((int8_t)move.a, (int8_t)move.b, perMove);
+    // Same reason as the text run: emitMove's pacing comes back early once the
+    // loop is stopped, and the remaining slices would then arrive as a jump.
+    if (macroAborted_) return next;
   }
 
   // Whatever of the pause was not spent moving is still a pause.
@@ -278,7 +311,7 @@ uint16_t KeyEngine::runMoves(uint16_t base, uint16_t first, uint16_t count) {
   return next;
 }
 
-void KeyEngine::runMacro(uint8_t slot, uint8_t key, uint32_t now) {
+void KeyEngine::runMacro(uint8_t slot, uint8_t key, uint32_t now, uint8_t loops) {
   // No clamp against MK_MACRO_MAX_RECORDS: the stored count cannot exceed what
   // its own width holds, and boards/board.h refuses a board whose ceiling does
   // not fit that width. Reading past the region is what actually needs
@@ -286,52 +319,71 @@ void KeyEngine::runMacro(uint8_t slot, uint8_t key, uint32_t now) {
   uint16_t count = profile_->macroRecordCount(slot);
   uint16_t base = profile_->macroBase(slot);
 
+  // 0 and 1 are the same instruction. Zero is what a profile written before
+  // loop counts existed has in that byte, so this is also the migration.
+  if (loops == 0) loops = 1;
+
+  // Only a loop can be stopped early, and only presses that arrive after it
+  // started count as a stop. See the members' comment in the header.
+  macroAbortArmed_ = loops > 1;
+  macroStartMask_ = input_->pressedMask();
+  macroAborted_ = false;
+
   leds_->noteMacroBusy(key, now);
 
-  // Deadline for HID work only. macroWait extends this when the recording
-  // asked for a pause, so a long drag-then-Esc macro is not truncated mid-way.
-  macroDeadline_ = now + MK_MACRO_MAX_RUN_MS;
+  for (uint8_t pass = 0; pass < loops; pass++) {
+    // Renewed per pass, not per run. MK_MACRO_MAX_RUN_MS budgets HID *work* --
+    // authored pauses extend it via macroWait -- and one budget shared across
+    // 255 passes would stop the loop partway, silently, and further in the
+    // longer the macro. A pass still gets the same ceiling it always had, so a
+    // corrupt slot that never yields is caught in the first one.
+    macroDeadline_ = millis() + MK_MACRO_MAX_RUN_MS;
 
-  uint16_t index = 0;
-  while (index < count) {
-    // Every record, not only the pauses: a macro with no delay in it -- a drag
-    // is exactly that -- would otherwise never yield at all.
-    macroPump();
+    uint16_t index = 0;
+    while (index < count) {
+      // Every record, not only the pauses: a macro with no delay in it -- a drag
+      // is exactly that -- would otherwise never yield at all.
+      macroPump();
+      if (macroAborted_) break;
 
-    // A macro runs inline, so both a record count and a wall-clock ceiling
-    // guard against a corrupt slot locking the firmware out of its scan loop.
-    if ((int32_t)(millis() - macroDeadline_) >= 0) break;
+      // A macro runs inline, so both a record count and a wall-clock ceiling
+      // guard against a corrupt slot locking the firmware out of its scan loop.
+      if ((int32_t)(millis() - macroDeadline_) >= 0) break;
 
-    MacroStep record = profile_->macroRecord(base, index);
+      MacroStep record = profile_->macroRecord(base, index);
 
-    if (record.type == ACT_TEXT) {
-      index = runText(base, index, record.a, count);
-      continue;
+      if (record.type == ACT_TEXT) {
+        index = runText(base, index, record.a, count);
+        continue;
+      }
+      if (record.type == ACT_MOUSE_MOVE) {
+        index = runMoves(base, index, count);
+        continue;
+      }
+      index++;
+      if (record.type == ACT_DELAY) {
+        macroWait((uint16_t)record.a * 10);
+        continue;
+      }
+      if (record.type == ACT_SEQUENCE) continue;  // no nesting: recursion is a trap
+      if (record.type >= ACT_TYPE_COUNT) continue;
+
+      Action action = {record.type, record.a, record.b, 0};
+      dispatch(action, 0, now);
     }
-    if (record.type == ACT_MOUSE_MOVE) {
-      index = runMoves(base, index, count);
-      continue;
-    }
-    index++;
-    if (record.type == ACT_DELAY) {
-      macroWait((uint16_t)record.a * 10);
-      continue;
-    }
-    if (record.type == ACT_SEQUENCE) continue;  // no nesting: recursion is a trap
-    if (record.type >= ACT_TYPE_COUNT) continue;
 
-    Action action = {record.type, record.a, record.b, 0};
-    dispatch(action, 0, now);
+    // Between passes as well as at the end, so each pass starts from nothing
+    // held. A recording is allowed to end mid-hold -- "press W" with no release
+    // is half a hold, and the normaliser keeps it -- and looping that would
+    // press an already-pressed key, then leave it down when the loop stopped.
+    mkMouseReleaseAll();
+    mkKeyboardReleaseAll();
+
+    if (macroAborted_) break;
   }
 
   macroDeadline_ = 0;
-
-  // Whatever the macro was holding goes back up. A recording is allowed to
-  // press a mouse button and move before releasing it -- that is what a drag
-  // is -- so a macro cut short by the ceiling above could otherwise leave the
-  // button down with nothing left to run that would let go of it.
-  mkMouseReleaseAll();
-  mkKeyboardReleaseAll();
+  macroAbortArmed_ = false;
 
   leds_->noteMacroDone(key, millis());
 }

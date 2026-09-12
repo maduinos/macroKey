@@ -18,12 +18,24 @@
 
 typedef uint8_t byte;
 
-inline void pinMode(uint8_t, uint8_t) {}
-extern bool gPinLow[32];      // a pressed, active-low button
-inline int digitalRead(uint8_t pin) { return gPinLow[pin & 31] ? LOW : HIGH; }
-inline void digitalWrite(uint8_t, uint8_t) {}
 extern uint32_t gClock;
 extern uint32_t gClockStep;   // 0 lets a harness drive time itself
+
+inline void pinMode(uint8_t, uint8_t) {}
+extern bool gPinLow[32];      // a pressed, active-low button
+
+// A button that presses itself once the clock reaches `gPressPinAt`. Stopping a
+// looping macro is a press that has to land *while* the macro is on the stack,
+// and a macro blocks the harness the same way it blocks loop() -- so there is
+// no point between calls at which a test could reach in and set gPinLow.
+// The scan reads the pins through here, which is that point.
+extern uint32_t gPressPinAt;  // 0 = no self-pressing button
+extern uint8_t gPressPin;
+inline int digitalRead(uint8_t pin) {
+  if (gPressPinAt != 0 && gClock >= gPressPinAt) gPinLow[gPressPin & 31] = true;
+  return gPinLow[pin & 31] ? LOW : HIGH;
+}
+inline void digitalWrite(uint8_t, uint8_t) {}
 inline uint32_t millis() { gClock += gClockStep; return gClock; }
 inline uint32_t micros() { return 0; }
 inline void delay(uint32_t ms) { gClock += ms; }

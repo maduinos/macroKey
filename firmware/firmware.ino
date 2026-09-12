@@ -62,11 +62,18 @@ static void reportRecordRequest(uint8_t key, uint8_t gesture) {
   gSerial.sendRecordRequest(key, gesture);
 }
 
-// Called from inside a replaying macro, which blocks loop(). Lights only: the
-// engine services the button scanner itself, and serial is deliberately left
-// queued (see KeyEngine::macroWait).
+// Called from inside a replaying macro, which blocks loop(). The engine
+// services the button scanner itself; this is the lights and the link.
+//
+// Serial used to be left queued here, because a profile committed mid-macro
+// would change the steps out from under it. A looped macro made that too
+// expensive: 255 passes can run for the better part of an hour and the app
+// polls the link every second, so the pad read as unplugged for the whole
+// loop. SerialProtocol refuses anything that writes while a macro is on the
+// stack instead, which keeps that guarantee and still answers a status query.
 static void macroYield() {
   quietBoardLeds();
+  gSerial.update(millis());
   gLeds.update(millis());
 }
 
