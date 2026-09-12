@@ -16,8 +16,8 @@ import threading
 import time
 from collections.abc import Callable
 
-from PySide6.QtCore import QEvent, QObject, Qt, QTimer, Signal
-from PySide6.QtGui import QAction, QActionGroup, QColor, QIcon
+from PySide6.QtCore import QEvent, QObject, Qt, QTimer, QUrl, Signal
+from PySide6.QtGui import QAction, QActionGroup, QColor, QDesktopServices, QIcon
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -417,6 +417,11 @@ class MainWindow(QMainWindow):
         setup_help = QAction(tr("Recording setup"), self)
         self._setup_help_action = setup_help
         setup_help.triggered.connect(lambda: self._retry_capture_setup())
+        show_log = QAction(tr("Open the log folder"), self)
+        show_log.setToolTip(
+            tr("Where the diagnostic log is written. Useful when reporting a problem.")
+        )
+        show_log.triggered.connect(lambda: self._open_log_folder())
         check_updates = QAction(tr("Check for updates"), self)
         check_updates.triggered.connect(lambda: self._check_updates_now())
         auto_app = QAction(tr("Update the app automatically"), self)
@@ -436,6 +441,8 @@ class MainWindow(QMainWindow):
         help_menu.addAction(check_updates)
         help_menu.addAction(auto_app)
         help_menu.addAction(auto_firmware)
+        help_menu.addSeparator()
+        help_menu.addAction(show_log)
         about = QAction(tr("About macroKey"), self)
         about.triggered.connect(lambda: self._show_about())
 
@@ -468,6 +475,20 @@ class MainWindow(QMainWindow):
             menu.addAction(action)
         self._language_menu = menu
         return menu
+
+    def _open_log_folder(self) -> None:
+        """Opens the directory holding the diagnostic log.
+
+        The folder rather than the file: on Windows the log has no association
+        and double-clicking it asks which program to use, while the folder opens
+        in Explorer with the file sitting there to drag into a bug report.
+        """
+        from ..logging_setup import log_path
+
+        path = log_path()
+        self.statusMessage.emit(str(path))
+        if not QDesktopServices.openUrl(QUrl.fromLocalFile(str(path.parent))):
+            QMessageBox.information(self, tr("Log file"), str(path))
 
     def _auto_update_app_toggled(self, checked: bool) -> None:
         self.app.settings.auto_update_app = checked
@@ -1813,14 +1834,25 @@ class MainWindow(QMainWindow):
                 selfupdate.apply(release, status=self.statusMessage.emit)
             except UpdateError as exc:
                 # Never a dialog. The app works perfectly without this.
-                log.info("app update: %s", exc)
+                #
+                # Warning, not info: an update that silently does not happen is
+                # the hardest kind of bug to hear about, because the automatic
+                # check says nothing when it fails and the person has no reason
+                # to suspect anything went wrong. The traceback rides along --
+                # the message alone did not say which of the steps it came from.
+                log.warning("app update failed: %s", exc, exc_info=True)
                 if asked_for:
                     self.statusMessage.emit(
                         tr("Could not update the app: {detail}").format(detail=exc)
                     )
                 return
             except RuntimeError:
-                return  # window closed mid-download
+                # Qt objects going away under a worker is the expected one, and
+                # only while the window is closing. Anything else reaching here
+                # used to leave nothing at all behind.
+                if not self._closing:
+                    log.exception("app update failed unexpectedly")
+                return
             self.appUpdateReady.emit(release.version, release.notes)
 
         self._in_background(worker)
