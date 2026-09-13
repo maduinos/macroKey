@@ -1,0 +1,50 @@
+# PR을 연 사람이 CLA에 서명했는지 확인한다.
+#
+# 기여물의 저작권은 기여자에게 남는다. 그래서 서명을 받아 두지 않으면 나중에 라이선스를
+# 바꾸거나 상업 라이선스를 따로 내주는 일이 불가능해진다 -- 기여자 한 명만 연락이 끊겨도
+# 막히고, 소급해서 받을 수 없다. 판매를 시작하기 전에 걸어 두는 이유가 그것이다.
+#
+# 서명은 PR 댓글로 하고, 기록은 이 저장소의 `cla-signatures` 브랜치에 쌓인다. 별도
+# 저장소에 보관할 때만 PAT이 필요하고, 같은 저장소면 GITHUB_TOKEN으로 충분하다.
+#
+# `pull_request_target`을 쓰는 것은 포크에서 온 PR에도 쓰기 권한이 필요하기 때문이다.
+# 이 워크플로는 PR의 코드를 체크아웃하지 않는다 -- 그렇게 하는 순간 포크의 코드가 쓰기
+# 토큰을 들고 실행되는, 이 트리거의 유일한 위험이 된다.
+name: cla
+
+on:
+  issue_comment:
+    types: [created]
+  pull_request_target:
+    types: [opened, closed, synchronize]
+
+permissions:
+  actions: write
+  contents: write
+  pull-requests: write
+  statuses: write
+
+jobs:
+  cla:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: CLA Assistant
+        if: >-
+          github.event.comment.body == 'recheck' ||
+          github.event.comment.body == 'I have read the CLA Document and I hereby sign the CLA' ||
+          github.event_name == 'pull_request_target'
+        uses: contributor-assistant/github-action@v2.6.1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          path-to-document: https://github.com/maduinos/macroKey/blob/main/CLA.md
+          path-to-signatures: signatures/v1/cla.json
+          branch: cla-signatures
+          # 소유자 본인과 봇은 물을 필요가 없다.
+          allowlist: maduinos,dependabot[bot],github-actions[bot]
+          custom-notsigned-prcomment: >-
+            이 프로젝트는 기여 전에 [CLA](https://github.com/maduinos/macroKey/blob/main/CLA.md)
+            동의가 필요합니다. 읽어 보시고 아래 문장을 그대로 댓글로 남겨 주세요.
+            한 번 서명하면 이후 PR에는 다시 묻지 않습니다.
+          custom-pr-sign-comment: I have read the CLA Document and I hereby sign the CLA
+          custom-allsigned-prcomment: CLA 서명이 확인되었습니다. 고맙습니다.
