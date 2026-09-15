@@ -142,7 +142,7 @@ def test_a_forgetful_keypad_is_named_and_leans_towards_push(window, monkeypatch)
 
     assert seen["title"] == "The keypad lost its profile"
     assert "factory defaults" in seen["text"]
-    assert seen["default"] == "Push to keypad"
+    assert seen["default"] == "Apply PC settings to keypad"
 
 
 def test_cancelling_still_writes_nothing_either_way(window, monkeypatch) -> None:

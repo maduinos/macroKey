@@ -66,7 +66,7 @@ from ..device import DeviceError, candidates
 from ..i18n import LANGUAGES, active_language, language_name, set_language, tr
 from ..runtime import resource_path
 from ..session import RecordingSession
-from .describe import describe_binding
+from .describe import describe_binding, format_duration, macro_pass_ms
 from .slot_dialog import SlotDialog
 from .widgets import AUTO_PORT, RescanningComboBox
 
@@ -191,7 +191,8 @@ class MainWindow(QMainWindow):
     captureSetupFinished = Signal(bool, str)
     resetReady = Signal(bool)
     resetFailed = Signal(str)
-    liveCapture = Signal(str)
+    liveCapture = Signal(object)
+    saveStateChanged = Signal(str)
 
     def __init__(self, port: str = "") -> None:
         super().__init__()
@@ -230,6 +231,9 @@ class MainWindow(QMainWindow):
         # which way it leans, because the two cases need opposite answers.
         self._device_lost_its_profile = False
         self._closing = False
+        self._record_ui_active = False
+        self._live_keys: set[str] = set()
+        self._live_count = 0
         # Reconnect state. `_allowed` is cleared by an explicit Disconnect: the
         # link going away because someone asked for it is not something to undo.
         self._reconnect_allowed = False
@@ -248,15 +252,19 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(10, 10, 10, 6)
         toolbar = self._build_toolbar(port)
         layout.addWidget(toolbar)
+        self.save_state = QLabel(tr("Device state will be checked on connection"))
+        self.save_state.setWordWrap(True)
+        self.saveStateChanged.connect(self.save_state.setText)
+        layout.addWidget(self.save_state)
         layout.addWidget(self._build_keys(), 1)
 
         # The pad's main feature is invisible: nothing about eight buttons
         # suggests that holding one opens a recorder. One line, stated once.
         hint = QLabel(
             tr(
-                "Hold any key on its own for 3 seconds to record into it - the pixel "
-                "turns red. Hold the same key again to store what you did. "
-                "After setup you can quit this app; the pad keeps working as a keyboard."
+                "Hold a pad key for 3 seconds to start recording. When done, release your "
+                "keyboard keys, then hold the same pad key for 3 seconds to save. "
+                "Keep the pointer in your target app while recording the mouse."
             )
         )
         hint.setWordWrap(True)
@@ -276,6 +284,7 @@ class MainWindow(QMainWindow):
         self.record_banner.setStyleSheet(
             "background: #c0392b; color: white; font-weight: 600; padding: 6px;"
         )
+        self.record_banner.setWordWrap(True)
         self.record_banner.setAlignment(Qt.AlignCenter)
         self.record_banner.setVisible(False)
         layout.insertWidget(0, self.record_banner)
@@ -325,6 +334,9 @@ class MainWindow(QMainWindow):
         self.app.session = self.session
         self.recordingChanged.connect(self._refresh_recording)
         self.liveCapture.connect(self._append_live_capture)
+        self._record_timer = QTimer(self)
+        self._record_timer.setInterval(200)
+        self._record_timer.timeout.connect(self._update_recording_stats)
 
         # On the application, not on this window: a press that reaches a dialog
         # or a menu is still the editor being operated rather than the macro.
@@ -616,13 +628,19 @@ class MainWindow(QMainWindow):
     def _adopt_local_profile(self, profile, message: str) -> None:
         previous = self.app.profile
         self.app.profile = profile
+        self.saveStateChanged.emit(tr("Saving changes…"))
         try:
             self.app.save()
         except OSError as exc:
+            self.saveStateChanged.emit(tr("Could not save changes to this PC"))
             self.app.profile = previous
             QMessageBox.critical(self, tr("Could not save profile"), str(exc))
             return
         self._profiles_diverged = self.app.device.connected
+        self.saveStateChanged.emit(
+            tr("PC and keypad settings differ · use Sync…") if self._profiles_diverged
+            else tr("Saved on this PC · keypad not connected")
+        )
         self._refresh_all()
         self._refresh_connection()
         suffix = tr(" — use Sync… to update the keypad") if self._profiles_diverged else ""
@@ -821,7 +839,7 @@ class MainWindow(QMainWindow):
         controls_row.addWidget(self.brightness)
         controls_row.addWidget(self.brightness_value)
         controls_row.addSpacing(12)
-        typing_label = QLabel(tr("Typing"))
+        typing_label = QLabel(tr("Character interval"))
         typing_label.setBuddy(self.text_speed)
         controls_row.addWidget(typing_label)
         controls_row.addWidget(self.text_speed)
@@ -861,6 +879,7 @@ class MainWindow(QMainWindow):
         row = QHBoxLayout()
         self.capture_title = QLabel(tr("Recording"))
         self.capture_title.setStyleSheet("font-weight: 600;")
+        self.capture_title.setWordWrap(True)
         self.capture_setup_button = QPushButton(tr("Setup"))
         self.capture_setup_button.setToolTip(
             tr("Check or retry permission setup for global keyboard and mouse recording.")
@@ -888,7 +907,7 @@ class MainWindow(QMainWindow):
         )
         self.anchor_mouse.toggled.connect(self._anchor_mouse_toggled)
 
-        self.preserve_key_timing = QCheckBox(tr("Real timing"))
+        self.preserve_key_timing = QCheckBox(tr("Keep key hold durations"))
         self.preserve_key_timing.setChecked(
             bool(self.app.settings.recorder_preserve_key_timing)
         )
@@ -908,14 +927,24 @@ class MainWindow(QMainWindow):
         )
         self.cancel_recording_button.clicked.connect(self._cancel_recording)
         self.cancel_recording_button.setVisible(False)
-        row.addWidget(self.capture_title)
         row.addWidget(self.capture_setup_button)
         row.addStretch(1)
-        row.addWidget(self.capture_mouse)
-        row.addWidget(self.anchor_mouse)
-        row.addWidget(self.preserve_key_timing)
+        options = QHBoxLayout()
+        options.addWidget(self.capture_mouse)
+        options.addWidget(self.anchor_mouse)
+        options.addWidget(self.preserve_key_timing)
+        options.addStretch(1)
         row.addWidget(self.cancel_recording_button)
 
+        self.capture_hint = QLabel(tr(
+            "Off: turn held keys into taps. On: preserve how long keys stay down. "
+            "These settings apply to new recordings."
+        ))
+        self.capture_hint.setWordWrap(True)
+        self.record_stats = QLabel()
+        self.record_stats.setWordWrap(True)
+        self.record_stats.setVisible(False)
+        self.capture_details = QCheckBox(tr("Show event details"))
         self.capture_list = QListWidget()
         self.capture_list.setMaximumHeight(140)
         self.capture_list.setStyleSheet("font-family: monospace;")
@@ -923,8 +952,15 @@ class MainWindow(QMainWindow):
             tr("Hold a pad key for 3 seconds to record. Captured steps appear here.")
         )
 
+        column.addWidget(self.capture_title)
         column.addLayout(row)
+        column.addLayout(options)
+        column.addWidget(self.capture_hint)
+        column.addWidget(self.record_stats)
+        column.addWidget(self.capture_details)
         column.addWidget(self.capture_list)
+        self.capture_list.setVisible(False)
+        self.capture_details.toggled.connect(self.capture_list.setVisible)
         return self.capture_box
 
     def _mouse_capture_toggled(self, checked: bool) -> None:
@@ -1242,7 +1278,10 @@ class MainWindow(QMainWindow):
         self._refresh_storage()
         for (key, gesture), button in self.buttons.items():
             action = self.app.profile.action(key, gesture)
-            button.setText(describe_binding(self.app.profile, action))
+            button.setText(
+                tr("Not assigned · click to set") if action.kind == "none"
+                else describe_binding(self.app.profile, action)
+            )
             button.setStyleSheet("text-align: left; padding: 4px 8px;")
 
     def _refresh_toolbar(self) -> None:
@@ -1374,6 +1413,10 @@ class MainWindow(QMainWindow):
             return
 
         self._profiles_diverged = False
+        self.saveStateChanged.emit(
+            tr("PC and keypad settings match") if device_was_reset
+            else tr("Saved on this PC · keypad not connected")
+        )
         if device_was_reset and self.app.device.connected:
             self._profiles_diverged = False
             self.statusBar().showMessage(
@@ -1406,16 +1449,20 @@ class MainWindow(QMainWindow):
         nothing on screen saying why. Sync remains only for an explicit choice
         when the computer and keypad hold different profiles.
         """
+        self.saveStateChanged.emit(tr("Saving changes…"))
         try:
             self.app.save()
         except OSError as exc:
+            self.saveStateChanged.emit(tr("Could not save changes to this PC"))
             self.statusMessage.emit(tr("Could not save: {detail}").format(detail=exc))
             return
         if not self.app.device.connected:
+            self.saveStateChanged.emit(tr("Saved on this PC · keypad not connected"))
             self.statusMessage.emit(
                 tr("{what} saved. It reaches the keypad on the next connect.").format(what=what)
             )
             return
+        self.saveStateChanged.emit(tr("Saved on this PC · keypad update pending"))
         if (
             self._connecting
             or self._syncing
@@ -1440,6 +1487,7 @@ class MainWindow(QMainWindow):
                 self.app.profile, profile_size=self.app.profile_layout.size
             )
         except ValueError as exc:
+            self.saveStateChanged.emit(tr("Keypad update failed · use Sync… to retry"))
             self.statusMessage.emit(
                 tr("Could not build the keypad profile: {detail}").format(detail=exc)
             )
@@ -1450,16 +1498,19 @@ class MainWindow(QMainWindow):
                 self.app.device.write_profile(blob)
                 self.app.confirm_on_device()
             except (DeviceError, ValueError, OSError) as exc:
+                self.saveStateChanged.emit(tr("Saved on this PC · keypad update failed; use Sync…"))
                 self.statusMessage.emit(
                     tr("{what} saved, but the device write failed: {detail}").format(
                         what=what, detail=exc
                     )
                 )
                 return
+            self.saveStateChanged.emit(tr("Saved on the keypad"))
             self.statusMessage.emit(
                 tr("Done - {what} written to the keypad").format(what=what)
             )
 
+        self.saveStateChanged.emit(tr("Saved on this PC · updating keypad…"))
         self.statusMessage.emit(
             tr("{what} saved; writing to the keypad…").format(what=what)
         )
@@ -1570,6 +1621,10 @@ class MainWindow(QMainWindow):
                         "reset=%s); this computer still has bindings",
                         getattr(hello, "profile_was_reset", False),
                     )
+                self.saveStateChanged.emit(
+                    tr("PC and keypad settings differ · use Sync…") if profiles_differ
+                    else tr("PC and keypad settings match")
+                )
                 if not profiles_differ:
                     self.statusMessage.emit(tr("Connected"))
                 # Now that the pad has said which board and which firmware it
@@ -2085,8 +2140,8 @@ class MainWindow(QMainWindow):
                     "The keypad is holding factory defaults -- no recorded macros "
                     "and the plain hyper + 1..8 bindings. This computer still has "
                     "yours.\n\n"
-                    "Push: put this computer's profile back on the keypad.\n"
-                    "Pull: accept the empty one, losing what is on this computer.\n"
+                    "Apply PC settings: put this computer's profile back on the keypad.\n"
+                    "Use keypad settings: accept the empty one, losing what is on this computer.\n"
                     "Cancel: leave both as they are.\n\n"
                     "Profile > Restore previous version keeps earlier copies if "
                     "this computer's profile is already the empty one."
@@ -2097,13 +2152,13 @@ class MainWindow(QMainWindow):
             box.setText(
                 tr(
                     "This computer and the keypad have different profiles.\n\n"
-                    "Pull: use what is on the keypad.\n"
-                    "Push: overwrite the keypad with this computer's profile.\n"
+                    "Use keypad settings: use what is on the keypad.\n"
+                    "Apply PC settings: overwrite the keypad with this computer's profile.\n"
                     "Cancel: leave both as they are."
                 )
             )
-        pull = box.addButton(tr("Pull from keypad"), QMessageBox.AcceptRole)
-        push = box.addButton(tr("Push to keypad"), QMessageBox.DestructiveRole)
+        pull = box.addButton(tr("Use keypad settings on this PC"), QMessageBox.AcceptRole)
+        push = box.addButton(tr("Apply PC settings to keypad"), QMessageBox.DestructiveRole)
         cancel = box.addButton(tr("Cancel"), QMessageBox.RejectRole)
         # Leaning is the whole point of telling the two cases apart: recovering
         # the pad is the safe answer when it is the pad that forgot.
@@ -2171,12 +2226,14 @@ class MainWindow(QMainWindow):
         self._finish_sync(tr("Adopted the keypad profile"))
 
     def _finish_sync(self, message: str) -> None:
+        self.saveStateChanged.emit(tr("PC and keypad settings match"))
         self._syncing = False
         self._profiles_diverged = False
         self._refresh_connection()
         self.statusBar().showMessage(message)
 
     def _sync_failed(self, message: str) -> None:
+        self.saveStateChanged.emit(tr("Keypad update failed · use Sync… to retry"))
         self._syncing = False
         self._profiles_diverged = True
         self._refresh_connection()
@@ -2467,21 +2524,29 @@ class MainWindow(QMainWindow):
             gesture = session.active_gesture
             shown_gesture = tr(gesture)
             self.statusBar().showMessage(
-                tr("Recording into key {key} ({gesture}) - hold it again to finish").format(
+                tr(
+                    "Recording into key {key} ({gesture}) · "
+                    "hold the same pad key for 3 seconds to save"
+                ).format(
                     key=key, gesture=shown_gesture
                 )
             )
             self.record_banner.setText(
                 tr(
-                    "  ● RECORDING key {key} · {gesture} — hold the same key again "
-                    "to finish  "
+                    "RECORDING · key {key} · {gesture} — hold the same pad key "
+                    "for 3 seconds to finish and save"
                 ).format(key=key, gesture=shown_gesture)
             )
             self.capture_title.setText(
                 tr("Recording key {key} · {gesture}").format(key=key, gesture=shown_gesture)
             )
-            self.capture_list.clear()
-            self.capture_list.addItem(tr("(listening…)"))
+            if not self._record_ui_active:
+                self._live_keys.clear()
+                self._live_count = 0
+                self.capture_list.clear()
+                self.capture_list.addItem(tr("(listening…)"))
+            self._record_timer.start()
+            self._update_recording_stats()
         outcome = session.last_outcome
         if outcome is not None and not session.recording:
             self._refresh_all()
@@ -2489,28 +2554,48 @@ class MainWindow(QMainWindow):
             # Deferred so it opens over a window that has finished redrawing
             # the recording it is about, rather than during it.
             QTimer.singleShot(600, self._offer_flat_pointer_for_fast_macro)
+        self._record_ui_active = recording
+        if not recording:
+            self._record_timer.stop()
+            self._live_keys.clear()
+        self.record_stats.setVisible(recording)
         self.record_banner.setVisible(recording)
         self.cancel_recording_button.setVisible(recording)
         self._refresh_connection()
 
-    def _on_live_capture(self, event) -> None:
-        """Recorder thread → GUI thread. Shows that capture is actually alive."""
-        char = f" {event.char!r}" if getattr(event, "char", "") else ""
-        data = ""
-        if event.kind == "mouse_move" and event.data:
-            data = f"  {event.data[0]:+d},{event.data[1]:+d}"
-        elif event.kind == "scroll" and event.data:
-            data = f"  dy={event.data[1]:+d}"
-        self.liveCapture.emit(f"{event.kind}  {event.token}{char}{data}")
+    def _update_recording_stats(self) -> None:
+        if not self.session.recording:
+            return
+        elapsed = max(0, int(time.monotonic() - self.session._started_at))
+        self.record_stats.setText(tr(
+            "{minutes}:{seconds} elapsed · held keys: {keys} · {count} input events"
+        ).format(minutes=f"{elapsed // 60:02d}", seconds=f"{elapsed % 60:02d}",
+                 keys=" + ".join(sorted(self._live_keys)) or tr("none held"),
+                 count=self._live_count))
 
-    def _append_live_capture(self, line: str) -> None:
-        if (
-            self.capture_list.count() == 1
-            and self.capture_list.item(0).text() == tr("(listening…)")
-        ):
+    def _on_live_capture(self, event) -> None:
+        # Keep all widget and held-key state on the GUI thread.
+        self.liveCapture.emit(event)
+
+    def _append_live_capture(self, event) -> None:
+        if not self.session.recording or event.at < self.session._started_at:
+            return  # Ignore queued callbacks from a finished recording.
+        if event.kind == "key_down":
+            self._live_keys.add(event.token)
+        elif event.kind == "key_up":
+            self._live_keys.discard(event.token)
+        self._live_count += 1
+        if (self.capture_list.count() == 1
+                and self.capture_list.item(0).text() == tr("(listening…)")):
             self.capture_list.clear()
-        self.capture_list.addItem(line)
-        self.capture_list.scrollToBottom()
+        data = f" {event.data}" if event.data else ""
+        self.capture_list.addItem(f"{event.kind}  {event.token}{data}")
+        # A long recording must not leave thousands of Qt rows in memory.
+        if self.capture_list.count() > 500:
+            self.capture_list.takeItem(0)
+        if self.capture_details.isChecked():
+            self.capture_list.scrollToBottom()
+        self._update_recording_stats()
 
     def _show_capture(self, outcome) -> None:
         """Lists what the last recording actually caught.
@@ -2520,7 +2605,12 @@ class MainWindow(QMainWindow):
         nothing to look at, so the only move was to guess -- and "it moved on
         its own" is not a thing anyone can debug from a status bar.
         """
-        where = outcome.where or outcome.error or tr("nothing was captured")
+        where = outcome.error or outcome.where or tr("nothing was captured")
+        if outcome.error:
+            self.saveStateChanged.emit(tr("Recording not saved to keypad · check the result below"))
+        elif outcome.on_device:
+            where = tr("Saved on the keypad")
+            self.saveStateChanged.emit(where)
         self.capture_title.setText(
             tr("Key {key} {gesture} - {where}").format(
                 key=outcome.key + 1, gesture=tr(outcome.gesture), where=where
@@ -2536,6 +2626,9 @@ class MainWindow(QMainWindow):
             )
 
         if outcome.error or not outcome.where:
+            self.capture_details.setChecked(True)
+            if outcome.error:
+                self.capture_list.addItem(outcome.error)
             # Empty / rejected: show the capture log when we have one, else the
             # error (Wayland / input group hints live there).
             lines = (
@@ -2545,9 +2638,7 @@ class MainWindow(QMainWindow):
             )
             if lines:
                 self.capture_list.addItems(lines)
-            elif outcome.error:
-                self.capture_list.addItem(outcome.error)
-            else:
+            elif not outcome.error:
                 self.capture_list.addItem(tr("(nothing)"))
             return
 
@@ -2560,6 +2651,12 @@ class MainWindow(QMainWindow):
         action = self.app.profile.action(outcome.key, outcome.gesture)
         if action.kind == "sequence" and action.slot < len(self.app.profile.device_macros):
             lines = [step.describe() for step in self.app.profile.device_macros[action.slot]]
+            self.capture_title.setText(tr(
+                "Key {key} · {gesture} · saved on keypad · {duration} · repeat {repeat}"
+            ).format(key=outcome.key + 1, gesture=tr(outcome.gesture),
+                     duration=format_duration(macro_pass_ms(self.app.profile, action.slot)
+                                              * max(1, action.repeat)),
+                     repeat=max(1, action.repeat)))
         else:
             lines = [action.describe()]
 
@@ -2578,6 +2675,7 @@ class MainWindow(QMainWindow):
         if dialog is not None:
             dialog.close()
         self._connection_timer.stop()
+        self._record_timer.stop()
         self.app.close()
         self._io_queue.put(None)
         thread, self._io_thread = self._io_thread, None
