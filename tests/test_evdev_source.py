@@ -330,3 +330,13 @@ def test_an_event_with_no_timestamp_still_gets_one() -> None:
     source._handle(_fake(ecodes.EV_KEY, ecodes.KEY_A, 1))
     assert len(got) == 1
     assert got[0].at > 0
+
+
+def test_key_repeat_does_not_flush_or_discard_pointer_motion(captured) -> None:
+    events, source = captured
+    source._handle(rel_event(ecodes.REL_X, 4))
+    source._handle(key_event(ecodes.KEY_W, 2))
+    source._handle(rel_event(ecodes.REL_X, 4))
+    source._flush_motion()
+    assert len(events) == 1
+    assert events[0].data == (8, 0)

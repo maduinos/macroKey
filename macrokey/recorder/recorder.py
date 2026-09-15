@@ -147,6 +147,8 @@ class Recorder:
         self._last_device_key_at = 0.0
         self.recording = False
         self._stop_requested = False
+        self._stopped_at: float | None = None
+        self._capture_closed = False
         # pynput reports absolute cursor position; deltas are derived here so
         # the rest of the pipeline stays relative, matching evdev.
         self._pynput_last_pos: tuple[int, int] | None = None
@@ -181,6 +183,8 @@ class Recorder:
             return
         self._stop_requested = False
         with self._lock:
+            self._stopped_at = None
+            self._capture_closed = False
             self._events.clear()
             self._editor_click_ats.clear()
 
@@ -254,19 +258,36 @@ class Recorder:
             raise
 
     def stop(self) -> list[RawEvent]:
+        # Timestamp before backend cleanup: joining a reader must not lengthen
+        # the last held key. Repeated stop calls return the same capture.
+        with self._lock:
+            if self._stopped_at is None:
+                self._stopped_at = time.monotonic()
         self.recording = False
         if self._evdev is not None:
             self._evdev.stop()
             self._evdev = None
-            self._drop_editor_clicks()
-            with self._lock:
-                return list(self._events)
-        self._flush_pynput_motion()
-        for listener in (self._keyboard_listener, self._mouse_listener):
-            if listener is not None:
-                listener.stop()
-        self._keyboard_listener = None
-        self._mouse_listener = None
+        else:
+            for listener in (self._keyboard_listener, self._mouse_listener):
+                if listener is not None:
+                    listener.stop()
+            self._keyboard_listener = None
+            self._mouse_listener = None
+            self._flush_pynput_motion()
+        with self._lock:
+            self._capture_closed = True
+            self._events.sort(key=lambda event: event.at)
+            if self.preserve_key_timing:
+                down: dict[str, None] = {}
+                for event in self._events:
+                    if event.kind == KEY_DOWN:
+                        down[event.token] = None
+                    elif event.kind == KEY_UP:
+                        down.pop(event.token, None)
+                for token in reversed(down):
+                    self._events.append(
+                        RawEvent(kind=KEY_UP, token=token, at=self._stopped_at)
+                    )
         self._drop_editor_clicks()
         with self._lock:
             return list(self._events)
@@ -368,6 +389,7 @@ class Recorder:
             if event.kind == KEY_DOWN:
                 self.recording = False
                 self._stop_requested = True
+                self._stopped_at = event.at
             return
         # Only pynput needs this. It reports keystrokes with no idea which
         # device produced them, so the keypad's own HID output comes back as
@@ -402,6 +424,10 @@ class Recorder:
             )
             return
         with self._lock:
+            if self._capture_closed or (
+                self._stopped_at is not None and event.at > self._stopped_at
+            ):
+                return
             self._events.append(event)
         if self._on_event is not None:
             self._on_event(event)
@@ -428,6 +454,7 @@ class Recorder:
         token, char = _describe_key(key)
         if token is None or (self.stop_key is not None and token == self.stop_key):
             return
+        self._flush_pynput_motion()
         self._record(RawEvent(kind=KEY_UP, token=token, char=char, at=time.monotonic()))
 
     def _on_click(self, x: int, y: int, button, pressed: bool) -> None:

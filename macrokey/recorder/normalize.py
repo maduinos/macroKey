@@ -116,6 +116,8 @@ def normalize(
     needs; the default path still folds typing into text runs and treats
     modifiers as decorations on the next key, which is what shortcuts want.
     """
+    # Different input devices and listener threads can deliver older events late.
+    events = sorted(events, key=lambda event: event.at)
     steps: list[dict[str, Any]] = []
     held: list[str] = []
     # Every key currently down, which is how an auto-repeat is recognised: the
@@ -131,6 +133,8 @@ def normalize(
     down: set[str] = set()
     text = ""
     last_at: float | None = None
+    timing_origin: float | None = None
+    timing_elapsed_ms = 0
     mouse_modes, wobble = _mouse_modes(events)
     # When preserving holds, gaps are the point -- a 10 s Shift+W must stay
     # 10 s. The ordinary cap treats long pauses as "thinking" and clips them.
@@ -143,8 +147,18 @@ def normalize(
             text = ""
 
     def add_delay(at: float) -> None:
-        nonlocal last_at
-        if last_at is not None and keep_delays:
+        nonlocal last_at, timing_origin, timing_elapsed_ms
+        if preserve_key_timing:
+            # Quantize the timeline, not each gap: rounding every short gap
+            # independently accumulates drift during overlapping key holds.
+            if timing_origin is None:
+                timing_origin = at
+            target_ms = _quantize(round((at - timing_origin) * 1000))
+            gap_ms = target_ms - timing_elapsed_ms
+            if keep_delays and gap_ms > 0:
+                steps.append({"type": "delay", "params": {"ms": gap_ms}})
+            timing_elapsed_ms = target_ms
+        elif last_at is not None and keep_delays:
             gap_ms = int(round((at - last_at) * 1000))
             if gap_ms >= min_gap_ms:
                 quantized = _quantize(gap_ms)
@@ -161,6 +175,8 @@ def normalize(
 
     for position, event in enumerate(events):
         if event.kind == KEY_UP:
+            if event.token not in down:
+                continue  # Released a key that was already down before capture.
             down.discard(event.token)
             if preserve_key_timing:
                 flush_text()

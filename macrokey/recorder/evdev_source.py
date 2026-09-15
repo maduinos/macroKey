@@ -301,6 +301,10 @@ class EvdevRecorder:
         return at + self._clock_offset
 
     def _handle(self, event) -> None:
+        # Repeats must not flush motion either: doing so splits a gesture at
+        # the OS repeat rate and filters away small deltas while a key is held.
+        if event.type == ecodes.EV_KEY and event.value == 2:
+            return
         now = self._event_time(event)
 
         if event.type == ecodes.EV_REL and event.code in (ecodes.REL_X, ecodes.REL_Y):

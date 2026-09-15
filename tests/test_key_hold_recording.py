@@ -152,3 +152,115 @@ def test_the_default_path_does_not_type_a_repeated_character() -> None:
     steps = normalize(events)
     assert [s["type"] for s in steps] == ["text"]
     assert steps[0]["params"]["text"] == "a"
+
+
+def test_real_timing_keeps_short_holds_and_cumulative_duration() -> None:
+    events = [down('w', 1.0)]
+    for index in range(1, 21):
+        events.append((down if index % 2 else up)('a', 1 + index * .016))
+    events.append(up('w', 1.336))
+    steps = normalize(events, preserve_key_timing=True, min_gap_ms=100)
+    assert sum(s['params']['ms'] for s in steps if s['type'] == 'delay') == 340
+    short = normalize([down('w', 1), up('w', 1.03)], preserve_key_timing=True)
+    assert short[1] == {'type': 'delay', 'params': {'ms': 30}}
+
+
+def test_real_timing_ignores_orphan_releases_and_sorts_late_events() -> None:
+    steps = normalize(
+        [up('a', .5), down('w', 1), up('w', 2), down('shift', 1.5)],
+        preserve_key_timing=True,
+    )
+    assert [s['params']['hotkey'] for s in steps if s['type'] == 'hotkey'] == [
+        'w', 'shift', 'w'
+    ]
+    assert sum(s['params']['ms'] for s in steps if s['type'] == 'delay') == 1000
+
+
+def test_stop_closes_held_keys_at_stop_time_before_backend_cleanup(monkeypatch) -> None:
+    from macrokey.recorder.recorder import Recorder
+
+    recorder = Recorder(preserve_key_timing=True)
+    recorder.backend = 'evdev'
+    recorder.recording = True
+    recorder._record(down('shift', 1))
+    recorder._record(down('w', 1.1))
+
+    class Backend:
+        def stop(self):
+            # Backend cleanup must not extend capture beyond the stop request.
+            recorder._record(up('w', 12))
+
+    recorder._evdev = Backend()
+    monkeypatch.setattr('macrokey.recorder.recorder.time.monotonic', lambda: 11)
+    events = recorder.stop()
+    assert [(e.token, e.at) for e in events[-2:]] == [('w', 11), ('shift', 11)]
+    steps = recorder.steps(events)
+    macro = compile_device_macro(steps)
+    assert sum(a.delay_ms for a in macro if a.kind == 'delay') == 10000
+    assert modes(steps) == ['press', 'press', 'release', 'release']
+    recorder._record(down('a', 10))  # Late callback after stop cannot alter capture.
+    assert recorder.stop() == events
+
+
+def test_stop_key_uses_event_time_not_later_cleanup_time(monkeypatch) -> None:
+    from macrokey.recorder.recorder import Recorder
+
+    recorder = Recorder(preserve_key_timing=True, stop_key='esc')
+    recorder.backend = 'evdev'
+    recorder._record(down('w', 1))
+    recorder._record(down('esc', 3))
+    monkeypatch.setattr('macrokey.recorder.recorder.time.monotonic', lambda: 10)
+    steps = recorder.steps(recorder.stop())
+    assert sum(s['params']['ms'] for s in steps if s['type'] == 'delay') == 2000
+    assert modes(steps) == ['press', 'release']
+
+
+def test_pynput_release_flushes_motion_before_releasing_key(monkeypatch) -> None:
+    from macrokey.recorder.events import MOUSE_MOVE
+    from macrokey.recorder.recorder import Recorder
+
+    recorder = Recorder(preserve_key_timing=True)
+    recorder.backend = 'pynput'
+    recorder._record(down('shift', 1))
+    recorder._pynput_motion_started_at = 1.1
+    recorder._pynput_pending_dx = 100
+    monkeypatch.setattr('macrokey.recorder.recorder._describe_key', lambda _: ('shift', ''))
+    monkeypatch.setattr('macrokey.recorder.recorder.time.monotonic', lambda: 1.2)
+    recorder._on_release(object())
+    assert [e.kind for e in recorder._events] == [KEY_DOWN, MOUSE_MOVE, KEY_UP]
+    steps = recorder.steps()
+    assert [s['type'] for s in steps] == ['hotkey', 'delay', 'mouse_move', 'delay', 'hotkey']
+
+
+def test_real_timing_can_still_explicitly_disable_delays() -> None:
+    steps = normalize([down('w', 1), up('w', 11)],
+                      preserve_key_timing=True, keep_delays=False)
+    assert [s['type'] for s in steps] == ['hotkey', 'hotkey']
+
+
+def test_a_new_recording_resets_the_previous_stop_boundary(monkeypatch) -> None:
+    from macrokey.recorder.recorder import Recorder
+
+    class Backend:
+        def __init__(self, callback, **kwargs):
+            self.callback = callback
+
+        def start(self):
+            self.callback(down('w', 20))
+
+        def stop(self):
+            pass
+
+    recorder = Recorder(preserve_key_timing=True)
+    recorder.backend = 'evdev'
+    recorder._record(down('a', 1))
+    monkeypatch.setattr('macrokey.recorder.recorder.time.monotonic', lambda: 2)
+    recorder.stop()
+    monkeypatch.setattr('macrokey.recorder.recorder.evdev_source.available', lambda: (True, ''))
+    monkeypatch.setattr('macrokey.recorder.recorder.evdev_source.EvdevRecorder', Backend)
+    recorder.start()
+    monkeypatch.setattr('macrokey.recorder.recorder.time.monotonic', lambda: 21)
+    events = recorder.stop()
+    assert [(e.kind, e.token, e.at) for e in events] == [
+        (KEY_DOWN, 'w', 20), (KEY_UP, 'w', 21)
+    ]
