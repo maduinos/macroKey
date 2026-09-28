@@ -118,6 +118,7 @@ jobs:
           name: firmware
           path: firmware/prebuilt/
           if-no-files-found: error
+          retention-days: 1
 
   build:
     needs: [test, firmware]
@@ -164,6 +165,7 @@ jobs:
           name: ${{ matrix.asset }}
           path: artifacts/${{ matrix.asset }}
           if-no-files-found: error
+          retention-days: 1
 
   release:
     needs: build
